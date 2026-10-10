@@ -130,6 +130,9 @@ func (k JWK) PublicKey() (crypto.PublicKey, error) {
 		if len(x) != ed25519.PublicKeySize {
 			return nil, fmt.Errorf("jwk: Ed25519 key has unexpected length %d", len(x))
 		}
+		if IsSmallOrderEd25519(x) {
+			return nil, fmt.Errorf("jwk: Ed25519 key is a point of small order")
+		}
 		return ed25519.PublicKey(x), nil
 	default:
 		return nil, fmt.Errorf("jwk: unsupported key type %q", k.Kty)
@@ -164,6 +167,15 @@ func Matches(raw []byte, pub crypto.PublicKey) (bool, error) {
 	if err := json.Unmarshal(raw, &want); err != nil {
 		return false, fmt.Errorf("jwk: unmarshal: %w", err)
 	}
+	// Compared as re-encoded from the parsed key: the same key can be
+	// written in more than one base64url form.
+	parsed, err := want.PublicKey()
+	if err != nil {
+		return false, nil
+	}
+	if want, err = Marshal(parsed); err != nil {
+		return false, nil
+	}
 	return want == candidate, nil
 }
 
@@ -172,11 +184,17 @@ func Matches(raw []byte, pub crypto.PublicKey) (bool, error) {
 // members, serialized with no whitespace and in the lexicographic
 // member-name order (§3.1) RFC 7638 §3.2/RFC 8037 §2 define per key
 // type — "crv","kty","x","y" for EC, "crv","kty","x" for OKP, already
-// alphabetical. k's own X/Y/Crv fields are already the exact base64url
-// values a canonical JWK's own members would carry, so this builds the
-// canonical form directly from them rather than re-deriving coordinates
-// from a parsed crypto.PublicKey.
+// alphabetical. The members are re-encoded from the parsed key, not
+// taken as k carries them: base64url decoding forgives line breaks
+// and stray trailing bits, so one key could otherwise have any number
+// of thumbprints, and a DPoP binding computed here wouldn't match one
+// computed from the key.
 func (k JWK) Thumbprint() (string, error) {
+	if pub, err := k.PublicKey(); err == nil {
+		if canonical, err := Marshal(pub); err == nil {
+			k = canonical
+		}
+	}
 	var canonical string
 	switch k.Kty {
 	case "EC":

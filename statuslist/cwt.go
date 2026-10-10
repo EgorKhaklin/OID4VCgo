@@ -4,7 +4,6 @@ import (
 	"crypto"
 	"encoding/base64"
 	"fmt"
-	"time"
 
 	"github.com/fxamacker/cbor/v2"
 
@@ -155,12 +154,8 @@ func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opt
 		return TokenClaims{}, fmt.Errorf("statuslist: token's status_list.bits is invalid")
 	}
 
-	now := time.Now
-	if opts.Now != nil {
-		now = opts.Now
-	}
-	if claims.Exp != nil && now().Unix() > *claims.Exp {
-		return TokenClaims{}, fmt.Errorf("statuslist: token is expired")
+	if err := checkTokenTimes(claims.Iat, claims.Exp, opts); err != nil {
+		return TokenClaims{}, err
 	}
 
 	return claims, nil

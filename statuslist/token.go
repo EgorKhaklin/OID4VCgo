@@ -9,6 +9,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 )
 
 // TokenTyp is the required JOSE "typ" header of a Status List Token in
@@ -76,6 +77,17 @@ func issueToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, header m
 type VerifyOptions struct {
 	Now func() time.Time // defaults to time.Now
 
+	// MaxAge, if set, refuses a token issued longer ago (its iat): a
+	// signed list from before a revocation stays valid until its exp,
+	// or forever without one, so anyone who can serve bytes at the
+	// status URI (a cache, a mirror) could replay it. Zero leaves
+	// freshness to exp.
+	MaxAge time.Duration
+
+	// MaxClockSkew is how far in the future a token's iat may be;
+	// zero means a minute.
+	MaxClockSkew time.Duration
+
 	// LeafPolicy, used by CheckX5C/CheckCWTX5Chain only, is run on the
 	// token signer's chain-verified certificate and its verified paths,
 	// and can refuse it. Chain validation accepts any certificate under
@@ -127,12 +139,8 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 		return TokenClaims{}, fmt.Errorf("statuslist: token's status_list.bits is invalid")
 	}
 
-	now := time.Now
-	if opts.Now != nil {
-		now = opts.Now
-	}
-	if decoded.Exp != nil && now().Unix() > *decoded.Exp {
-		return TokenClaims{}, fmt.Errorf("statuslist: token is expired")
+	if err := checkTokenTimes(decoded.Iat, decoded.Exp, opts); err != nil {
+		return TokenClaims{}, err
 	}
 
 	return TokenClaims{
@@ -142,4 +150,43 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 		TTL:        decoded.TTL,
 		StatusList: decoded.StatusList,
 	}, nil
+}
+
+// defaultMaxClockSkew is VerifyOptions.MaxClockSkew's zero value's.
+const defaultMaxClockSkew = time.Minute
+
+// checkTokenTimes checks a Status List Token's iat, which draft-14
+// §5.1 requires, and exp, against opts: issued not in the future (past
+// MaxClockSkew), not longer ago than MaxAge when it's set, and not
+// expired.
+func checkTokenTimes(iat int64, exp *int64, opts VerifyOptions) error {
+	now := time.Now
+	if opts.Now != nil {
+		now = opts.Now
+	}
+	t := now()
+	issued, err := jwtdate.FromUnix(iat)
+	if err != nil || iat == 0 {
+		return fmt.Errorf("statuslist: token iat is missing or out of range")
+	}
+	skew := opts.MaxClockSkew
+	if skew == 0 {
+		skew = defaultMaxClockSkew
+	}
+	if issued.After(t.Add(skew)) {
+		return fmt.Errorf("statuslist: token was issued in the future")
+	}
+	if opts.MaxAge > 0 && issued.Before(t.Add(-opts.MaxAge)) {
+		return fmt.Errorf("statuslist: token was issued %s ago, over the %s allowed", t.Sub(issued).Round(time.Second), opts.MaxAge)
+	}
+	if exp != nil {
+		expires, err := jwtdate.FromUnix(*exp)
+		if err != nil {
+			return fmt.Errorf("statuslist: token exp is out of range")
+		}
+		if t.After(expires) {
+			return fmt.Errorf("statuslist: token is expired")
+		}
+	}
+	return nil
 }

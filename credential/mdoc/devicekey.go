@@ -6,6 +6,8 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"fmt"
+
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
 // COSE key type and curve identifiers (RFC 9053 §7) this package
@@ -85,6 +87,9 @@ func (k CoseKey) PublicKey() (crypto.PublicKey, error) {
 		}
 		if len(k.X) != ed25519.PublicKeySize {
 			return nil, fmt.Errorf("mdoc: Ed25519 key has unexpected length %d", len(k.X))
+		}
+		if jwk.IsSmallOrderEd25519(k.X) {
+			return nil, fmt.Errorf("mdoc: Ed25519 key is a point of small order")
 		}
 		return ed25519.PublicKey(k.X), nil
 	default:

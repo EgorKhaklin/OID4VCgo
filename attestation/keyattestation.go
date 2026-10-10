@@ -8,6 +8,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 )
 
 // TypHeader is the required JOSE "typ" header of a Key Attestation JWT
@@ -253,7 +254,10 @@ func (a KeyAttestation) Verify(pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 
 	var exp *time.Time
 	if c.ExpiresAt != nil {
-		t := time.Unix(*c.ExpiresAt, 0)
+		t, err := jwtdate.FromUnix(*c.ExpiresAt)
+		if err != nil {
+			return VerifiedClaims{}, fmt.Errorf("attestation: exp: %w", err)
+		}
 		exp = &t
 		if opts.Now.IsZero() {
 			return VerifiedClaims{}, fmt.Errorf("attestation: VerifyOptions.Now is required when the attestation has an exp claim")
@@ -269,8 +273,12 @@ func (a KeyAttestation) Verify(pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 		return VerifiedClaims{}, fmt.Errorf("attestation: nonce does not match the expected value")
 	}
 
+	issuedAt, err := jwtdate.FromUnix(c.IssuedAt)
+	if err != nil {
+		return VerifiedClaims{}, fmt.Errorf("attestation: iat: %w", err)
+	}
 	return VerifiedClaims{
-		Issuer: c.Issuer, IssuedAt: time.Unix(c.IssuedAt, 0), ExpiresAt: exp,
+		Issuer: c.Issuer, IssuedAt: issuedAt, ExpiresAt: exp,
 		AttestedKeys: c.AttestedKeys, KeyStorage: c.KeyStorage, UserAuthentication: c.UserAuthentication,
 		Certification: c.Certification, Nonce: c.Nonce, Status: c.Status,
 	}, nil
