@@ -139,11 +139,10 @@ func (p *ProximityPresentation) establish(ctx context.Context, msg []byte) Proxi
 		}
 		return ProximityEvent{Send: send, Ended: true, Err: fmt.Errorf("walletflow: %w", err)}
 	}
-	// One document per response: the first request is the one shown.
 	p.reqs = reqs
-	p.reader = p.s.VerifyReaderAuth(reqs[0], proximity.ReaderTrust{
-		Roots: p.w.cfg.MdocReaderRoots, LeafPolicy: p.w.cfg.MdocReaderLeafPolicy, Now: p.w.deps.Clock(),
-	})
+	// The holder may answer any of the requests, so each one's
+	// readerAuth counts, not only the first's.
+	p.reader = p.readerOf(reqs)
 	if p.w.cfg.RequireTrustedMdocReader && p.reader.Status != proximity.ReaderTrusted {
 		p.state = proximityEnded
 		return ProximityEvent{Send: p.s.Termination(), Ended: true, Err: fmt.Errorf("walletflow: %w: %w", ErrUntrustedVerifier, p.reader.Err)}
@@ -215,6 +214,30 @@ func (p *ProximityPresentation) verifierID() (string, error) {
 		}
 		return "mdoc-reader-session:" + hex.EncodeToString(b), nil
 	}
+}
+
+// readerOf is who sent reqs: trusted only when every DocRequest is
+// signed by the same trusted reader, as mdocdcapi requires too.
+// Otherwise it's the weakest request's result (invalid, then
+// unauthenticated, then untrusted): a reader can't attach an unsigned
+// or untrusted request for one document to a trusted one for another
+// and have the wallet show the trusted name for both.
+func (p *ProximityPresentation) readerOf(reqs []proximity.DocRequest) proximity.ReaderAuthentication {
+	trust := proximity.ReaderTrust{Roots: p.w.cfg.MdocReaderRoots, LeafPolicy: p.w.cfg.MdocReaderLeafPolicy, Now: p.w.deps.Clock()}
+	weakness := map[proximity.ReaderStatus]int{
+		proximity.ReaderTrusted: 0, proximity.ReaderUntrusted: 1, proximity.ReaderUnauthenticated: 2, proximity.ReaderInvalid: 3,
+	}
+	var reader proximity.ReaderAuthentication
+	for i, req := range reqs {
+		got := p.s.VerifyReaderAuth(req, trust)
+		if i > 0 && got.Status == proximity.ReaderTrusted && reader.Status == proximity.ReaderTrusted && !got.Chain[0].Equal(reader.Chain[0]) {
+			got = proximity.ReaderAuthentication{Status: proximity.ReaderUntrusted, Chain: got.Chain, Err: errors.New("the documents are signed by different readers")}
+		}
+		if i == 0 || weakness[got.Status] > weakness[reader.Status] {
+			reader = got
+		}
+	}
+	return reader
 }
 
 // Reader is who sent the request: its readerAuth's status and
