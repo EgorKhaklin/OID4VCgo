@@ -117,6 +117,14 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY" || true
 
+      # The suite grades the Verifier's modules from a screenshot of its
+      # result page; its own log says whether it verified each response.
+      - name: Save the conformance verifier's log
+        if: always()
+        run: |
+          mkdir -p "${{ runner.temp }}/conformance-results"
+          docker compose -f conformance/verifier/docker-compose.yml logs --no-color > "${{ runner.temp }}/conformance-results/conformance-verifier-container.log" 2>&1 || true
+
       - name: Upload conformance results
         if: always()
         uses: actions/upload-artifact@v7
