@@ -61,9 +61,13 @@ internal class GattClientTransport(
 
     /** The pending GATT operation's result, one at a time. */
     private val results = Channel<Int>(Channel.CONFLATED)
-    private val incoming = Channel<ByteArray>(Channel.UNLIMITED)
+    /**
+     * This connection attempt's messages, and its chunks so far: a failed
+     * attempt closes its channel for good, so each attempt starts anew.
+     */
+    @Volatile private var incoming = Channel<ByteArray>(Channel.UNLIMITED)
     private val sending = Mutex()
-    private val reassembler = BleChunks.Reassembler()
+    @Volatile private var reassembler = BleChunks.Reassembler()
 
     @Volatile private var connection: CompletableDeferred<Int>? = null
     @Volatile private var mtu = BleChunks.DEFAULT_MTU
@@ -147,22 +151,33 @@ internal class GattClientTransport(
         var lastStatus = 0
         var attempt = 0
         while (attempt < CONNECT_ATTEMPTS) {
+            if (closed) throw ProximityTransportException("the session ended")
+            // A device that failed before (disconnecting mid-setup,
+            // leaving half a message) mustn't spoil this attempt.
+            incoming = Channel(Channel.UNLIMITED)
+            reassembler = BleChunks.Reassembler()
             val device = scan()
-            val status = attemptConnection(device)
+            var status = attemptConnection(device)
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 try {
                     start()
                     return
                 } catch (e: ProximityTransportException) {
-                    if (!e.wrongReader) throw e
-                    // Another session's reader: keep looking for this
-                    // one's, until the caller's connect timeout.
-                    Log.i(TAG, "ignoring a device that isn't this session's reader")
-                    ignored.add(device.address)
+                    if (closed) throw e
                     gatt?.disconnect()
-                    gatt?.close()
-                    gatt = null
-                    continue
+                    if (e.wrongReader) {
+                        // Another session's reader: keep looking for this
+                        // one's, until the caller's connect timeout.
+                        Log.i(TAG, "ignoring a device that isn't this session's reader")
+                        ignored.add(device.address)
+                        gatt?.close()
+                        gatt = null
+                        continue
+                    }
+                    // A device that disconnects or stops answering
+                    // mid-setup: one failed attempt, as any other.
+                    Log.i(TAG, "starting the session failed: ${e.message}")
+                    status = BluetoothGatt.GATT_FAILURE
                 }
             }
             lastStatus = status
@@ -309,6 +324,10 @@ internal class GattClientTransport(
 
     private fun fail(e: ProximityTransportException) {
         incoming.close(e)
+        // A device that disconnects during the Ident read or an
+        // operation: fail them now rather than at their timeouts.
+        reads.trySend(null)
+        results.trySend(BluetoothGatt.GATT_FAILURE)
     }
 
     override fun close() {

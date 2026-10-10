@@ -9,6 +9,7 @@ import (
 	"encoding/asn1"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -489,6 +490,32 @@ func TestParseDeviceRequestRejects(t *testing.T) {
 		"duplicate element": mustMarshal(t, map[string]any{"version": "1.0", "docRequests": []any{map[string]any{"itemsRequest": items(t, map[string]any{"docType": mDL, "nameSpaces": map[string]cbor.RawMessage{
 			mDLNS: {0xa2, 0x61, 'x', 0xf5, 0x61, 'x', 0xf4}, // {"x": true, "x": false}
 		}})}}}),
+	}
+	// Over the limits: too many documents, or too many elements in one
+	// document or across them.
+	docRequest := func(n int) map[string]any {
+		elements := map[string]bool{}
+		for i := range n {
+			elements[fmt.Sprintf("e%d", i)] = false
+		}
+		return map[string]any{"itemsRequest": items(t, map[string]any{"docType": mDL, "nameSpaces": map[string]any{mDLNS: elements}})}
+	}
+	request := func(docs ...map[string]any) []byte {
+		list := make([]any, len(docs))
+		for i, d := range docs {
+			list[i] = d
+		}
+		return mustMarshal(t, map[string]any{"version": "1.0", "docRequests": list})
+	}
+	nine := make([]map[string]any, MaxDocRequests+1)
+	for i := range nine {
+		nine[i] = docRequest(1)
+	}
+	tests["too many documents"] = request(nine...)
+	tests["too many elements"] = request(docRequest(MaxRequestedElements + 1))
+	tests["too many elements across documents"] = request(docRequest(MaxRequestedElements/2+1), docRequest(MaxRequestedElements/2))
+	if _, err := ParseDeviceRequest(request(docRequest(MaxRequestedElements/2), docRequest(MaxRequestedElements/2))); err != nil {
+		t.Errorf("at the element limit: %v", err)
 	}
 	for name, b := range tests {
 		t.Run(name, func(t *testing.T) {

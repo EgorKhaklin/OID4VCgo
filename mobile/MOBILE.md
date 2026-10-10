@@ -1145,6 +1145,15 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   so both by default; scan, connect and advertise for a reader; location
   up to Android 11 wherever there's scanning, which it delivers results
   for only with it).
+- **The GATT server's peer is the device that starts the session** (a
+  State write of 0x01), on both platforms: not the first to connect or
+  subscribe, which any device nearby can do, since the service UUID is
+  in the clear in adverts. Until then it keeps advertising and ignores
+  other writes. A device that starts a session it can't complete still
+  holds it until the connect timeout.
+- **A GATT client starts each connection attempt afresh:** a new message
+  queue and chunk reassembler, so a device that disconnects mid-setup,
+  or leaves half a message, costs one attempt rather than the session.
 - **A holder in central client mode checks the reader's Ident**
   (§8.3.3.1.1.4) before starting the session, and refuses to start
   without one. A device whose Ident differs, another session's reader

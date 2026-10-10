@@ -35,7 +35,10 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
     private var ignored = Set<UUID>()
 
     private let poweredOn = Signal()
-    private let incoming = MessageQueue()
+    /// This connection attempt's messages. Touched only on `queue`: a
+    /// failed attempt ends its queue for good, so each attempt starts a
+    /// new one.
+    private var incoming = MessageQueue()
     private let sending = AsyncMutex()
 
     init(serviceUUID: UUID, characteristics: GattCharacteristics, ident: Data? = nil) {
@@ -52,10 +55,22 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
         var lastError: (any Error)?
         var attempt = 1
         while attempt <= attempts {
+            // A device that failed before (disconnecting mid-setup,
+            // leaving half a message) mustn't spoil this attempt.
+            queue.sync {
+                incoming = MessageQueue()
+                reassembler = BleChunks.Reassembler()
+            }
             try await scan()
             do {
-                try await connectToDiscovered()
-                try await start()
+                do {
+                    try await connectToDiscovered()
+                    try await start()
+                } catch is ProximityTimeout {
+                    // A device that stops answering mid-setup: one failed
+                    // attempt, as any other.
+                    throw ProximityTransportError("the other device stopped answering")
+                }
                 return
             } catch let error as ProximityTransportError {
                 // A closed session's "the session ended": never rescan.
@@ -196,7 +211,10 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
         }
     }
 
-    func receive() async throws -> Data { try await incoming.receive() }
+    func receive() async throws -> Data {
+        let messages = queue.sync { incoming }
+        return try await messages.receive()
+    }
 
     func close() {
         queue.sync {
@@ -218,14 +236,19 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
             identRead?.resolve(.failure(ended))
         }
         let ended = ProximityTransportError("the session ended", peerEnded: true)
-        incoming.end(ended)
+        queue.sync { incoming }.end(ended)
         poweredOn.fail(ended)
     }
 
+    /// Ends this attempt with error: on `queue`.
     private func fail(_ error: ProximityTransportError) {
         incoming.end(error)
         connected?.resolve(.failure(error))
         operation?.resolve(.failure(error))
+        // A device that disconnects during the Ident read or a write:
+        // fail them now rather than at their timeouts.
+        identRead?.resolve(.failure(error))
+        readyToWrite?.resolve(.failure(error))
     }
 
     // MARK: CBCentralManagerDelegate, on `queue`
