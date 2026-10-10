@@ -55,6 +55,17 @@ type wireItemsRequest struct {
 	// requestInfo is optional and not used.
 }
 
+// Limits on what one DeviceRequest may ask for, as mdocdcapi's: each
+// document and element is a line on the holder's consent screen, and
+// anyone who saw the QR code can send a request.
+const (
+	// MaxDocRequests is the most documents one request may ask for.
+	MaxDocRequests = 8
+	// MaxRequestedElements is the most data elements one request may
+	// ask for, across its documents.
+	MaxRequestedElements = 256
+)
+
 // ParseDeviceRequest decodes a DeviceRequest (§8.3.2.1.2.1), as
 // DeviceSession.HandleSessionEstablishment or HandleSessionData
 // returns it. An error wraps ErrCBORDecoding for bytes that aren't
@@ -77,12 +88,19 @@ func ParseDeviceRequest(b []byte) ([]DocRequest, error) {
 	if len(req.DocRequests) == 0 {
 		return nil, fmt.Errorf("proximity: DeviceRequest has no docRequests: %w", ErrCBORValidation)
 	}
+	if len(req.DocRequests) > MaxDocRequests {
+		return nil, fmt.Errorf("proximity: DeviceRequest has %d docRequests, over %d: %w", len(req.DocRequests), MaxDocRequests, ErrCBORValidation)
+	}
 
 	out := make([]DocRequest, 0, len(req.DocRequests))
+	elements := 0
 	for i, dr := range req.DocRequests {
 		parsed, err := parseDocRequest(dr)
 		if err != nil {
 			return nil, fmt.Errorf("proximity: docRequests[%d]: %w", i, err)
+		}
+		if elements += len(parsed.Elements); elements > MaxRequestedElements {
+			return nil, fmt.Errorf("proximity: DeviceRequest asks for over %d data elements: %w", MaxRequestedElements, ErrCBORValidation)
 		}
 		out = append(out, parsed)
 	}
@@ -115,6 +133,13 @@ func parseDocRequest(dr wireDocRequest) (DocRequest, error) {
 	}
 	if len(typed) == 0 {
 		return DocRequest{}, fmt.Errorf("ItemsRequest has no nameSpaces: %w", ErrCBORValidation)
+	}
+	requested := 0
+	for _, elements := range typed {
+		requested += len(elements)
+	}
+	if requested > MaxRequestedElements {
+		return DocRequest{}, fmt.Errorf("ItemsRequest asks for %d data elements, over %d: %w", requested, MaxRequestedElements, ErrCBORValidation)
 	}
 
 	out := DocRequest{
