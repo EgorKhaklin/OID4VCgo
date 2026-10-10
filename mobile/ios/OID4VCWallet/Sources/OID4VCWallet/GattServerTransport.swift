@@ -162,11 +162,9 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
-        if peer == nil {
-            peer = central
-            // One reader per session: stop being found.
-            peripheral.stopAdvertising()
-        }
+        // The peer is the device that starts the session (a State write
+        // of 0x01), not the first to subscribe: any device nearby can
+        // subscribe, and locking onto it would shut the reader out.
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
@@ -176,7 +174,12 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
         for request in requests {
-            if peer == nil { peer = request.central; peripheral.stopAdvertising() }
+            if peer == nil, request.characteristic.uuid == characteristics.state, request.value == GattCharacteristics.start {
+                // One reader per session: the one that started it. Stop
+                // being found.
+                peer = request.central
+                peripheral.stopAdvertising()
+            }
             guard request.central.identifier == peer?.identifier, let value = request.value else { continue }
             switch request.characteristic.uuid {
             case characteristics.state:

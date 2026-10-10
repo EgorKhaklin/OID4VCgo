@@ -56,6 +56,8 @@ internal class GattServerTransport(
     private val reassembler = BleChunks.Reassembler()
 
     @Volatile private var peer: BluetoothDevice? = null
+    /** Each connected device's MTU, until one becomes the peer. */
+    private val mtus = java.util.concurrent.ConcurrentHashMap<BluetoothDevice, Int>()
     @Volatile private var mtu = BleChunks.DEFAULT_MTU
     @Volatile private var closed = false
     @Volatile private var sessionStarted = false
@@ -82,22 +84,23 @@ internal class GattServerTransport(
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             Log.d(TAG, "connection state $newState (status $status)")
             when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    if (peer == null) {
-                        peer = device
-                        // One reader per session: stop being found.
-                        stopAdvertising()
-                    } else if (peer != device) {
-                        server?.cancelConnection(device)
-                    }
+                // The peer is the device that starts the session (a State
+                // write of 0x01), not the first to connect: any device
+                // nearby can connect (Android reports other apps' LE
+                // connections here too), and locking onto it would shut
+                // the reader out.
+                BluetoothProfile.STATE_CONNECTED -> if (peer != null && peer != device) {
+                    server?.cancelConnection(device)
                 }
-                BluetoothProfile.STATE_DISCONNECTED -> if (device == peer) {
-                    fail(ProximityTransportException("the other device disconnected", peerEnded = true))
+                BluetoothProfile.STATE_DISCONNECTED -> {
+                    mtus.remove(device)
+                    if (device == peer) fail(ProximityTransportException("the other device disconnected", peerEnded = true))
                 }
             }
         }
 
         override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
+            mtus[device] = mtu
             if (device == peer) this@GattServerTransport.mtu = mtu
         }
 
@@ -122,6 +125,15 @@ internal class GattServerTransport(
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?,
         ) {
             if (responseNeeded) server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+            if (peer == null && characteristic.uuid == characteristics.state && value != null &&
+                value.contentEquals(byteArrayOf(GattCharacteristics.STATE_START))
+            ) {
+                // One reader per session: the one that started it. Stop
+                // being found.
+                peer = device
+                mtus[device]?.let { this@GattServerTransport.mtu = it }
+                stopAdvertising()
+            }
             if (device != peer || value == null) return
             when (characteristic.uuid) {
                 characteristics.state -> when {
