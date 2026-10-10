@@ -219,8 +219,12 @@ func (s *server) handleResponse(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			matched.failErr = err
+			// The suite grades from a screenshot of the result page, so
+			// the outcome is logged too, for the run's artifacts.
+			log.Printf("session %s: response not verified: %v", matched.id, err)
 		} else {
 			matched.result = result.Credentials
+			log.Printf("session %s: response verified: %d credential(s)", matched.id, len(result.Credentials))
 		}
 	}
 
