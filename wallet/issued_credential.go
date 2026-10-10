@@ -19,6 +19,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
@@ -188,7 +189,11 @@ func numericDate(v any) time.Time {
 	default:
 		return time.Time{}
 	}
-	return time.Unix(int64(secs), 0).UTC()
+	t, err := jwtdate.FromFloat(secs)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }
 
 func verifyIssuedMdoc(p VerifyIssuedCredentialParams, now time.Time) (VerifiedIssuedCredential, error) {

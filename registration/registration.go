@@ -39,6 +39,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 )
 
 // Format is the verifier_info format a registration is carried as.
@@ -189,16 +190,20 @@ func VerifyWithPolicy(token string, roots *x509.CertPool, clientID string, now t
 	if err := json.Unmarshal(payload, &c); err != nil {
 		return Registration{}, fmt.Errorf("registration: claims: %w", err)
 	}
+	issuedAt, iatErr := jwtdate.FromUnix(c.Iat)
+	expires, expErr := jwtdate.FromUnix(c.Exp)
 	switch {
 	case c.Iss == "" || c.Name == "" || c.Exp == 0 || c.Iat == 0:
 		return Registration{}, errors.New("registration: iss, name, iat and exp are required")
+	case iatErr != nil || expErr != nil:
+		return Registration{}, errors.New("registration: iat or exp is out of range")
 	case c.Sub != clientID:
 		return Registration{}, errors.New("registration: it's for another relying party")
 	case !slices.ContainsFunc(leaf.URIs, func(u *url.URL) bool { return u.String() == c.Iss }):
 		return Registration{}, errors.New("registration: iss isn't the signing certificate's: it must be one of its URI subject alternative names")
-	case !now.Before(time.Unix(c.Exp, 0)):
+	case !now.Before(expires):
 		return Registration{}, errors.New("registration: expired")
-	case time.Unix(c.Iat, 0).After(now.Add(maxSkew)):
+	case issuedAt.After(now.Add(maxSkew)):
 		return Registration{}, errors.New("registration: issued in the future")
 	}
 	if err := checkPolicyURL(c.PrivacyPolicy); err != nil {
@@ -211,7 +216,7 @@ func VerifyWithPolicy(token string, roots *x509.CertPool, clientID string, now t
 	}
 	return Registration{
 		Registrar: c.Iss, ClientID: c.Sub, Name: c.Name, Purpose: c.Purpose, PrivacyPolicy: c.PrivacyPolicy,
-		Claims: c.Claims, IssuedAt: time.Unix(c.Iat, 0), Expires: time.Unix(c.Exp, 0), RegistrarCertificate: leaf,
+		Claims: c.Claims, IssuedAt: issuedAt, Expires: expires, RegistrarCertificate: leaf,
 	}, nil
 }
 

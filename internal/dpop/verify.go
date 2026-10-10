@@ -12,6 +12,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 )
 
 // proofTyp is DPoP's own required JOSE "typ" header (RFC 9449 §4.2) —
@@ -208,11 +209,14 @@ func validateDPoPClaims(claims dpopClaims, req VerifyRequest) (time.Time, error)
 	if claims.IAT == 0 {
 		return time.Time{}, fmt.Errorf("dpop: iat is required")
 	}
-	iat := time.Unix(claims.IAT, 0)
+	iat, err := jwtdate.FromUnix(claims.IAT)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("dpop: iat: %w", err)
+	}
 	if iat.After(req.Now.Add(req.MaxClockSkew)) {
 		return time.Time{}, fmt.Errorf("dpop: iat is in the future")
 	}
-	if req.Now.Sub(iat) > req.MaxProofAge {
+	if iat.Before(req.Now.Add(-req.MaxProofAge)) {
 		return time.Time{}, fmt.Errorf("dpop: proof has expired")
 	}
 	if req.RequiredNonce != "" {

@@ -12,6 +12,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 )
 
 // resolveJWTProofKeys verifies every jwt-type key proof in values
@@ -173,9 +174,12 @@ func (iss *Issuer) checkProofAge(iat int64, i int) error {
 	if !iss.cfg.Endpoints.Nonce.IsZero() {
 		return nil
 	}
-	age := iss.deps.Clock.Now().Sub(time.Unix(iat, 0))
-	if age > iss.cfg.Limits.MaxProofAge || -age > iss.cfg.Limits.MaxProofAge {
-		return newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iat is outside the accepted window of %s", i, iss.cfg.Limits.MaxProofAge), nil)
+	// Times compared, not a negated age: that overflows for an iat far
+	// in the future, which would then be replayable indefinitely.
+	issued, err := jwtdate.FromUnix(iat)
+	now, window := iss.deps.Clock.Now(), iss.cfg.Limits.MaxProofAge
+	if err != nil || issued.After(now.Add(window)) || issued.Before(now.Add(-window)) {
+		return newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iat is outside the accepted window of %s", i, window), nil)
 	}
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 )
 
 // KeyBindingClaims is the input to NewKeyBindingJWT (RFC 9901 §4.3).
@@ -121,16 +122,18 @@ func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg oid4vci.J
 	if check.Now != nil {
 		now = check.Now
 	}
-	issued := time.Unix(int64(iat), 0)
-	age := now().Sub(issued)
-	if age < 0 {
-		if -age > check.MaxAge {
-			return nil, fmt.Errorf("sdjwtvc: key binding JWT iat is too far in the future (issued %s from now)", -age)
-		}
-		return claims, nil
+	issued, err := jwtdate.FromFloat(iat)
+	if err != nil {
+		return nil, fmt.Errorf("sdjwtvc: key binding JWT iat: %w", err)
 	}
-	if age > check.MaxAge {
-		return nil, fmt.Errorf("sdjwtvc: key binding JWT is too old (issued %s ago)", age)
+	// Times compared, not a negated age: that overflows for an iat far
+	// in the future.
+	t := now()
+	if issued.After(t.Add(check.MaxAge)) {
+		return nil, fmt.Errorf("sdjwtvc: key binding JWT iat is too far in the future (issued %s from now)", issued.Sub(t))
+	}
+	if issued.Before(t.Add(-check.MaxAge)) {
+		return nil, fmt.Errorf("sdjwtvc: key binding JWT is too old (issued %s ago)", t.Sub(issued))
 	}
 	return claims, nil
 }

@@ -8,6 +8,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 )
 
 // KeyBindingRequirement decides whether Verify requires a Key Binding
@@ -194,7 +195,11 @@ func checkIssuerJWTValidityWindow(decoded map[string]any, now func() time.Time, 
 		if !ok {
 			return fmt.Errorf("sdjwtvc: exp claim is not a number")
 		}
-		if !now().Add(-skew).Before(time.Unix(int64(exp), 0)) {
+		expires, err := jwtdate.FromFloat(exp)
+		if err != nil {
+			return fmt.Errorf("sdjwtvc: exp claim: %w", err)
+		}
+		if !now().Add(-skew).Before(expires) {
 			return fmt.Errorf("sdjwtvc: credential has expired")
 		}
 	}
@@ -203,7 +208,11 @@ func checkIssuerJWTValidityWindow(decoded map[string]any, now func() time.Time, 
 		if !ok {
 			return fmt.Errorf("sdjwtvc: nbf claim is not a number")
 		}
-		if now().Add(skew).Before(time.Unix(int64(nbf), 0)) {
+		notBefore, err := jwtdate.FromFloat(nbf)
+		if err != nil {
+			return fmt.Errorf("sdjwtvc: nbf claim: %w", err)
+		}
+		if now().Add(skew).Before(notBefore) {
 			return fmt.Errorf("sdjwtvc: credential is not yet valid")
 		}
 	}

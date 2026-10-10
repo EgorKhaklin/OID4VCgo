@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -1233,12 +1234,16 @@ func TestRequestCredential_EnforcesKeyAttestationLevels(t *testing.T) {
 func TestRequestCredential_ProofAgeWithoutNonceEndpoint(t *testing.T) {
 	for name, tc := range map[string]struct {
 		offset  time.Duration
+		iat     int64 // an absolute iat, in place of offset
 		wantErr bool
 	}{
-		"fresh":             {0, false},
-		"within the age":    {-30 * time.Second, false},
-		"too old":           {-2 * time.Minute, true},
-		"too far in future": {2 * time.Minute, true},
+		"fresh":             {offset: 0},
+		"within the age":    {offset: -30 * time.Second},
+		"too old":           {offset: -2 * time.Minute, wantErr: true},
+		"too far in future": {offset: 2 * time.Minute, wantErr: true},
+		// A negated age used to overflow into a pass for these.
+		"year 31 million": {iat: 1e15, wantErr: true},
+		"int64's maximum": {iat: math.MaxInt64, wantErr: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
@@ -1252,7 +1257,11 @@ func TestRequestCredential_ProofAgeWithoutNonceEndpoint(t *testing.T) {
 			if err := json.Unmarshal(jwkJSON(t, &key.PublicKey), &jwkObj); err != nil {
 				t.Fatal(err)
 			}
-			payload, err := json.Marshal(map[string]any{"aud": testIssuer, "iat": f.now.Add(tc.offset).Unix()})
+			iat := f.now.Add(tc.offset).Unix()
+			if tc.iat != 0 {
+				iat = tc.iat
+			}
+			payload, err := json.Marshal(map[string]any{"aud": testIssuer, "iat": iat})
 			if err != nil {
 				t.Fatal(err)
 			}
