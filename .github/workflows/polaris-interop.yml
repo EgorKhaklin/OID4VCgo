@@ -1,0 +1,47 @@
+# Interop: OID4VCgo's conformance-wallet-vp against polaris-oid4vp, an
+# independent OpenID4VP 1.0 + HAIP verifier, using polaris-id's own
+# script (lab/interop/oid4vcgo/run.sh): the presentation must be
+# accepted, and four controls refused (a replay, a mismatched client_id,
+# an untrusted issuer CA, an untrusted verifier CA). The verifier runs
+# from polaris-id's source, so it runs here, on a disposable runner with
+# a read-only token and no secrets, pinned to a reviewed commit.
+name: Polaris interop
+
+on:
+  push:
+    branches: [ci/polaris-interop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  interop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: EgorKhaklin/polaris-id
+          # Reviewed 2026-10-11. Move it only after reading the change.
+          ref: 84a805ffc94e09ca892b23bf0aa71b723586e9d9
+          persist-credentials: false
+
+      - name: Run the interop script
+        env:
+          OID4VCGO_VERSION: v0.39.0
+        run: |
+          export WORK="$RUNNER_TEMP/polaris-work"
+          mkdir -p "$WORK"
+          bash lab/interop/oid4vcgo/run.sh 2>&1 | tee "$RUNNER_TEMP/polaris-interop.log"
+
+      - name: Upload the log and the run's files
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: polaris-interop
+          path: |
+            ${{ runner.temp }}/polaris-interop.log
+            ${{ runner.temp }}/polaris-work/*.log
+            ${{ runner.temp }}/polaris-work/*.html
+          retention-days: 14
