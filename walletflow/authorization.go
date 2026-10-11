@@ -206,6 +206,21 @@ func (w *Wallet) ResumeIssuance(ctx context.Context, redirect string) (*Issuance
 	if state == "" {
 		return nil, ErrNoAuthorization
 	}
+	// One resume of a redirect at a time: a second, delivered twice or
+	// from two entry points, would rebuild the issuance over the same
+	// keys, lose the race to consume the authorization, and close.
+	w.mu.Lock()
+	busy := w.resuming[state]
+	w.resuming[state] = true
+	w.mu.Unlock()
+	if busy {
+		return nil, fmt.Errorf("walletflow: the authorization is already being resumed: %w", ErrNoAuthorization)
+	}
+	defer func() {
+		w.mu.Lock()
+		delete(w.resuming, state)
+		w.mu.Unlock()
+	}()
 	a, err := w.deps.Authorizations.GetAuthorization(ctx, state)
 	if errors.Is(err, ErrNotFound) {
 		return nil, ErrNoAuthorization
@@ -257,9 +272,8 @@ func (w *Wallet) rebuild(ctx context.Context, a PendingAuthorization) (*Issuance
 	if s.dpopKey, err = w.deps.Keys.Key(ctx, a.DPoPKeyID); err != nil {
 		return nil, fmt.Errorf("walletflow: the authorization's DPoP key: %w", err)
 	}
-	w.mu.Lock()
-	w.liveDPoP[a.DPoPKeyID] = true
-	w.mu.Unlock()
+	w.holdKey(a.InstanceKeyID)
+	w.holdKey(a.DPoPKeyID)
 	s.sessions = &sessionStore{
 		w: w, offer: a.Offer, authorizationServer: a.AuthorizationServer,
 		instanceKeyID: a.InstanceKeyID, dpopKeyID: a.DPoPKeyID, state: a.State,
@@ -274,11 +288,12 @@ func (w *Wallet) rebuild(ctx context.Context, a PendingAuthorization) (*Issuance
 
 // forgetAuthorization deletes a, and its keys.
 func (w *Wallet) forgetAuthorization(ctx context.Context, a PendingAuthorization) error {
-	return errors.Join(
-		w.deps.Authorizations.DeleteAuthorization(ctx, a.State),
-		w.deps.Keys.DeleteKey(ctx, a.InstanceKeyID),
-		w.releaseDPoPKey(ctx, a.DPoPKeyID),
-	)
+	errs := []error{w.deps.Authorizations.DeleteAuthorization(ctx, a.State)}
+	// Not an instance key an open issuance holds: a resumed one's.
+	if !w.keyHeld(a.InstanceKeyID) {
+		errs = append(errs, w.deps.Keys.DeleteKey(ctx, a.InstanceKeyID))
+	}
+	return errors.Join(append(errs, w.releaseDPoPKey(ctx, a.DPoPKeyID))...)
 }
 
 // pendingAuthorizations are the authorizations still in progress,

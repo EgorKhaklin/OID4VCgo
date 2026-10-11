@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -613,6 +615,7 @@ func (s *Issuance) ensureClientKeys(ctx context.Context) error {
 		if s.instanceKey, err = newKey(ctx, s.w.deps.Keys, KeyPurposeInstance); err != nil {
 			return err
 		}
+		s.w.holdKey(s.instanceKey.ID())
 	}
 	if s.dpopKey == nil {
 		if s.dpopKey, err = s.w.newDPoPKey(ctx); err != nil {
@@ -1048,6 +1051,11 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		copies = append(copies, CredentialCopy{Credential: ic.Credential, HolderKeyID: keyID})
 		if i == 0 {
 			first = verified
+		} else if !sameHolderClaims(first.Claims, verified.Claims) {
+			// The holder sees copy 0's claims, and DCQL chooses per copy:
+			// copies that differ would present what the holder didn't see.
+			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential's copies differ")
+			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: copy %d's claims differ from copy 0's", c.configID, errInvalidCredential, i)
 		}
 	}
 	id := c.replace
@@ -1135,7 +1143,13 @@ func (s *Issuance) Close(ctx context.Context) error {
 	// uses: every refresh authenticates with it. A grant nothing uses
 	// once the issuance is done is released, revoking its token.
 	if s.instanceKey != nil && !s.grantStored {
-		errs = append(errs, s.w.deps.Keys.DeleteKey(ctx, s.instanceKey.ID()))
+		// Unless another open issuance holds it: a resume of this one.
+		s.w.unholdKey(s.instanceKey.ID())
+		if !s.w.keyHeld(s.instanceKey.ID()) {
+			errs = append(errs, s.w.deps.Keys.DeleteKey(ctx, s.instanceKey.ID()))
+		}
+	} else if s.instanceKey != nil {
+		s.w.unholdKey(s.instanceKey.ID())
 	}
 	if s.grantID != "" && s.replace == "" {
 		s.w.holdGrant(s.grantID, false)
@@ -1144,9 +1158,7 @@ func (s *Issuance) Close(ctx context.Context) error {
 		}
 	}
 	if s.dpopKey != nil {
-		s.w.mu.Lock()
-		delete(s.w.liveDPoP, s.dpopKey.ID())
-		s.w.mu.Unlock()
+		s.w.unholdKey(s.dpopKey.ID())
 		errs = append(errs, s.w.releaseDPoPKey(ctx, s.dpopKey.ID()))
 	}
 	s.instanceKey, s.dpopKey = nil, nil
@@ -1164,4 +1176,22 @@ func callbackBinding(resumed bool) client.CallbackBinding {
 		return client.CallbackBindingDeviceLocalStore
 	}
 	return client.CallbackBindingSessionHandle
+}
+
+// perCopyClaims are an SD-JWT VC's claims that may differ between copies
+// of one batch: when and how long each is valid, its holder key, its
+// status list entry, its ID and a pseudonymous subject.
+var perCopyClaims = []string{"iat", "nbf", "exp", "cnf", "status", "jti", "sub"}
+
+// sameHolderClaims reports whether two copies of a credential carry the
+// same claims, those that may differ per copy aside.
+func sameHolderClaims(a, b map[string]any) bool {
+	strip := func(m map[string]any) map[string]any {
+		out := maps.Clone(m)
+		for _, name := range perCopyClaims {
+			delete(out, name)
+		}
+		return out
+	}
+	return reflect.DeepEqual(strip(a), strip(b))
 }
