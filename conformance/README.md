@@ -59,11 +59,13 @@ request, a `client_id` that isn't the signed request's, an issuer CA the
 verifier doesn't trust, and a verifier CA the wallet doesn't trust. The
 OIDF suite has no negative wallet-side cases like those.
 
-It runs daily, on each release (that release's tag), and by hand. Our
-side is the newest release; polaris-id is pinned to a reviewed commit,
-since its verifier runs from source on the runner (a read-only token,
-no secrets). Move the pin only after reading the change. A run takes
-about a minute.
+It runs on each pull request (outside `mobile/`), with the wallet built
+from the pull request's checkout, so a regression shows before it's
+released; daily, against the newest release; on each release, against
+that release's tag; and by hand. polaris-id is pinned to a reviewed
+commit (polaris-oid4vp v1.0.0), since its verifier runs from source on
+the runner (a read-only token, no secrets). Move the pin only after
+reading the change. A run takes about a minute.
 
 ## Keeping the local suite current
 

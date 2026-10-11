@@ -4,10 +4,17 @@
 # accepted, and four controls refused (a replay, a mismatched client_id,
 # an untrusted issuer CA, an untrusted verifier CA). The verifier runs
 # from polaris-id's source, so it runs here, on a disposable runner with
-# a read-only token and no secrets, pinned to a reviewed commit.
+# a read-only token and no secrets, pinned to a reviewed commit. A pull
+# request's wallet is built from its own checkout (OID4VCGO_SRC), so a
+# regression shows before it's released; the schedule and each release
+# test published versions.
 name: Polaris interop
 
 on:
+  pull_request:
+    # The Kotlin and Swift libraries aren't the wallet this runs.
+    paths-ignore:
+      - 'mobile/**'
   schedule:
     - cron: '30 6 * * *' # daily, 6:30am UTC
   # Each release, as the tag itself: right after tagging, the module
@@ -23,6 +30,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: polaris-interop-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   interop:
     runs-on: ubuntu-latest
@@ -31,13 +42,26 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: EgorKhaklin/polaris-id
-          # Reviewed 2026-10-11. Move it only after reading the change.
-          ref: 84a805ffc94e09ca892b23bf0aa71b723586e9d9
+          # polaris-oid4vp v1.0.0, reviewed 2026-10-11 (from 84a805f: the
+          # verifier unchanged; run.sh gained OID4VCGO_BIN/OID4VCGO_SRC
+          # and digest-pinned images). Move it only after reading the
+          # change.
+          ref: 6f2b890aa56678f090909dd265cf4f113bf04ddc
+          path: polaris-id
+          persist-credentials: false
+
+      - name: Check out the pull request's wallet
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          path: oid4vcgo
           persist-credentials: false
 
       - name: Run the interop script
+        working-directory: polaris-id
         env:
           OID4VCGO_VERSION: ${{ github.event.release.tag_name || inputs.version || 'latest' }}
+          OID4VCGO_SRC: ${{ github.event_name == 'pull_request' && format('{0}/oid4vcgo', github.workspace) || '' }}
         run: |
           export WORK="$RUNNER_TEMP/polaris-work"
           mkdir -p "$WORK"
