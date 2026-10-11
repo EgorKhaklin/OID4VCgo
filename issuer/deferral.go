@@ -230,12 +230,14 @@ func pollIntervalSeconds(d time.Duration) int64 {
 }
 
 // deferredClient is the AuthorizedRequest a notification_id for record
-// is bound to: its client, or none for a transaction with none.
+// is bound to: its client, or none for a transaction with none, and its
+// subject, as an immediate issuance's is. A client_id alone names a
+// whole wallet solution under HAIP, not one holder.
 func deferredClient(record DeferredTransactionRecord) AuthorizedRequest {
 	if record.ClientID == "" {
-		return AuthorizedRequest{ClientIdentity: NoClientIdentity{}}
+		return AuthorizedRequest{ClientIdentity: NoClientIdentity{}, Subject: record.Subject}
 	}
-	return AuthorizedRequest{ClientIdentity: KnownClientID(record.ClientID)}
+	return AuthorizedRequest{ClientIdentity: KnownClientID(record.ClientID), Subject: record.Subject}
 }
 
 // credentialResponseStatus is the HTTP status a Credential Response is

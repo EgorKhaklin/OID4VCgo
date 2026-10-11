@@ -3,6 +3,7 @@ package issuer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -144,7 +145,9 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, nil)
 	}
 	if !deferredOwner(record, auth) {
-		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, "transaction_id was not issued to this access token's client and subject", nil)
+		// As for an unknown one: whether another holder's transaction
+		// exists is none of this one's business.
+		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, errors.New("transaction_id was not issued to this access token's client and subject"))
 	}
 
 	switch record.Status {

@@ -453,6 +453,10 @@ type Issuer struct {
 
 // New validates cfg and deps and returns a ready-to-use Issuer.
 func New(cfg Config, deps Dependencies) (*Issuer, error) {
+	var err error
+	if cfg.PreAuthorizedCodeClientAuthentication, err = normalizeClientAuthentication(cfg.PreAuthorizedCodeClientAuthentication); err != nil {
+		return nil, err
+	}
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -681,4 +685,25 @@ func validateAuthorizationServers(servers []fapi.URL) error {
 		seen[u.String()] = true
 	}
 	return nil
+}
+
+// normalizeClientAuthentication is a, a pointer to either choice taken
+// as the choice itself: every check of it (redemption, production
+// assurance, haip.ValidateIssuerConfig) asks for the value type, and
+// &VerifiedPreAuthorizedCode{} would otherwise redeem codes with no
+// client authentication while passing them all.
+func normalizeClientAuthentication(a PreAuthorizedCodeClientAuthentication) (PreAuthorizedCodeClientAuthentication, error) {
+	switch v := a.(type) {
+	case *VerifiedPreAuthorizedCode:
+		if v == nil {
+			return nil, fmt.Errorf("issuer: config: pre_authorized_code_client_authentication is a nil *VerifiedPreAuthorizedCode")
+		}
+		return VerifiedPreAuthorizedCode{}, nil
+	case *AnonymousPreAuthorizedCode:
+		if v == nil {
+			return nil, fmt.Errorf("issuer: config: pre_authorized_code_client_authentication is a nil *AnonymousPreAuthorizedCode")
+		}
+		return AnonymousPreAuthorizedCode{}, nil
+	}
+	return a, nil
 }
