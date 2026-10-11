@@ -74,9 +74,13 @@ type Disclosure struct {
 	// CredentialID is the stored credential presented.
 	CredentialID string
 	// Claims are the claim paths disclosed: ["family_name"] for an
-	// SD-JWT VC, [namespace, element] for an mdoc. Claims the issuer
-	// didn't make selectively disclosable are seen regardless.
+	// SD-JWT VC, [namespace, element] for an mdoc.
 	Claims []dcql.Path
+	// AlwaysDisclosed are an SD-JWT VC's claims the issuer didn't make
+	// selectively disclosable: disclosed too, whatever the selection
+	// (wallet.PreviewedCredential.AlwaysDisclosed). Show them with
+	// Claims.
+	AlwaysDisclosed []dcql.Path
 }
 
 // Presented is what Respond or Decline sent.
@@ -266,7 +270,7 @@ func (p *Presentation) Preview(ctx context.Context, sel Selection) ([]Disclosure
 	ids := p.idsByCredential()
 	out := make([]Disclosure, 0, len(preview))
 	for _, c := range preview {
-		out = append(out, Disclosure{QueryID: c.QueryID, CredentialID: ids[c.Credential.Credential], Claims: c.Claims})
+		out = append(out, Disclosure{QueryID: c.QueryID, CredentialID: ids[c.Credential.Credential], Claims: c.Claims, AlwaysDisclosed: c.AlwaysDisclosed})
 	}
 	return out, nil
 }
@@ -411,7 +415,10 @@ func (p *Presentation) held(_ context.Context, sel Selection) (map[string][]wall
 			if !ok {
 				return nil, fmt.Errorf("walletflow: %w: no credential %q", ErrInvalidSelection, id)
 			}
-			_, cp := c.nextCopy()
+			// The copy Respond would present, under the copy policy: under
+			// CopyPerVerifier a returning Verifier gets the copy it saw,
+			// whose claims Preview must then show.
+			_, cp, _ := c.copyFor(p.w.cfg.CopyPolicy, p.verifier())
 			c.Credential = cp.Credential
 			out[q] = append(out[q], heldCredential(c, nil))
 		}
