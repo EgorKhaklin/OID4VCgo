@@ -731,9 +731,10 @@ Decisions taken 2026-10-06 (tracked in [#461](https://github.com/IDFoundry/OID4V
    first release: OpenID4VP requests through a new ABI session (Phase
    9's adapter) and `org-iso-mdoc` ones through `MdocPresentation`. The
    Credential Manager integration lives in the demo app, as the iOS
-   document provider does. Superseded for `org-iso-mdoc`: it stays
-   iOS's route, and Android answers OpenID4VP only (see "the Digital
-   Credentials API on Android" below).
+   document provider does. Superseded twice: `org-iso-mdoc` stays
+   iOS's route, and Android answers OpenID4VP only, and the
+   integration moved into the library as `DigitalCredentials` (see "the
+   Digital Credentials API on Android" below).
 4. **Platform:** minSdk 30, the first level where a key can require
    biometrics *or* the screen lock for each use, as holder keys do on
    iOS. Since lowered to minSdk 26, for apps that authenticate the
@@ -942,6 +943,14 @@ answer, bound to the page's origin.
 - **`org-iso-mdoc` isn't planned on Android:** Chrome's requests are
   answered over OpenID4VP, mdocs included; `org-iso-mdoc` stays iOS's
   route (#476). passport-vdc's page offers both (#474).
+- **In the library since:** `DigitalCredentials` registers the
+  credentials (`register`), reads the request and the caller's origin
+  in the provider activity (`request`, preferring OpenID4VP when a page
+  offers both), and builds the result intent (`response`, `failure`).
+  The library depends on the androidx Credential Manager libraries for
+  it. `MdocPresentation.Response.responseData` is the Annex C
+  `{"response"}` object a platform that takes the whole data member
+  wants; iOS takes the bytes themselves.
 
 ### Phase 8 findings: publishing
 

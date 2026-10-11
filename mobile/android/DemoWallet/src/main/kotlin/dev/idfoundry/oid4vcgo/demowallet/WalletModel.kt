@@ -6,6 +6,7 @@ import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -19,6 +20,7 @@ import dev.idfoundry.oid4vcwallet.CredentialDetail
 import dev.idfoundry.oid4vcwallet.CredentialSummary
 import dev.idfoundry.oid4vcwallet.DeferredCredential
 import dev.idfoundry.oid4vcwallet.DeferredStatus
+import dev.idfoundry.oid4vcwallet.DigitalCredentials
 import dev.idfoundry.oid4vcwallet.FileCredentialStore
 import dev.idfoundry.oid4vcwallet.Issuance
 import dev.idfoundry.oid4vcwallet.MdocPresentation
@@ -275,24 +277,43 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     private var dcapiAnswer: ((String?) -> Unit)? = null
 
     /**
-     * Opens an OpenID4VP request Credential Manager handed over, from
-     * the page or app at [origin], for the consent screen; [answer] gets
-     * the response's data once the holder shares or declines.
-     * [preselect] is the credential the holder chose in the system's
-     * chooser.
+     * Opens an OpenID4VP request Credential Manager handed over for the
+     * consent screen, starting from the credential the holder chose in
+     * the system's chooser; [answer] gets the response's data once the
+     * holder shares or declines.
      */
-    fun startDCAPI(protocol: String, data: ByteArray, origin: String, preselect: String?, answer: (String?) -> Unit) {
+    fun startDCAPI(request: DigitalCredentials.Request, answer: (String?) -> Unit) {
         dcapiAnswer = answer
         viewModelScope.launch {
             val wallet = wallet ?: return@launch answerDCAPI(null)
-            open { wallet.startDCAPIPresentation(protocol, data, origin) }
+            open { request.startPresentation(wallet) }
             val p = presentation ?: return@launch answerDCAPI(null)
             // The holder already chose in the system's chooser: start from that.
-            preselect?.let { id ->
+            request.selectedCredentialID?.let { id ->
                 val query = p.queries.firstOrNull { q -> q.credentials.any { it.id == id } } ?: return@let
                 selected = mapOf(query.queryID to listOf(id))
                 updatePreview()
             }
+        }
+    }
+
+    /**
+     * Tells Credential Manager which credentials the wallet can present
+     * over the Digital Credentials API, so Chrome offers the app when a
+     * page asks for one. The counterpart of the iOS demo's
+     * DocumentRegistrations.
+     */
+    private suspend fun registerDigitalCredentials(wallet: Wallet) {
+        try {
+            val n = DigitalCredentials.register(getApplication(), wallet)
+            Log.i("DemoWallet", "registered $n credential(s) with Credential Manager")
+        } catch (e: WalletException) {
+            Log.w("DemoWallet", "listing credentials to register: $e")
+        } catch (e: Exception) {
+            // No Play services, or Credential Manager without the
+            // registry: Chrome won't offer the app, and nothing else
+            // changes.
+            Log.w("DemoWallet", "registering credentials with Credential Manager: $e")
         }
     }
 
@@ -668,9 +689,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             credentials = wallet.credentials()
             loadClaims(emptySet())
             // In the background: the list needn't wait for Credential Manager.
-            val held = credentials
-            val all = claims.toMap()
-            viewModelScope.launch { DigitalCredentials.sync(getApplication(), held, all) }
+            viewModelScope.launch { registerDigitalCredentials(wallet) }
         } catch (e: WalletException) {
             phase = Phase.Failed("Couldn't list credentials: " + describe(e))
         }
