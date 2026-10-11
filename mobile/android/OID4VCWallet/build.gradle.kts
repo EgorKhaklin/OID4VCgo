@@ -90,6 +90,13 @@ kotlin {
 dependencies {
     implementation(files(unpackMobile.flatMap { it.classes }))
     implementation(libs.androidx.annotation)
+    // DigitalCredentials: Credential Manager's Digital Credentials API.
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.registry.provider)
+    implementation(libs.androidx.credentials.registry.play.services)
+    implementation(libs.androidx.credentials.registry.openid)
+    implementation(libs.androidx.credentials.registry.mdoc)
+    implementation(libs.androidx.credentials.registry.sdjwtvc)
     // api: the public API exposes their types (ProximityPresentation.state
     // is a StateFlow, CredentialDetail.claims a JsonElement).
     api(libs.kotlinx.coroutines.android)

@@ -21,148 +21,107 @@ Credential Manager to the page, encrypted to it, with no network
 request from the wallet.
 
 Chrome sends OpenID4VP, mdocs included: `org-iso-mdoc` is Safari's
-route on iOS. The library's `startMdocPresentation` exists for it, but
-nothing on Android sends it today.
+route on iOS. `DigitalCredentials.request` prefers OpenID4VP when a page
+offers both, and an `org-iso-mdoc` request can only be answered for a
+web origin.
 
-It needs Google Play services, and the `androidx.credentials` and
-`androidx.credentials.registry` libraries, which are still alpha.
+`DigitalCredentials` does Credential Manager's part. It needs Google
+Play services on the device, and brings in the `androidx.credentials`
+and `androidx.credentials.registry` libraries, which are still alpha.
 
 ## Register the credentials
 
 Credential Manager matches a page's request against what each wallet
-registered: register every presentable credential, with its claims,
-whenever the credentials change. `OpenId4VpRegistry`'s default matcher
-is Google's, so the app writes none. The claims' values are only for the
-system's chooser; nothing is presented until the holder agrees in the
-app.
+registered. `DigitalCredentials.register` registers every presentable
+credential (unexpired, with its key on the device), SD-JWT VCs and
+mdocs, with their claims, replacing what was registered before. Call it
+whenever the credentials change: after an issuance, a deletion or a
+restore. The registry's default matcher is Google's OpenID4VP one, so
+the app writes none.
 
 ```kotlin
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.util.Base64
-import androidx.credentials.DigitalCredential
-import androidx.credentials.ExperimentalDigitalCredentialApi
-import androidx.credentials.GetCredentialResponse
-import androidx.credentials.GetDigitalCredentialOption
-import androidx.credentials.exceptions.GetCredentialUnknownException
-import androidx.credentials.provider.PendingIntentHandler
-import androidx.credentials.registry.digitalcredentials.openid4vp.OpenId4VpRegistry
-import androidx.credentials.registry.digitalcredentials.sdjwt.SdJwtClaim
-import androidx.credentials.registry.digitalcredentials.sdjwt.SdJwtEntry
-import androidx.credentials.registry.provider.RegistryManager
-import androidx.credentials.registry.provider.digitalcredentials.VerificationEntryDisplayProperties
-import androidx.credentials.registry.provider.digitalcredentials.VerificationFieldDisplayProperties
+import android.util.Log
+import dev.idfoundry.oid4vcwallet.DigitalCredentials
 import dev.idfoundry.oid4vcwallet.Presentation
 import dev.idfoundry.oid4vcwallet.Wallet
-import java.security.MessageDigest
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
-/**
- * Registers the wallet's SD-JWT VCs, with their top-level claims, with
- * Credential Manager. Registering again replaces what was registered.
- */
-suspend fun registerWithCredentialManager(context: Context, wallet: Wallet, icon: Bitmap) {
-    val entries = wallet.credentials()
-        .filter { it.format == "dc+sd-jwt" && it.vct != null && it.holderKeyPresent != false }
-        .map { c ->
-            val claims = wallet.credential(c.id).claims as? JsonObject ?: JsonObject(emptyMap())
-            val fields = claims.mapNotNull { (key, value) ->
-                val text = (value as? JsonPrimitive)?.content ?: return@mapNotNull null
-                SdJwtClaim(listOf(key), text, setOf(VerificationFieldDisplayProperties(key, text)), true)
-            }
-            val display = VerificationEntryDisplayProperties(
-                c.display?.name ?: c.vct!!, c.display?.issuerName ?: c.credentialIssuer, icon, null, null, null,
-            )
-            SdJwtEntry(c.vct!!, fields, setOf(display), c.id)
-        }
-    RegistryManager.create(context).registerCredentials(OpenId4VpRegistry(entries, "com.example.wallet"))
+/** Registers the wallet's credentials: call it whenever they change. */
+suspend fun registerForChrome(context: Context, wallet: Wallet) {
+    try {
+        val registered = DigitalCredentials.register(context, wallet)
+        Log.i("Wallet", "registered $registered credential(s)")
+    } catch (e: Exception) {
+        // No Google Play services, say: Chrome won't offer the wallet.
+        Log.w("Wallet", "registering with Credential Manager: $e")
+    }
 }
 ```
 
-The demo wallet's `DigitalCredentials.kt` registers mdocs too, with
-`MdocEntry`.
+Nothing is presented by registering: the holder still agrees in the
+app. The claims' values are registered too, so the matcher can answer a
+query that asks for a value and the system's chooser can show it. They
+are then held by the system's registry before any consent; set
+`RegistrationOptions(claimValues = false)` to register the claims'
+names only. `RegistrationOptions` also sets the registry's ID and each
+credential's icon in the chooser.
 
 ## Answer in the provider activity
 
-Credential Manager launches the activity whose intent filter has the
-`androidx.credentials.registry.provider.action.GET_CREDENTIAL` action,
-with the request in its intent. The activity:
+Declare an exported activity for Credential Manager to launch:
 
-1. takes the request's OpenID4VP part (`protocol` starting
-   `openid4vp-v1-`, and its `data`);
-2. works out the caller's origin: a browser's, which
-   `CallingAppInfo.getOrigin` returns when the browser is on the
-   privileged-browsers list you give it (the demo carries Chrome's
-   entries from Google's list), or else an app's own,
-   `android:apk-key-hash:` and its signing certificate's SHA-256;
-3. starts the presentation, asks the holder, and responds or declines:
-   either gives `Presented.dcapiResponse`, which goes back to the platform.
+```xml
+<activity android:name=".GetCredentialActivity" android:exported="true">
+    <intent-filter>
+        <action android:name="androidx.credentials.registry.provider.action.GET_CREDENTIAL" />
+        <category android:name="android.intent.category.DEFAULT" />
+    </intent-filter>
+</activity>
+```
+
+In it, `DigitalCredentials.request` reads the request and the caller's
+origin. That is a browser's origin for the page when the browser is on
+the privileged-browsers list you give it (Credential Manager's JSON
+allowlist; the demo carries Chrome's entries from Google's list), or
+else the calling app's own, `android:apk-key-hash:` and its signing
+certificate's SHA-256. It returns null when the caller's origin can't
+be established, and for a request in no protocol the wallet answers.
 
 ```kotlin
 /**
- * Answers the Digital Credentials API request in a provider activity's
- * `intent`: `confirm` shows the holder the presentation and returns
- * whether they agree. Returns the result to set on the activity.
+ * Answers the request a provider activity was started with: `intent`
+ * is the activity's, and `askTheHolder` shows the holder the Verifier
+ * and the claims asked for, and returns whether they agree. Returns the
+ * intent to set as the activity's result.
  */
-@OptIn(ExperimentalDigitalCredentialApi::class)
-suspend fun answerCredentialRequest(
+suspend fun answerFromChrome(
     intent: Intent,
     wallet: Wallet,
     privilegedBrowsers: String,
-    confirm: suspend (Presentation) -> Boolean,
+    askTheHolder: suspend (Presentation) -> Boolean,
 ): Intent {
-    val result = Intent()
-    val request = PendingIntentHandler.retrieveProviderGetCredentialRequest(intent)
-    val option = request?.credentialOptions?.filterIsInstance<GetDigitalCredentialOption>()?.firstOrNull()
-    val asked = option?.let { openid4vpRequest(it.requestJson) }
-    if (request == null || asked == null) {
-        PendingIntentHandler.setGetCredentialException(result, GetCredentialUnknownException("no OpenID4VP request"))
-        return result
-    }
-    val (protocol, data) = asked
-    val origin = request.callingAppInfo.getOrigin(privilegedBrowsers)
-        ?: appOrigin(request.callingAppInfo.signingInfoCompat.signingCertificateHistory.firstOrNull()?.toByteArray())
-    val presentation = wallet.startDCAPIPresentation(protocol, data.toString().toByteArray(), origin)
-    val presented = if (presentation.isAnswerable && confirm(presentation)) {
+    val request = DigitalCredentials.request(intent, privilegedBrowsers) ?: return DigitalCredentials.failure()
+    // org-iso-mdoc is Safari's route: Chrome asks over OpenID4VP.
+    if (request.isMdoc) return DigitalCredentials.failure()
+    val presentation = request.startPresentation(wallet)
+    val presented = if (presentation.isAnswerable && askTheHolder(presentation)) {
         presentation.respond(presentation.defaultSelection())
     } else {
         presentation.decline()
     }
-    val response = JsonObject(mapOf(
-        "protocol" to JsonPrimitive(protocol),
-        "data" to Json.parseToJsonElement(presented.dcapiResponse ?: "{}"),
-    ))
-    PendingIntentHandler.setGetCredentialResponse(result, GetCredentialResponse(DigitalCredential(response.toString())))
-    return result
-}
-
-/** The request's first OpenID4VP request: its protocol and data. */
-private fun openid4vpRequest(requestJson: String): Pair<String, JsonObject>? {
-    val requests = runCatching { Json.parseToJsonElement(requestJson).jsonObject["requests"]?.jsonArray }.getOrNull() ?: return null
-    return requests.mapNotNull { it as? JsonObject }.firstNotNullOfOrNull { r ->
-        val protocol = r["protocol"]?.jsonPrimitive?.content ?: return@firstNotNullOfOrNull null
-        val data = r["data"] as? JsonObject ?: return@firstNotNullOfOrNull null
-        if (protocol.startsWith("openid4vp-v1-")) protocol to data else null
-    }
-}
-
-/** An app's origin, from its signing certificate, as Android names one. */
-private fun appOrigin(certificate: ByteArray?): String {
-    val hash = MessageDigest.getInstance("SHA-256").digest(certificate ?: ByteArray(0))
-    return "android:apk-key-hash:" + Base64.encodeToString(hash, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    return presented.dcapiResponse?.let { DigitalCredentials.response(request, it) } ?: DigitalCredentials.failure()
 }
 ```
 
 The activity sets the returned intent with `setResult(RESULT_OK, …)` and
-finishes. The demo's `GetCredentialActivity` does this with a consent
-screen. Launched by Credential Manager rather than the holder, it should
-skip the app's launch work: a key sweep then would delete the keys of an
+finishes.
+
+`request.selectedCredentialID` is the credential the holder picked in
+the system's chooser: start the consent screen from it. The demo's
+`GetCredentialActivity` does all this with a consent screen. Launched by
+Credential Manager rather than the holder, the activity should skip the
+app's launch work: a key sweep then would delete the keys of an
 issuance the app has in progress.
 
 ## Trust

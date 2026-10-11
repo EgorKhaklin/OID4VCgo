@@ -12,6 +12,7 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.time.Instant
 import java.util.Locale
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Issuance as MobileIssuance
@@ -1008,7 +1009,17 @@ public class MdocPresentation internal constructor(private val handle: MobileMdo
         @Serializable(Base64Serializer::class) val response: ByteArray,
         /** Whether the copy presented had been seen by another Verifier. */
         val linkable: Boolean = false,
-    )
+    ) {
+        /**
+         * The response as the data member of a platform's Digital
+         * Credentials API response, for a platform that takes the whole
+         * object (ISO/IEC TS 18013-7 Annex C): `{"response":
+         * base64url(EncryptedResponse)}`, as JSON. iOS takes [response]
+         * itself; on Android, [DigitalCredentials.response] wraps it.
+         */
+        public fun responseData(): String =
+            json.encodeToString(JsonObject.serializer(), JsonObject(mapOf("response" to JsonPrimitive(java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(response)))))
+    }
 
     /** What's asked: show it for the holder's consent. */
     public val request: Request = decode(handle.request())
@@ -1030,7 +1041,9 @@ public class MdocPresentation internal constructor(private val handle: MobileMdo
          * [url]'s web origin, as a browser serializes it and the session
          * transcript binds it: `scheme://host`, with the port only when it
          * isn't the scheme's default, and no path — the form
-         * [Wallet.startMdocPresentation] takes.
+         * [Wallet.startMdocPresentation] takes. For a platform that
+         * reports a page's URL; Credential Manager reports the origin
+         * itself ([DigitalCredentials.Request.origin]).
          */
         public fun origin(url: String): String? {
             val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return null
