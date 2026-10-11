@@ -4,8 +4,10 @@ import Security
 /// The wallet's keys, in the Secure Enclave and the Keychain: P-256 keys
 /// whose private halves never leave the Security framework. Each key's
 /// ID is its Keychain application tag (after `Options.tagPrefix`), and
-/// its label names its purpose.
-public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
+/// its label names its purpose. Holder keys also agree keys (ECDH), for
+/// deviceMac in person: a P-256 key in the Secure Enclave or the Keychain
+/// can, with nothing asked of it at creation.
+public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable {
     /// How the store makes and keeps keys.
     public struct Options: Sendable {
         /// Generate keys in the Secure Enclave. Off, keys are software
@@ -48,6 +50,7 @@ public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
     public let options: Options
     private let lock = NSLock()
     private var ephemeral: [String: SecKey] = [:]
+    private var ephemeralPurposes: [String: KeyPurpose] = [:]
 
     /// A store making and keeping keys as `options` say.
     public init(options: Options = Options()) {
@@ -93,7 +96,10 @@ public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
             throw error!.takeRetainedValue() as Error
         }
         if !options.persistent {
-            lock.withLock { ephemeral[id] = key }
+            lock.withLock {
+                ephemeral[id] = key
+                ephemeralPurposes[id] = purpose
+            }
         }
         return id
     }
@@ -121,9 +127,42 @@ public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
         return sig as Data
     }
 
+    /// ECDH between holder key `id` and `peerPublicKey` (an uncompressed
+    /// X9.63 P-256 point): the 32-byte shared secret, its x-coordinate. A
+    /// holder key asking for user presence asks here too, as for `sign`.
+    /// Instance and DPoP keys never agree keys.
+    public func agree(id: String, peerPublicKey: Data) throws -> Data {
+        guard let key = try privateKey(id) else {
+            throw StoreError("no key \(id)")
+        }
+        guard try purpose(of: id) == .holder else {
+            throw KeyAgreementUnsupported("key \(id) isn't a holder key")
+        }
+        guard SecKeyIsAlgorithmSupported(key, .keyExchange, .ecdhKeyExchangeStandard) else {
+            throw KeyAgreementUnsupported("key \(id) can't agree keys")
+        }
+        let peerAttrs: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
+            kSecAttrKeySizeInBits as String: 256,
+        ]
+        var error: Unmanaged<CFError>?
+        guard peerPublicKey.count == 65, peerPublicKey.first == 0x04,
+              let peer = SecKeyCreateWithData(peerPublicKey as CFData, peerAttrs as CFDictionary, &error) else {
+            throw StoreError("the peer's key isn't an uncompressed P-256 point")
+        }
+        guard let z = SecKeyCopyKeyExchangeResult(key, .ecdhKeyExchangeStandard, peer, [:] as CFDictionary, &error) else {
+            throw error!.takeRetainedValue() as Error
+        }
+        return z as Data
+    }
+
     public func deleteKey(id: String) throws {
         if !options.persistent {
-            _ = lock.withLock { ephemeral.removeValue(forKey: id) }
+            lock.withLock {
+                ephemeral[id] = nil
+                ephemeralPurposes[id] = nil
+            }
             return
         }
         let status = SecItemDelete(query(id) as CFDictionary)
@@ -185,6 +224,23 @@ public final class KeychainKeyStore: KeyStore, @unchecked Sendable {
         default:
             throw StoreError("key \(id): OSStatus \(status)")
         }
+    }
+
+    /// The purpose a key was made for, from its label (`createKey`); nil
+    /// for a key with none.
+    private func purpose(of id: String) throws -> KeyPurpose? {
+        if !options.persistent {
+            return lock.withLock { ephemeralPurposes[id] }
+        }
+        var q = query(id)
+        q[kSecReturnAttributes as String] = true
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(q as CFDictionary, &item)
+        guard status == errSecSuccess, let attrs = item as? [String: Any],
+              let label = attrs[kSecAttrLabel as String] as? String, label.hasPrefix("oid4vcgo ") else {
+            return nil
+        }
+        return KeyPurpose(rawValue: String(label.dropFirst("oid4vcgo ".count)))
     }
 
     private func query(_ id: String) -> [String: Any] {

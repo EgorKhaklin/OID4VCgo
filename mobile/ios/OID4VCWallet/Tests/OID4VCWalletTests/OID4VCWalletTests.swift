@@ -117,6 +117,49 @@ final class OID4VCWalletTests: XCTestCase {
         #endif
     }
 
+    /// A holder key agrees the secret the peer computes, and still signs;
+    /// instance and DPoP keys never agree keys.
+    func testHolderKeyAgreesKeys() throws {
+        try checkAgreement(KeychainKeyStore(options: .init(secureEnclave: false, persistent: false)))
+    }
+
+    /// The same in the Secure Enclave — simulated by the iOS Simulator; a
+    /// real device needs the demo app.
+    func testSecureEnclaveHolderKeyAgreesKeys() throws {
+        #if targetEnvironment(simulator)
+        try checkAgreement(KeychainKeyStore(options: .init(secureEnclave: true, persistent: false, holderUserPresence: false)))
+        #else
+        throw XCTSkip("Secure Enclave keys need the iOS Simulator or a signed app")
+        #endif
+    }
+
+    func checkAgreement(_ store: KeychainKeyStore) throws {
+        let id = try store.createKey(purpose: .holder)
+        let peer = P256.KeyAgreement.PrivateKey()
+        let z = try store.agree(id: id, peerPublicKey: peer.publicKey.x963Representation)
+        let holder = try P256.KeyAgreement.PublicKey(x963Representation: XCTUnwrap(try store.publicKey(id: id)))
+        let want = try peer.sharedSecretFromKeyAgreement(with: holder).withUnsafeBytes { Data($0) }
+        XCTAssertEqual(z, want)
+        XCTAssertEqual(z.count, 32)
+        XCTAssertFalse(try store.sign(id: id, digest: Data(repeating: 1, count: 32)).isEmpty)
+        let dpop = try store.createKey(purpose: .dpop)
+        XCTAssertThrowsError(try store.agree(id: dpop, peerPublicKey: peer.publicKey.x963Representation)) {
+            XCTAssertTrue($0 is KeyAgreementUnsupported, "\($0)")
+        }
+        XCTAssertThrowsError(try store.agree(id: id, peerPublicKey: Data([4, 1, 2])))
+    }
+
+    func testCheckKeyAgreement() async throws {
+        let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false))
+        let supported = try await OID4VC.checkKeyAgreement(store, store)
+        XCTAssertTrue(supported)
+        struct Refusing: KeyAgreement {
+            func agree(id: String, peerPublicKey: Data) throws -> Data { throw KeyAgreementUnsupported("signing only") }
+        }
+        let unsupported = try await OID4VC.checkKeyAgreement(store, Refusing())
+        XCTAssertFalse(unsupported)
+    }
+
     func testMemoryKeySweep() throws {
         let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false))
         let a = try store.createKey(purpose: .instance)

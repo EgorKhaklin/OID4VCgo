@@ -272,3 +272,56 @@ func TestAnnexDDeviceResponse(t *testing.T) {
 		t.Error("VerifyDeviceMAC over a different transcript: verified")
 	}
 }
+
+// TestAnnexDDeviceMACFromSharedSecret: from the ECDH secret alone — as a
+// platform key store returns it, the private key never leaving it —
+// ComputeDeviceMACFromSharedSecret reproduces Annex D's DeviceMac tag
+// byte for byte, over the published transcript and device namespaces.
+func TestAnnexDDeviceMACFromSharedSecret(t *testing.T) {
+	doc, err := parseDeviceResponse(mustHex(t, annexDDeviceResponse))
+	if err != nil {
+		t.Fatalf("parseDeviceResponse: %v", err)
+	}
+	static := annexDKey(t, annexDStaticDeviceKeyD, annexDStaticDeviceKeyX, annexDStaticDeviceKeyY)
+	reader := annexDKey(t, annexDEphemeralReaderKeyD, annexDEphemeralReaderKeyX, annexDEphemeralReaderKeyY)
+	staticECDH, err := static.ECDH()
+	if err != nil {
+		t.Fatal(err)
+	}
+	readerECDH, err := reader.PublicKey.ECDH()
+	if err != nil {
+		t.Fatal(err)
+	}
+	z, err := staticECDH.ECDH(readerECDH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcript := mustHex(t, annexDSessionTranscriptBytes)
+	got, err := mdoc.ComputeDeviceMACFromSharedSecret(z, transcript, doc.docType, doc.deviceSigned.NameSpaces)
+	if err != nil {
+		t.Fatalf("ComputeDeviceMACFromSharedSecret: %v", err)
+	}
+	if got.AuthType != mdoc.DeviceAuthMAC {
+		t.Fatalf("AuthType = %v, want DeviceAuthMAC", got.AuthType)
+	}
+	if tag, want := mac0Tag(t, got.DeviceAuth), mac0Tag(t, doc.deviceSigned.DeviceAuth); !bytes.Equal(tag, want) {
+		t.Errorf("DeviceMac tag = %x, Annex D's %x", tag, want)
+	}
+	if err := mdoc.VerifyDeviceMAC(got, &static.PublicKey, reader, transcript, doc.docType); err != nil {
+		t.Errorf("VerifyDeviceMAC: %v", err)
+	}
+}
+
+// mac0Tag is a COSE_Mac0's tag: [protected, unprotected, payload, tag].
+func mac0Tag(t testing.TB, mac0 []byte) []byte {
+	t.Helper()
+	var parts []cbor.RawMessage
+	if err := cbor.Unmarshal(mac0, &parts); err != nil || len(parts) != 4 {
+		t.Fatalf("not a COSE_Mac0: %v", err)
+	}
+	var tag []byte
+	if err := cbor.Unmarshal(parts[3], &tag); err != nil {
+		t.Fatalf("COSE_Mac0 tag: %v", err)
+	}
+	return tag
+}
