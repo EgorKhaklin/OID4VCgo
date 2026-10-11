@@ -156,30 +156,11 @@ internal class GattClientTransport(
             // leaving half a message) mustn't spoil this attempt.
             incoming = Channel(Channel.UNLIMITED)
             reassembler = BleChunks.Reassembler()
-            val device = scan()
-            var status = attemptConnection(device)
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                try {
-                    start()
-                    return
-                } catch (e: ProximityTransportException) {
-                    if (closed) throw e
-                    gatt?.disconnect()
-                    if (e.wrongReader) {
-                        // Another session's reader: keep looking for this
-                        // one's, until the caller's connect timeout.
-                        Log.i(TAG, "ignoring a device that isn't this session's reader")
-                        ignored.add(device.address)
-                        gatt?.close()
-                        gatt = null
-                        continue
-                    }
-                    // A device that disconnects or stops answering
-                    // mid-setup: one failed attempt, as any other.
-                    Log.i(TAG, "starting the session failed: ${e.message}")
-                    status = BluetoothGatt.GATT_FAILURE
-                }
-            }
+            val status = tryDevice(scan())
+            if (status == BluetoothGatt.GATT_SUCCESS) return
+            // Another session's reader: keep looking for this one's, until
+            // the caller's connect timeout, without spending an attempt.
+            if (status == WRONG_READER) continue
             lastStatus = status
             attempt++
             Log.i(TAG, "connecting failed with status $status (attempt $attempt of $CONNECT_ATTEMPTS)")
@@ -188,6 +169,34 @@ internal class GattClientTransport(
             delay(RETRY_DELAY_MS)
         }
         throw ProximityTransportException("couldn't connect to the other device (status $lastStatus)")
+    }
+
+    /**
+     * Connects to [device] and starts the session: GATT_SUCCESS once it's
+     * started, [WRONG_READER] for a device whose Ident isn't this
+     * session's reader's (now ignored), else the failure's GATT status. A
+     * device that disconnects or stops answering mid-setup is one failed
+     * attempt, as any other; a closed session throws.
+     */
+    private suspend fun tryDevice(device: BluetoothDevice): Int {
+        val status = attemptConnection(device)
+        if (status != BluetoothGatt.GATT_SUCCESS) return status
+        try {
+            start()
+            return BluetoothGatt.GATT_SUCCESS
+        } catch (e: ProximityTransportException) {
+            if (closed) throw e
+            gatt?.disconnect()
+            if (!e.wrongReader) {
+                Log.i(TAG, "starting the session failed: ${e.message}")
+                return BluetoothGatt.GATT_FAILURE
+            }
+            Log.i(TAG, "ignoring a device that isn't this session's reader")
+            ignored.add(device.address)
+            gatt?.close()
+            gatt = null
+            return WRONG_READER
+        }
     }
 
     /** Scans until a device advertising [serviceUUID] is found. */
@@ -355,6 +364,8 @@ internal class GattClientTransport(
 
     private companion object {
         const val TAG = "OID4VCProximity"
+        /** [tryDevice]'s answer for another session's reader: no GATT status is negative. */
+        const val WRONG_READER = -1
         const val SCAN_RESTART_MS = 10_000L
         const val CONNECT_ATTEMPTS = 10
         const val CONNECT_TIMEOUT_MS = 10_000L
