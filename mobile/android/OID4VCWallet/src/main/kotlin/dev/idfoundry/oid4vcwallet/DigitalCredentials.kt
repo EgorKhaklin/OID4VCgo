@@ -231,7 +231,7 @@ public object DigitalCredentials {
         val display = setOf(
             VerificationEntryDisplayProperties(
                 c.display?.name ?: c.vct ?: c.doctype ?: c.configurationID,
-                c.display?.issuerName ?: runCatching { java.net.URI(c.credentialIssuer).host }.getOrNull() ?: c.credentialIssuer,
+                c.display?.issuerName ?: host(c.credentialIssuer) ?: c.credentialIssuer,
                 options.icon?.invoke(c) ?: swatch(c.display?.backgroundColor),
                 null, null, null,
             ),
@@ -254,6 +254,9 @@ public object DigitalCredentials {
             else -> null
         }
     }
+
+    /** [url]'s host; null where it has none or isn't a URL. */
+    private fun host(url: String): String? = runCatching<String?> { java.net.URI(url).host }.getOrNull()
 
     private fun field(name: String, value: JsonElement, options: RegistrationOptions) =
         setOf(VerificationFieldDisplayProperties(name, if (options.claimValues) text(value) else null))
