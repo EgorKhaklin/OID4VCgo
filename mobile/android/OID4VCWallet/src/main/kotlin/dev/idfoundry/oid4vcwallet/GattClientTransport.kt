@@ -151,7 +151,7 @@ internal class GattClientTransport(
         var lastStatus = 0
         var attempt = 0
         while (attempt < CONNECT_ATTEMPTS) {
-            if (closed) throw ProximityTransportException("the session ended")
+            if (closed) throw ProximityTransportException(SESSION_ENDED)
             // A device that failed before (disconnecting mid-setup,
             // leaving half a message) mustn't spoil this attempt.
             incoming = Channel(Channel.UNLIMITED)
@@ -293,7 +293,7 @@ internal class GattClientTransport(
 
     /** Writes [value] to [characteristic], without response, and waits until it's sent. */
     private suspend fun write(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-        val g = gatt ?: throw ProximityTransportException("the session ended")
+        val g = gatt ?: throw ProximityTransportException(SESSION_ENDED)
         drain()
         val type = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
         val queued = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -328,7 +328,7 @@ internal class GattClientTransport(
         try {
             incoming.receive()
         } catch (e: ClosedReceiveChannelException) {
-            throw ProximityTransportException("the session ended", peerEnded = true, cause = e)
+            throw ProximityTransportException(SESSION_ENDED, peerEnded = true, cause = e)
         }
 
     private fun fail(e: ProximityTransportException) {
@@ -366,6 +366,7 @@ internal class GattClientTransport(
         const val TAG = "OID4VCProximity"
         /** [tryDevice]'s answer for another session's reader: no GATT status is negative. */
         const val WRONG_READER = -1
+        const val SESSION_ENDED = "the session ended"
         const val SCAN_RESTART_MS = 10_000L
         const val CONNECT_ATTEMPTS = 10
         const val CONNECT_TIMEOUT_MS = 10_000L
