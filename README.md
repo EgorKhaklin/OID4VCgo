@@ -59,8 +59,8 @@ FAPIgo" section for the specific list.
 > separate `mobile` module are implemented and tested. All four roles
 > were OpenID Certified as 0.12.0 (see above), and every later release
 > is checked against the same OIDF test plans by the daily conformance
-> workflows. The OpenID4VP wallet harness is also run daily, and on each
-> release, against [polaris-oid4vp](conformance/README.md#interop-with-polaris-oid4vp),
+> workflows. The OpenID4VP wallet harness is also run on each pull
+> request, daily, and on each release, against [polaris-oid4vp](conformance/README.md#interop-with-polaris-oid4vp),
 > an independent verifier, with negative controls the OIDF suite lacks.
 > Those certified profiles are the redirect flows: the
 > Digital Credentials API (OpenID4VP's `dc_api.jwt` and `mdocdcapi`'s
