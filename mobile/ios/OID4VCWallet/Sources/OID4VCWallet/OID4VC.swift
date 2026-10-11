@@ -204,6 +204,17 @@ public enum OID4VC {
         return try decode(KeyStoreReport.self, json).checked.compactMap(KeyPurpose.init(rawValue:))
     }
 
+    /// Exercises `agreement` with a holder key from `keyStore` as the
+    /// wallet will in person: true when it agrees keys (deviceMac), false
+    /// when it can't (the wallet signs). A store asking for user presence
+    /// on holder keys may prompt.
+    public static func checkKeyAgreement(_ keyStore: some KeyStore, _ agreement: some KeyAgreement) async throws -> Bool {
+        let keys = KeyStoreAdapter(keyStore)
+        let ka = KeyAgreementAdapter(agreement)
+        let json = try await offMain { try call { MobileCheckKeyAgreement(keys, ka, $0) } }
+        return try decode(KeyAgreementReport.self, json).keyAgreement == "supported"
+    }
+
     /// Runs `body` with an Operation, off the caller's thread; cancelling
     /// the calling Task cancels the Operation, and the Go call returns a
     /// `.cancelled` WalletError.
@@ -249,6 +260,12 @@ public enum OID4VC {
 
 /// CheckKeyStore's result.
 struct KeyStoreReport: Decodable { let checked: [String] }
+
+/// CheckKeyAgreement's result.
+struct KeyAgreementReport: Decodable {
+    let keyAgreement: String
+    enum CodingKeys: String, CodingKey { case keyAgreement = "key_agreement" }
+}
 
 /// MobileOperation, which Go makes safe to cancel from any thread.
 final class Operation: @unchecked Sendable {

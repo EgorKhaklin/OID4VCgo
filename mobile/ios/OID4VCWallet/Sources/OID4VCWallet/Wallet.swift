@@ -65,6 +65,22 @@ public struct WalletConfiguration: Codable, Sendable {
     public var tlsPins: [String: [String]]
     /// The profile issuance follows.
     public var issuanceProfile: IssuanceProfile
+    /// How an in-person response authenticates the mdoc. `.macPreferred`
+    /// needs a key store that is also a `KeyAgreement`.
+    public var proximityDeviceAuth: ProximityDeviceAuth
+
+    /// How an in-person response authenticates the mdoc (ISO/IEC 18013-5
+    /// §9.1.3).
+    public enum ProximityDeviceAuth: String, Codable, Sendable, CaseIterable {
+        /// The holder key signs the session transcript (deviceSignature).
+        /// The default.
+        case signature
+        /// The holder key agrees a key with the reader's ephemeral key and
+        /// the response carries a MAC (deviceMac), which the reader can
+        /// check but can't show anyone else; a holder key that can't agree
+        /// keys signs instead.
+        case macPreferred = "mac_preferred"
+    }
 
     /// The profile issuance follows.
     public enum IssuanceProfile: String, Codable, Sendable, CaseIterable {
@@ -98,7 +114,7 @@ public struct WalletConfiguration: Codable, Sendable {
                 mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false, requireTrustedMdocReader: Bool = false,
                 development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
                 copyPolicy: CopyPolicy = .perPresentation, issuanceProfile: IssuanceProfile = .openID4VCI,
-                tlsPins: [String: [String]] = [:]) {
+                tlsPins: [String: [String]] = [:], proximityDeviceAuth: ProximityDeviceAuth = .signature) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -114,6 +130,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.copyPolicy = copyPolicy
         self.tlsPins = tlsPins
         self.issuanceProfile = issuanceProfile
+        self.proximityDeviceAuth = proximityDeviceAuth
     }
 
     enum CodingKeys: String, CodingKey {
@@ -122,7 +139,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case mdocReaderRequireEKU = "mdoc_reader_require_eku", requireTrustedMdocReader = "require_trusted_mdoc_reader"
         case development, locales, batchSize = "batch_size"
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy", issuanceProfile = "issuance_profile"
-        case tlsPins = "tls_pins"
+        case tlsPins = "tls_pins", proximityDeviceAuth = "proximity_device_auth"
     }
 
     public init(from decoder: Decoder) throws {
@@ -141,7 +158,8 @@ public struct WalletConfiguration: Codable, Sendable {
                   requestRefresh: try c.decodeIfPresent(Bool.self, forKey: .requestRefresh) ?? false,
                   copyPolicy: try c.decodeIfPresent(CopyPolicy.self, forKey: .copyPolicy) ?? .perPresentation,
                   issuanceProfile: try c.decodeIfPresent(IssuanceProfile.self, forKey: .issuanceProfile) ?? .openID4VCI,
-                  tlsPins: try c.decodeIfPresent([String: [String]].self, forKey: .tlsPins) ?? [:])
+                  tlsPins: try c.decodeIfPresent([String: [String]].self, forKey: .tlsPins) ?? [:],
+                  proximityDeviceAuth: try c.decodeIfPresent(ProximityDeviceAuth.self, forKey: .proximityDeviceAuth) ?? .signature)
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
@@ -368,18 +386,22 @@ public final class Wallet: @unchecked Sendable {
     public convenience init(configuration: WalletConfiguration, keyStore: some KeyStore, credentialStore: some CredentialStore,
                             provider: (any WalletProvider)?) throws {
         try self.init(configuration: configuration, keys: KeyStoreAdapter(keyStore), credentials: CredentialStoreAdapter(credentialStore),
-                      provider: provider.map(WalletProviderAdapter.init))
+                      provider: provider.map(WalletProviderAdapter.init),
+                      agreement: (keyStore as? any KeyAgreement).map(KeyAgreementAdapter.init))
     }
 
     init(configuration: WalletConfiguration, keys: KeyStoreAdapter, credentials: CredentialStoreAdapter,
-         provider: (any MobileWalletProviderProtocol)?) throws {
+         provider: (any MobileWalletProviderProtocol)?, agreement: KeyAgreementAdapter? = nil) throws {
         guard OID4VC.abiVersion == OID4VC.expectedABIVersion else {
             throw WalletError(code: .internalError,
                               message: "the linked framework has ABI \(OID4VC.abiVersion), these sources ABI \(OID4VC.expectedABIVersion): rebuild it")
         }
         let json = String(decoding: try JSONEncoder().encode(configuration), as: UTF8.self)
         handle = try OID4VC.call { MobileNewWallet(json, keys, credentials, provider, $0) }!
-        adapters = [keys, credentials] + (provider.map { [$0 as AnyObject] } ?? [])
+        // A key store that also agrees keys answers in person with deviceMac
+        // under .macPreferred; Go keeps signing without one.
+        if let agreement { handle.setKeyAgreement(agreement) }
+        adapters = [keys, credentials] + (provider.map { [$0 as AnyObject] } ?? []) + (agreement.map { [$0 as AnyObject] } ?? [])
     }
 
     /// Deletes every key in `keyStore` that none of the wallet's

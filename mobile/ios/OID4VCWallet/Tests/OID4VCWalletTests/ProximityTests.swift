@@ -63,7 +63,8 @@ final class ProximityTests: XCTestCase {
         #endif
     }
 
-    func setup(signed: Bool = true, requireTrusted: Bool = false) async throws -> Setup {
+    func setup(signed: Bool = true, requireTrusted: Bool = false,
+               deviceAuth: WalletConfiguration.ProximityDeviceAuth = .signature) async throws -> Setup {
         struct ReaderSetup: Decodable {
             let readerConfig: String
             let mdocReaderRoots: String
@@ -77,8 +78,9 @@ final class ProximityTests: XCTestCase {
         config.mdocReaderRoots = readerSetup.mdocReaderRoots
         config.mdocReaderRequireEKU = true
         config.requireTrustedMdocReader = requireTrusted
+        config.proximityDeviceAuth = deviceAuth
         let wallet = try Wallet(configuration: config, keys: adapter, credentials: CredentialStoreAdapter(InMemoryCredentialStore()),
-                                provider: env.env.provider())
+                                provider: env.env.provider(), agreement: KeyAgreementAdapter(keys))
         let result = try await SessionTests.receive(env, wallet)
         let mdocID = try XCTUnwrap(result.credentials.first { $0.format == "mso_mdoc" }?.id)
         let readerConfig = try JSONDecoder().decode(ProximityReaderConfiguration.self, from: Data(readerSetup.readerConfig.utf8))
@@ -144,6 +146,22 @@ final class ProximityTests: XCTestCase {
         XCTAssertNotNil(v.statusList)
         let held = try await final(holder.states) { $0.isFinal }
         guard case .presented(linkable: false) = held else { return XCTFail("holder: \(held)") }
+    }
+
+    /// With MAC preferred, the holder key agrees a key with the reader's
+    /// and the reader verifies a deviceMac.
+    func testDeviceMac() async throws {
+        var s = try await setup(deviceAuth: .macPreferred)
+        defer { s.env.close() }
+        let (holder, reader) = try start(&s)
+        let r = try await request(holder)
+        _ = try await holder.respond(document: 0, credentialID: s.mdocID,
+                                     elements: [.init(namespace: Self.namespace, identifier: "family_name", retain: false)])
+        let result = try await final(reader.states) { $0.isFinal }
+        guard case .verified(let v) = result else { return XCTFail("reader: \(result)") }
+        XCTAssertEqual(r.documents.first?.credentials.map(\.id), [s.mdocID])
+        XCTAssertEqual(v.deviceAuth, "mac")
+        XCTAssertEqual(v.claims[Self.namespace]?["family_name"], .string("Doe"))
     }
 
     func testDeclined() async throws {

@@ -38,6 +38,28 @@ public extension KeyStore {
     var isDurable: Bool { false }
 }
 
+/// ECDH with the wallet's holder keys inside the key store, for deviceMac
+/// in person (ISO/IEC 18013-5 §9.1.3.5). A `KeyStore` that is also one is
+/// used for it when `WalletConfiguration.proximityDeviceAuth` is
+/// `.macPreferred`. `KeychainKeyStore` is one.
+public protocol KeyAgreement: Sendable {
+    /// Runs ECDH between key `id` and `peerPublicKey`, an uncompressed
+    /// X9.63 P-256 point, and returns the 32-byte shared secret. Throws
+    /// `KeyAgreementUnsupported` for a key that can't agree keys: the
+    /// wallet then signs instead. A holder key may ask for Face ID here.
+    func agree(id: String, peerPublicKey: Data) throws -> Data
+}
+
+/// A key that can't agree keys: the wallet signs instead of using a MAC.
+public struct KeyAgreementUnsupported: LocalizedError, Sendable {
+    /// Why.
+    public let message: String
+    /// An error carrying `message`.
+    public init(_ message: String) { self.message = message }
+    /// The message.
+    public var errorDescription: String? { message }
+}
+
 /// The wallet's credentials, as opaque records kept by ID under the
 /// platform's data protection. `FileCredentialStore` is the standard one.
 public protocol CredentialStore: Sendable {
@@ -100,6 +122,21 @@ final class KeyStoreAdapter: NSObject, MobileKeyStoreProtocol, @unchecked Sendab
     func deleteKey(_ id: String?) throws { try store.deleteKey(id: id ?? "") }
 
     func durable() -> Bool { store.isDurable }
+}
+
+/// A KeyAgreement as gomobile's MobileKeyAgreement: a key that can't
+/// agree keys is marked so Go signs instead.
+final class KeyAgreementAdapter: NSObject, MobileKeyAgreementProtocol, @unchecked Sendable {
+    let agreement: any KeyAgreement
+    init(_ agreement: any KeyAgreement) { self.agreement = agreement }
+
+    func agree(_ id: String?, peerPublicKey: Data?) throws -> Data {
+        do {
+            return try agreement.agree(id: id ?? "", peerPublicKey: peerPublicKey ?? Data())
+        } catch let e as KeyAgreementUnsupported {
+            throw StoreError("[no_key_agreement] " + e.message)
+        }
+    }
 }
 
 /// A CredentialStore as gomobile's MobileCredentialStore.

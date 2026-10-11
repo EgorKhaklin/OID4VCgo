@@ -112,7 +112,10 @@ in-person response can authenticate with deviceMac (ISO/IEC 18013-5
 
 A key that can't agree keys (Android Keystore keys need
 `PURPOSE_AGREE_KEY`, API 31+) fails with a message starting with
-`[no_key_agreement]`: the wallet then signs. Any other error fails the
+`[no_key_agreement]`: the wallet then signs. On iOS, `KeychainKeyStore`
+agrees keys with any holder key, in the Secure Enclave or not
+(`SecKeyCopyKeyExchangeResult`), and asks for user presence as it
+does to sign. Any other error fails the
 response as `platform`. `CheckKeyAgreement(store, ka)` exercises one.
 
 ### CredentialStore
