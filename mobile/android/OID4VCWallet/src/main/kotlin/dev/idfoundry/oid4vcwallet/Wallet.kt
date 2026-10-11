@@ -856,6 +856,12 @@ public class Presentation internal constructor(private val handle: MobilePresent
         @SerialName("credential_id") val credentialID: String,
         /** The claims it would disclose, as paths. */
         val claims: List<List<PathElement>>,
+        /**
+         * An SD-JWT VC's claims its issuer didn't make selectively
+         * disclosable: the Verifier receives them whatever the selection.
+         * Show them with [claims].
+         */
+        @SerialName("always_disclosed") val alwaysDisclosed: List<List<PathElement>> = emptyList(),
     )
 
     /** What responding or declining sent. */

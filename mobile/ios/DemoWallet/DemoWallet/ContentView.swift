@@ -708,10 +708,13 @@ struct RequestView: View {
             Section { Text("Can't share this selection: \(error)").foregroundStyle(.red) }
         } else {
             ForEach(Array(model.disclosures.enumerated()), id: \.offset) { _, d in
+                // Claims the issuer didn't make selectively disclosable
+                // are shared too, whatever the selection.
+                let paths = d.claims + d.alwaysDisclosed
                 Section {
-                    ForEach(d.claims.indices, id: \.self) { i in
-                        DisclosedRow(path: d.claims[i], claims: model.candidateClaims[d.credentialID],
-                                     unregistered: Self.isUnregistered(d.claims[i], query: d.queryID, in: p))
+                    ForEach(paths.indices, id: \.self) { i in
+                        DisclosedRow(path: paths[i], claims: model.candidateClaims[d.credentialID],
+                                     unregistered: Self.isUnregistered(paths[i], query: d.queryID, in: p))
                     }
                 } header: {
                     ShareHeader(holder: Holder(claims: model.candidateClaims[d.credentialID]),
