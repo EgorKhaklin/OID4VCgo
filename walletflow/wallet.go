@@ -196,7 +196,14 @@ type Wallet struct {
 
 	mu       sync.Mutex
 	deferred map[string]*Deferred // the pending ones handed out, by ID
-	liveDPoP map[string]bool      // DPoP keys open issuances hold
+	// liveKeys are the instance and DPoP keys open issuances hold, by
+	// ID: how many hold each. Two issuances can hold one key (a resumed
+	// authorization and the issuance that began it, or two resumes of
+	// one redirect), and the first to close mustn't delete it.
+	liveKeys map[string]int
+	// resuming are the authorizations ResumeIssuance is completing, by
+	// state: a second resume of one redirect waits for none.
+	resuming map[string]bool
 	// openGrants are the refresh grants open issuances hold, by ID: in
 	// use until the issuance closes, however many credentials are stored
 	// yet.
@@ -290,7 +297,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		return nil, fmt.Errorf("walletflow: %w", err)
 	}
 	return &Wallet{
-		cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, liveDPoP: map[string]bool{},
+		cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, liveKeys: map[string]int{}, resuming: map[string]bool{},
 		openGrants: map[string]bool{}, grantLocks: map[string]*sync.Mutex{},
 	}, nil
 }
@@ -426,4 +433,29 @@ func defaultHTTPClient(development bool, pins TLSPins) (*http.Client, error) {
 	}
 	client.Timeout = httpTimeout
 	return client, nil
+}
+
+// holdKey records that an open issuance holds key id.
+func (w *Wallet) holdKey(id string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.liveKeys[id]++
+}
+
+// unholdKey records that an issuance no longer holds key id.
+func (w *Wallet) unholdKey(id string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.liveKeys[id] <= 1 {
+		delete(w.liveKeys, id)
+	} else {
+		w.liveKeys[id]--
+	}
+}
+
+// keyHeld reports whether an open issuance holds key id.
+func (w *Wallet) keyHeld(id string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.liveKeys[id] > 0
 }

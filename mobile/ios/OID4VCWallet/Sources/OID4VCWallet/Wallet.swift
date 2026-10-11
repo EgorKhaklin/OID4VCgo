@@ -829,7 +829,11 @@ public final class Presentation: @unchecked Sendable {
         public let credentialID: String
         /// The claims it would disclose, as paths.
         public let claims: [[PathElement]]
-        enum CodingKeys: String, CodingKey { case queryID = "query_id", credentialID = "credential_id", claims }
+        /// An SD-JWT VC's claims its issuer didn't make selectively
+        /// disclosable: the Verifier receives them whatever the
+        /// selection. Show them with `claims`.
+        public let alwaysDisclosed: [[PathElement]]
+        enum CodingKeys: String, CodingKey { case queryID = "query_id", credentialID = "credential_id", claims, alwaysDisclosed = "always_disclosed" }
     }
 
     /// What responding or declining sent.

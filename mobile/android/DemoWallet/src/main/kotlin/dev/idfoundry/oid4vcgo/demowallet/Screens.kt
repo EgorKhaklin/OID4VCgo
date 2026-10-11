@@ -672,7 +672,9 @@ private fun LazyListScope.disclosures(model: WalletModel, p: Presentation) {
         val holder = Holder.of(model.candidateClaims[d.credentialID])
         val title = p.queries.flatMap { it.credentials }.firstOrNull { it.id == d.credentialID }?.let(Credentials::title) ?: "credential"
         item { SectionHeader("Will share · " + (holder?.name?.let { "$it · $title" } ?: title)) }
-        items(d.claims) { path -> DisclosedRow(path, model.candidateClaims[d.credentialID], Credentials.isUnregistered(path, d.queryID, p)) }
+        // Claims the issuer didn't make selectively disclosable are shared
+        // too, whatever the selection.
+        items(d.claims + d.alwaysDisclosed) { path -> DisclosedRow(path, model.candidateClaims[d.credentialID], Credentials.isUnregistered(path, d.queryID, p)) }
     }
 }
 

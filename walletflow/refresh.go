@@ -514,9 +514,7 @@ func (s *Issuance) endRefresh(ctx context.Context) {
 	if s.dpopKey == nil {
 		return
 	}
-	s.w.mu.Lock()
-	delete(s.w.liveDPoP, s.dpopKey.ID())
-	s.w.mu.Unlock()
+	s.w.unholdKey(s.dpopKey.ID())
 	_ = s.w.releaseDPoPKey(ctx, s.dpopKey.ID())
 }
 

@@ -181,9 +181,12 @@ func selection(selectionJSON string) (walletflow.Selection, error) {
 // Preview returns what responding with selectionJSON — {query ID:
 // [credential ID]}, the app's choice from Queries — would disclose:
 // {"abi", "disclosures": [{"query_id", "credential_id", "claims":
-// [claim path]}]}, a claim path being a JSON array of keys (and
-// indexes, or null for every element). A selection that doesn't answer
-// the request as it asks is invalid_selection.
+// [claim path], "always_disclosed": [claim path]}]}, a claim path being
+// a JSON array of keys (and indexes, or null for every element).
+// always_disclosed are an SD-JWT VC's claims its issuer didn't make
+// selectively disclosable, disclosed whatever the selection: show them
+// with claims. A selection that doesn't answer the request as it asks
+// is invalid_selection.
 func (p *Presentation) Preview(selectionJSON string) (string, error) {
 	sel, err := selection(selectionJSON)
 	if err != nil {
@@ -197,13 +200,18 @@ func (p *Presentation) Preview(selectionJSON string) (string, error) {
 		QueryID      string      `json:"query_id"`
 		CredentialID string      `json:"credential_id"`
 		Claims       []dcql.Path `json:"claims"`
+		Always       []dcql.Path `json:"always_disclosed"`
 	}
 	out := struct {
 		result
 		Disclosures []disclosure `json:"disclosures"`
 	}{result: result{ABIVersion}, Disclosures: []disclosure{}}
 	for _, d := range disclosed {
-		out.Disclosures = append(out.Disclosures, disclosure{d.QueryID, d.CredentialID, d.Claims})
+		always := d.AlwaysDisclosed
+		if always == nil {
+			always = []dcql.Path{}
+		}
+		out.Disclosures = append(out.Disclosures, disclosure{d.QueryID, d.CredentialID, d.Claims, always})
 	}
 	return marshal(out)
 }

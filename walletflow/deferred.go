@@ -393,10 +393,7 @@ func (w *Wallet) forgetDeferred(id string) {
 // holds it, a pending deferred credential still polls with it, or a
 // refresh grant's refresh token is bound to it (GrantAuthNone).
 func (w *Wallet) releaseDPoPKey(ctx context.Context, id string) error {
-	w.mu.Lock()
-	live := w.liveDPoP[id]
-	w.mu.Unlock()
-	if id == "" || live {
+	if id == "" || w.keyHeld(id) {
 		return nil
 	}
 	pending, err := w.deps.Deferred.ListDeferred(ctx)
@@ -523,7 +520,7 @@ func (w *Wallet) newDPoPKey(ctx context.Context) (Key, error) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.liveDPoP[k.ID()] = true
+	w.liveKeys[k.ID()]++
 	return k, nil
 }
 
