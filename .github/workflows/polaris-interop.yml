@@ -8,9 +8,17 @@
 name: Polaris interop
 
 on:
-  push:
-    branches: [ci/polaris-interop]
+  schedule:
+    - cron: '30 6 * * *' # daily, 6:30am UTC
+  # Each release, as the tag itself: right after tagging, the module
+  # proxy's @latest can still be the previous release.
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: OID4VCgo release to test (vX.Y.Z, or latest)
+        default: latest
 
 permissions:
   contents: read
@@ -29,7 +37,7 @@ jobs:
 
       - name: Run the interop script
         env:
-          OID4VCGO_VERSION: v0.39.0
+          OID4VCGO_VERSION: ${{ github.event.release.tag_name || inputs.version || 'latest' }}
         run: |
           export WORK="$RUNNER_TEMP/polaris-work"
           mkdir -p "$WORK"

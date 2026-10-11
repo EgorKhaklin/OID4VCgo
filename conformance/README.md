@@ -48,6 +48,23 @@ workflows, which run daily and on demand. Those runs, and the per-role
 write-ups below, are the self-run work that produced the evidence for
 these certifications, not a substitute for them.
 
+## Interop with polaris-oid4vp
+
+Besides the OIDF suite, `.github/workflows/polaris-interop.yml` runs
+`cmd/conformance-wallet-vp` against [polaris-oid4vp](https://github.com/EgorKhaklin/polaris-id),
+an independent OpenID4VP 1.0 + HAIP verifier, using its author's script
+(`lab/interop/oid4vcgo/run.sh`, Apache-2.0, thanks to Egor Khaklin): the
+presentation must be accepted, and four controls refused — a replayed
+request, a `client_id` that isn't the signed request's, an issuer CA the
+verifier doesn't trust, and a verifier CA the wallet doesn't trust. The
+OIDF suite has no negative wallet-side cases like those.
+
+It runs daily, on each release (that release's tag), and by hand. Our
+side is the newest release; polaris-id is pinned to a reviewed commit,
+since its verifier runs from source on the runner (a read-only token,
+no secrets). Move the pin only after reading the change. A run takes
+about a minute.
+
 ## Keeping the local suite current
 
 These binaries only genuinely mirror what `certification.openid.net`
