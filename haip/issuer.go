@@ -87,7 +87,11 @@ func RecommendedIssuerConfig() IssuerRecommendations {
 //     and Issuers MUST require, an OAuth2 Client authentication
 //     mechanism at OAuth2 Endpoints that support client
 //     authentication"), and that choice redeems pre-authorized codes
-//     without it.
+//     without it. Leaving it nil does too, under development assurance,
+//     when Dependencies.PreAuthorizedCodes is set (production assurance
+//     refuses that): an issuer redeeming pre-authorized codes sets
+//     issuer.VerifiedPreAuthorizedCode{}, its Authorization Server
+//     having authenticated the client.
 //
 // issuer.New never runs these checks itself: they are HAIP-specific
 // profiling on top of plain OID4VCI (base OID4VCI leaves both scope and
