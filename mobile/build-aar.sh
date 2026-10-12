@@ -23,7 +23,7 @@ set -eu
 cd "$(dirname "$0")"
 : "${ANDROID_HOME:=${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
 export ANDROID_HOME
-GOBIN="$PWD/build/bin" go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
+go build -o build/bin/ golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
 OUT=build/release
 case " $* " in *" -tags mobiletest "*) OUT=build/test ;; esac
 rm -f "$OUT/mobile.aar" "$OUT/mobile-sources.jar"
