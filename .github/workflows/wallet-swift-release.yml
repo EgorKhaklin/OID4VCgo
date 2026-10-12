@@ -53,7 +53,7 @@ jobs:
           echo "::error::publish from main, not $GITHUB_REF"
           exit 1
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -66,14 +66,14 @@ jobs:
             echo "::error::$REPO already has release $VERSION"; exit 1
           fi
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: IDFoundry/OID4VCgo-wallet-swift
           token: ${{ secrets.WALLET_SWIFT_TOKEN }}
           persist-credentials: false
           path: wallet-swift
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: mobile/go.mod
           check-latest: true
