@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.40.0...v0.40.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **deps:** update fxamacker/cbor to v2.9.6 ([e416737](https://github.com/IDFoundry/OID4VCgo/commit/e4167379cc865d2ce44957d4c4f8559ed09286aa))
+
 ## [0.40.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.39.0...v0.40.0) (2026-10-11)
 
 
