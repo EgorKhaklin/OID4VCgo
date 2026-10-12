@@ -33,3 +33,17 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  # The conformance harnesses' base images (conformance/*/Dockerfile),
+  # pinned by digest: kept current here.
+  - package-ecosystem: docker
+    directories:
+      - /conformance/issuer
+      - /conformance/verifier
+      - /conformance/wallet-vp
+    schedule:
+      interval: weekly
+    groups:
+      docker-images:
+        patterns:
+          - "*"
