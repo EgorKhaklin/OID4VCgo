@@ -47,3 +47,10 @@ updates:
       docker-images:
         patterns:
           - "*"
+    ignore:
+      # Digest updates only: the harnesses build with the Go line go.mod
+      # and CI use, and move to the next one with them, in the same PR.
+      - dependency-name: golang
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
