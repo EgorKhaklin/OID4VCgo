@@ -5,6 +5,25 @@ buildscript {
     configurations.classpath {
         resolutionStrategy.activateDependencyLocking()
     }
+    // The Gradle plugins' own dependencies, raised past versions with
+    // published vulnerabilities (OSV, via the OpenSSF Scorecard). They
+    // run only in the build, never in the library or the apps; remove a
+    // line once the plugins require that version or later themselves.
+    dependencies {
+        constraints {
+            listOf(
+                "com.fasterxml.jackson.core:jackson-annotations",
+                "com.fasterxml.jackson.core:jackson-core",
+                "com.fasterxml.jackson.core:jackson-databind",
+                "com.fasterxml.jackson.dataformat:jackson-dataformat-xml",
+                "com.fasterxml.jackson.module:jackson-module-kotlin",
+            ).forEach { classpath("$it:2.18.11") }
+            listOf("bcprov", "bcpkix", "bcutil").forEach { classpath("org.bouncycastle:$it-jdk18on:1.85") }
+            classpath("org.bitbucket.b_c:jose4j:0.9.6")
+            classpath("org.jdom:jdom2:2.0.6.1")
+            classpath("org.apache.commons:commons-lang3:3.18.0")
+        }
+    }
 }
 
 plugins {

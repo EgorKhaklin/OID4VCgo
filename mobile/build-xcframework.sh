@@ -14,7 +14,7 @@
 # Needs Xcode. Other arguments go to gomobile bind.
 set -eu
 cd "$(dirname "$0")"
-GOBIN="$PWD/build/bin" go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
+go build -o build/bin/ golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
 # gomobile sets the iOS minimum with -iosversion; the macOS slice's
 # comes from the deployment target. Both match Package.swift.
 OUT=build/release
