@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.41.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.40.1...v0.41.0) (2026-10-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** an application pairing OID4VCgo with fapigo/server gets FAPIgo v0.55.0's changes. A server.Config that isn't OAuthOnly must set Subjects; server.PublicSubjects keeps every sub as it is. Code reading resource.AuthorizationContext.Subject reads InternalSubject instead; SubjectKind keeps its name. See FAPIgo's UPGRADING.md for v0.55.0.
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.55.0 ([294be98](https://github.com/IDFoundry/OID4VCgo/commit/294be98445b7698d3d77347a8ad795fcafc64e56))
+
 ## [0.40.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.40.0...v0.40.1) (2026-10-12)
 
 
