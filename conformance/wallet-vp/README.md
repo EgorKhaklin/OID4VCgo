@@ -309,8 +309,8 @@ across this module list, beyond the plain query-string callback
   `responseuri` POST) — not the suite's own overall module verdict.
 - **Negative-test modules this binary answers with an OID4VP error
   response** (`missing-nonce`, `redirect-uri-with-direct-post`,
-  `unknown-transaction-data-type`, `required-non-matching-credential`
-  — see `wallet.BuildDirectPostErrorResponse`) need no screenshot at
+  `unknown-transaction-data-type`, `required-non-matching-credential`,
+  `claim-not-in-credential` — see `wallet.BuildDirectPostErrorResponse`) need no screenshot at
   all. The suite logs its `REVIEW` screenshot placeholder (e.g.
   `ExpectRedirectUriErrorPage`) as soon as the Request Object is
   fetched, before the Wallet has responded, then validates the error

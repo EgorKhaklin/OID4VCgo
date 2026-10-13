@@ -151,11 +151,12 @@ var negativeTests = []string{
 	"oid4vp-1final-wallet-negative-test-invalid-client-id-prefix",
 	"oid4vp-1final-wallet-negative-test-unknown-transaction-data-type",
 	"oid4vp-1final-wallet-negative-test-required-non-matching-credential",
+	"oid4vp-1final-wallet-negative-test-claim-not-in-credential",
 }
 
 // negativeTestExpectedErrorCode names the exact OID4VP §8.1 "error"
 // value handleAuthorize's own respondWithError call must send for the
-// four negativeTests entries that actually reach response_uri at all
+// five negativeTests entries that actually reach response_uri at all
 // (the other three — invalid-request-object-signature,
 // mismatched-client-id, invalid-client-id-prefix — reject locally
 // before response_uri is ever contacted, so there's no error code to
@@ -174,6 +175,7 @@ var negativeTestExpectedErrorCode = map[string]string{
 	"oid4vp-1final-wallet-negative-test-missing-nonce":                    "invalid_request",
 	"oid4vp-1final-wallet-negative-test-unknown-transaction-data-type":    "invalid_transaction_data",
 	"oid4vp-1final-wallet-negative-test-required-non-matching-credential": "access_denied",
+	"oid4vp-1final-wallet-negative-test-claim-not-in-credential":          "access_denied",
 }
 
 // allMandatoryClaimsTest is oid4vp-1final-wallet-all-mandatory-claims
