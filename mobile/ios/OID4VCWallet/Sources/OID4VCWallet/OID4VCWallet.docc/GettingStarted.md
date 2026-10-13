@@ -16,7 +16,7 @@ Add OID4VCWallet to your app with Swift Package Manager, from
 `https://github.com/IDFoundry/OID4VCgo-wallet-swift`. In `Package.swift`:
 
 ```
-.package(url: "https://github.com/IDFoundry/OID4VCgo-wallet-swift", from: "0.8.0")
+.package(url: "https://github.com/IDFoundry/OID4VCgo-wallet-swift", from: "0.9.0")
 ```
 
 The package links a binary framework, `Mobile`, which SwiftPM checks
