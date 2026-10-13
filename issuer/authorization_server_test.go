@@ -108,6 +108,8 @@ func newTestAuthorizationServer(t *testing.T, extensions *extension.Registry) (s
 			Authorization: authorization, Token: token, PushedAuthorizationRequest: par, JWKS: jwks,
 		},
 		Profile: server.ProfileFAPISecurity,
+		// Not OAuthOnly, so a subject policy is required: every sub as is.
+		Subjects: server.PublicSubjects(),
 		Algorithms: server.AlgorithmPolicy{
 			ClientAssertion: server.AlgorithmSet{fapi.ES256},
 			RequestObject:   server.AlgorithmSet{fapi.ES256},

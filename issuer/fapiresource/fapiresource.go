@@ -65,9 +65,9 @@ func (v *Verifier) Verify(r *http.Request, endpoint *url.URL) (issuer.Grant, err
 		client = issuer.KnownClientID(authCtx.ClientID)
 	}
 	grant := issuer.Grant{
-		Subject:    authCtx.Subject,
+		Subject:    authCtx.InternalSubject,
 		DPoPNonce:  authCtx.NextDPoPNonce,
-		Authorized: issuer.AuthorizedRequest{ClientIdentity: client, Subject: authCtx.Subject, Scopes: authCtx.Scopes},
+		Authorized: issuer.AuthorizedRequest{ClientIdentity: client, Subject: authCtx.InternalSubject, Scopes: authCtx.Scopes},
 	}
 	if raw, ok := authCtx.Claims["authorization_details"]; ok {
 		if err := json.Unmarshal(raw, &grant.Authorized.AuthorizationDetails); err != nil {
