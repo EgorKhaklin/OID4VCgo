@@ -199,7 +199,7 @@ Integrators add the package from
 which SwiftPM can fetch:
 
 ```swift
-.package(url: "https://github.com/IDFoundry/OID4VCgo-wallet-swift", from: "0.7.0")
+.package(url: "https://github.com/IDFoundry/OID4VCgo-wallet-swift", from: "0.9.0")
 ```
 
 0.7.0 is the first with `org-iso-mdoc`; in-person presentation comes in
