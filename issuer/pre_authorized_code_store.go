@@ -21,6 +21,16 @@ var ErrWrongTxCode = errors.New("issuer: tx_code does not match")
 // is invalidated and no further guess is compared.
 var ErrTooManyTxCodeAttempts = errors.New("issuer: too many incorrect tx_code attempts")
 
+// ErrTxCodeRequired is what Consume returns when code's record has a
+// TxCode and the request sent none: an invalid_request (§6.3), not a
+// wrong guess, so it neither counts as an attempt nor invalidates code.
+var ErrTxCodeRequired = errors.New("issuer: tx_code is required")
+
+// ErrTxCodeUnexpected is what Consume returns when code's record has no
+// TxCode and the request sent one: an invalid_request (§6.3). code is
+// left in place.
+var ErrTxCodeUnexpected = errors.New("issuer: tx_code was not expected")
+
 // PreAuthorizedCodeRecord is what a caller stores when it issues a
 // pre-authorized_code — as part of a Credential Offer's own
 // Grants.PreAuthorizedCode (§4.1.1) — everything ExchangePreAuthorizedCode
@@ -90,9 +100,12 @@ type PreAuthorizedCodeStore interface {
 	// Consume retrieves code and checks it against wantTxCode
 	// (ExchangePreAuthorizedCodeRequest.TxCode) in one atomic step —
 	// but must invalidate code only when the check actually succeeds.
-	// A record whose own TxCode is empty requires no check at all
-	// (wantTxCode is ignored) and is always consumed on a successful
-	// lookup. A record whose own TxCode is non-empty and doesn't match
+	// A record whose own TxCode is empty is consumed on a successful
+	// lookup when wantTxCode is empty too; a non-empty wantTxCode is
+	// refused with ErrTxCodeUnexpected and code left in place. A record
+	// whose own TxCode is non-empty and an empty wantTxCode returns
+	// ErrTxCodeRequired, counting no attempt and leaving code in place.
+	// A record whose own TxCode is non-empty and doesn't match
 	// wantTxCode MUST be left in place and return ErrWrongTxCode — not
 	// invalidated — so a mistyped PIN doesn't permanently destroy the
 	// code with no retry path (a real denial-of-service against the

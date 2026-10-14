@@ -253,8 +253,11 @@ func TestMetadata_SpecWorkedExample(t *testing.T) {
 		VCT:                                  "SD_JWT_VC_example_in_OpenID4VCI",
 		CryptographicBindingMethodsSupported: []string{"jwk"},
 		CredentialSigningAlgValuesSupported:  []string{"ES256"},
+		// The spec's example puts key_attestations_required on the jwt
+		// proof type, whose key_attestation header this issuer doesn't
+		// verify; it's on the attestation proof type here.
 		ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
-			oid4vci.ProofTypeJWT: {
+			oid4vci.ProofTypeAttestation: {
 				ProofSigningAlgValuesSupported: []string{"ES256"},
 				KeyAttestationsRequired: &oid4vci.KeyAttestationRequirement{
 					KeyStorage:         []string{"iso_18045_moderate"},
@@ -299,7 +302,9 @@ func TestMetadata_SpecWorkedExample(t *testing.T) {
 		},
 	}
 
-	iss, err := issuer.New(cfg, validDependencies(t))
+	deps := validDependencies(t)
+	deps.AttestationVerifier = fixedAttestationVerifier{}
+	iss, err := issuer.New(cfg, deps)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -486,7 +491,7 @@ func TestMetadata_KeyAttestationRequirement(t *testing.T) {
 	cfg := validConfig(t)
 	cc := cfg.CredentialConfigurationsSupported["IdentityCredential"]
 	cc.ProofTypesSupported = map[string]oid4vci.ProofTypeConfiguration{
-		oid4vci.ProofTypeJWT: {
+		oid4vci.ProofTypeAttestation: {
 			ProofSigningAlgValuesSupported: []string{"ES256"},
 			KeyAttestationsRequired: &oid4vci.KeyAttestationRequirement{
 				KeyStorage: []string{"iso_18045_moderate"},
@@ -495,7 +500,9 @@ func TestMetadata_KeyAttestationRequirement(t *testing.T) {
 	}
 	cfg.CredentialConfigurationsSupported["IdentityCredential"] = cc
 
-	iss, err := issuer.New(cfg, validDependencies(t))
+	deps := validDependencies(t)
+	deps.AttestationVerifier = fixedAttestationVerifier{}
+	iss, err := issuer.New(cfg, deps)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -503,7 +510,7 @@ func TestMetadata_KeyAttestationRequirement(t *testing.T) {
 	configs := wire["credential_configurations_supported"].(map[string]any)
 	idc := configs["IdentityCredential"].(map[string]any)
 	proofTypes := idc["proof_types_supported"].(map[string]any)
-	jwtProof := proofTypes[oid4vci.ProofTypeJWT].(map[string]any)
+	jwtProof := proofTypes[oid4vci.ProofTypeAttestation].(map[string]any)
 	kar, ok := jwtProof["key_attestations_required"].(map[string]any)
 	if !ok {
 		t.Fatalf("key_attestations_required missing: %v", jwtProof)

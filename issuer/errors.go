@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // ErrorCode is the closed set of error codes this package's endpoints
@@ -70,6 +71,10 @@ const (
 	// fapigo/server.ErrorUseDPoPNonce's own value and semantics for the
 	// Authorization Code Flow's Token Endpoint.
 	ErrorUseDPoPNonce ErrorCode = "use_dpop_nonce"
+
+	// ErrorInvalidDPoPProof indicates a DPoP proof presented to
+	// ExchangePreAuthorizedCode that doesn't verify (RFC 9449 §5).
+	ErrorInvalidDPoPProof ErrorCode = "invalid_dpop_proof"
 )
 
 // Error is the error type RequestCredential returns for a Credential
@@ -151,7 +156,7 @@ func (e *Error) WriteJSON(w http.ResponseWriter) {
 	_ = json.NewEncoder(w).Encode(struct {
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description,omitempty"`
-	}{Error: string(e.code), ErrorDescription: e.description})
+	}{Error: string(e.code), ErrorDescription: errorDescription(e.description)})
 }
 
 // WriteError writes err to w: err's own WriteJSON if err is a *Error
@@ -170,4 +175,20 @@ func WriteError(w http.ResponseWriter, err error) {
 		return
 	}
 	http.Error(w, "server_error", http.StatusInternalServerError)
+}
+
+// errorDescription is description as error_description allows it:
+// printable ASCII without '"' or '\' (RFC 6749 §5.2, OID4VCI
+// §8.3.1.2). Quotes become apostrophes, other characters '?'.
+func errorDescription(description string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '"':
+			return '\''
+		case r == '\\' || r < 0x20 || r > 0x7e:
+			return '?'
+		default:
+			return r
+		}
+	}, description)
 }

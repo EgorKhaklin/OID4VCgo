@@ -278,6 +278,11 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 	if iss.deps.AttestationVerifier == nil {
 		return nil, newError(ErrorInvalidProof, 400, "attestation proof type is not supported", nil)
 	}
+	if len(values) != 1 {
+		// Appendix F.3: the proofs object carries exactly one key
+		// attestation, which attests every key.
+		return nil, newError(ErrorInvalidProof, 400, "the attestation proof type takes exactly one key attestation", nil)
+	}
 
 	now := iss.deps.Clock.Now()
 	maxKeys := iss.maxBatchSize()

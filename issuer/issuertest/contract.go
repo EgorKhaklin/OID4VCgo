@@ -188,6 +188,8 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() issuer.PreA
 	t.Run("ConcurrentWrongAttemptsAreCountedExactly", func(t *testing.T) { testPACConcurrentWrongAttemptsAreCountedExactly(t, factory) })
 	t.Run("ConcurrentConsumeHasExactlyOneWinner", func(t *testing.T) { testPACConcurrentConsumeHasExactlyOneWinner(t, factory) })
 	t.Run("ConcurrentGuessesAreBoundedByMaxAttempts", func(t *testing.T) { testPACConcurrentGuessesAreBounded(t, factory) })
+	t.Run("MissingTxCodeIsNotAGuess", func(t *testing.T) { testPACMissingTxCodeIsNotAGuess(t, factory) })
+	t.Run("UnexpectedTxCodeLeavesCodeConsumable", func(t *testing.T) { testPACUnexpectedTxCode(t, factory) })
 }
 
 // The testPAC* helpers below are TestPreAuthorizedCodeStoreContract's
@@ -260,6 +262,40 @@ func testPACWrongTxCodeLeavesCodeConsumable(t *testing.T, factory func() issuer.
 	// wrong guess must not have invalidated it.
 	if _, _, err := store.Consume(ctx, "code1", "1234", 0); err != nil {
 		t.Fatalf("Consume with correct tx_code after a wrong guess: %v", err)
+	}
+}
+
+func testPACMissingTxCodeIsNotAGuess(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
+	t.Helper()
+	store := factory()
+	ctx := context.Background()
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatalf(msgIssueFailed, err)
+	}
+	for range 3 {
+		if _, _, err := store.Consume(ctx, "code1", "", 1); !errors.Is(err, issuer.ErrTxCodeRequired) {
+			t.Fatalf("Consume without a tx_code: err = %v, want ErrTxCodeRequired", err)
+		}
+	}
+	// No attempt was counted: with maxAttempts 1, the right tx_code
+	// still redeems the code.
+	if _, _, err := store.Consume(ctx, "code1", "1234", 1); err != nil {
+		t.Fatalf("Consume with the tx_code after requests without one: %v", err)
+	}
+}
+
+func testPACUnexpectedTxCode(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
+	t.Helper()
+	store := factory()
+	ctx := context.Background()
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatalf(msgIssueFailed, err)
+	}
+	if _, _, err := store.Consume(ctx, "code1", "1234", 0); !errors.Is(err, issuer.ErrTxCodeUnexpected) {
+		t.Fatalf("Consume with a tx_code the record doesn't have: err = %v, want ErrTxCodeUnexpected", err)
+	}
+	if _, _, err := store.Consume(ctx, "code1", "", 0); err != nil {
+		t.Fatalf("Consume without a tx_code after an unexpected one: %v", err)
 	}
 }
 

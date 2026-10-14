@@ -435,7 +435,7 @@ func (iss *Issuer) preAuthorizedBinding(ctx context.Context, req ExchangePreAuth
 		Replay: iss.deps.DPoPReplay,
 	})
 	if err != nil {
-		return VerifiedTokenRequest{}, newError(ErrorInvalidTokenRequest, 400, "invalid DPoP proof", err)
+		return VerifiedTokenRequest{}, newError(ErrorInvalidDPoPProof, 400, "invalid DPoP proof", err)
 	}
 	if iss.deps.DPoPNonces != nil {
 		if challenge := iss.checkDPoPNonce(ctx, verified.Nonce, now); challenge != nil {
@@ -453,6 +453,12 @@ func (iss *Issuer) preAuthorizedBinding(ctx context.Context, req ExchangePreAuth
 func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest) (PreAuthorizedCodeRecord, error) {
 	record, wrongAttempts, err := iss.deps.PreAuthorizedCodes.Consume(ctx, req.PreAuthorizedCode, req.TxCode, iss.cfg.Limits.MaxTxCodeAttempts)
 	if err != nil {
+		if errors.Is(err, ErrTxCodeRequired) {
+			return PreAuthorizedCodeRecord{}, newError(ErrorInvalidTokenRequest, 400, "tx_code is required", err)
+		}
+		if errors.Is(err, ErrTxCodeUnexpected) {
+			return PreAuthorizedCodeRecord{}, newError(ErrorInvalidTokenRequest, 400, "tx_code was not expected", err)
+		}
 		if errors.Is(err, ErrTooManyTxCodeAttempts) {
 			return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "too many incorrect tx_code attempts; pre-authorized_code is no longer valid", err)
 		}
@@ -469,6 +475,11 @@ func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePre
 			// Deliberately NOT consumed (Consume's own contract) — the
 			// Wallet holder gets to retry with the correct PIN instead of
 			// the code being permanently destroyed on one mistyped digit.
+			if req.TxCode == "" {
+				// A store that predates ErrTxCodeRequired: still a missing
+				// tx_code, not a wrong one (§6.3).
+				return PreAuthorizedCodeRecord{}, newError(ErrorInvalidTokenRequest, 400, "tx_code is required", err)
+			}
 			return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "tx_code does not match", err)
 		}
 		return PreAuthorizedCodeRecord{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code is unknown or already used", err)

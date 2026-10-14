@@ -49,6 +49,12 @@ func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode
 	if !ok {
 		return issuer.PreAuthorizedCodeRecord{}, 0, errPreAuthorizedCodeNotFound
 	}
+	switch {
+	case record.TxCode == "" && wantTxCode != "":
+		return issuer.PreAuthorizedCodeRecord{}, 0, issuer.ErrTxCodeUnexpected
+	case record.TxCode != "" && wantTxCode == "" && (maxAttempts <= 0 || f.attempts[code] < maxAttempts):
+		return issuer.PreAuthorizedCodeRecord{}, 0, issuer.ErrTxCodeRequired
+	}
 	if record.TxCode != "" && maxAttempts > 0 && f.attempts[code] >= maxAttempts {
 		delete(f.issued, code)
 		return issuer.PreAuthorizedCodeRecord{}, 0, issuer.ErrTooManyTxCodeAttempts
@@ -586,6 +592,28 @@ func TestExchangePreAuthorizedCode_Rejects(t *testing.T) {
 				}
 			},
 		},
+		"missing tx_code": {
+			wantCode: issuer.ErrorInvalidTokenRequest,
+			setup: func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest {
+				f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+					Scopes: []string{"identity_credential"}, TxCode: "493536", ExpiresAt: f.now.Add(time.Minute),
+				})
+				return issuer.ExchangePreAuthorizedCodeRequest{
+					PreAuthorizedCode: "code-1", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+				}
+			},
+		},
+		"unexpected tx_code": {
+			wantCode: issuer.ErrorInvalidTokenRequest,
+			setup: func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest {
+				f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+					Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
+				})
+				return issuer.ExchangePreAuthorizedCodeRequest{
+					PreAuthorizedCode: "code-1", TxCode: "493536", DPoPProof: f.validProof(t), TokenEndpoint: testTokenEndpointURL(t),
+				}
+			},
+		},
 		"expired code": {
 			wantCode: issuer.ErrorInvalidGrant,
 			setup: func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest {
@@ -606,7 +634,7 @@ func TestExchangePreAuthorizedCode_Rejects(t *testing.T) {
 			},
 		},
 		"invalid DPoP proof": {
-			wantCode: issuer.ErrorInvalidTokenRequest,
+			wantCode: issuer.ErrorInvalidDPoPProof,
 			setup: func(t *testing.T, f preAuthorizedCodeFixture) issuer.ExchangePreAuthorizedCodeRequest {
 				f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
 					Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),

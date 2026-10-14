@@ -55,6 +55,12 @@ func (s *PreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode str
 	if !ok {
 		return issuer.PreAuthorizedCodeRecord{}, 0, fmt.Errorf("storage: unknown or already-consumed pre-authorized_code")
 	}
+	switch {
+	case record.TxCode == "" && wantTxCode != "":
+		return issuer.PreAuthorizedCodeRecord{}, 0, issuer.ErrTxCodeUnexpected
+	case record.TxCode != "" && wantTxCode == "" && (maxAttempts <= 0 || s.attempts[code] < maxAttempts):
+		return issuer.PreAuthorizedCodeRecord{}, 0, issuer.ErrTxCodeRequired
+	}
 	if record.TxCode != "" && maxAttempts > 0 && s.attempts[code] >= maxAttempts {
 		delete(s.issued, code)
 		delete(s.attempts, code)
