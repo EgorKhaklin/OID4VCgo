@@ -33,6 +33,17 @@ public struct WalletConfiguration: Codable, Sendable {
     /// `startMdocPresentation` throws `untrustedVerifier`, and nothing is
     /// shown to the holder. Needs `mdocReaderRoots`.
     public var requireTrustedMdocReader: Bool
+    /// A dotted object identifier: recognizes only Verifier certificates
+    /// under `verifierRoots` with that extended key usage, the one your
+    /// ecosystem marks its Verifiers' certificates with. Outside
+    /// `development`, required when `verifierRoots` shares a trust anchor
+    /// with another role's roots.
+    public var verifierRequireEKU: String
+    /// A dotted object identifier: recognizes only registrar certificates
+    /// under `registrarRoots` with that extended key usage. Outside
+    /// `development`, required when `registrarRoots` shares a trust anchor
+    /// with another role's roots.
+    public var registrarRequireEKU: String
     /// Allows services on loopback addresses.
     public var development: Bool
     /// The holder's preferred languages (BCP 47, most preferred first),
@@ -115,7 +126,8 @@ public struct WalletConfiguration: Codable, Sendable {
                 mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false, requireTrustedMdocReader: Bool = false,
                 development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
                 copyPolicy: CopyPolicy = .perPresentation, issuanceProfile: IssuanceProfile = .openID4VCI,
-                tlsPins: [String: [String]] = [:], proximityDeviceAuth: ProximityDeviceAuth = .signature) {
+                tlsPins: [String: [String]] = [:], proximityDeviceAuth: ProximityDeviceAuth = .signature,
+                verifierRequireEKU: String = "", registrarRequireEKU: String = "") {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -132,6 +144,8 @@ public struct WalletConfiguration: Codable, Sendable {
         self.tlsPins = tlsPins
         self.issuanceProfile = issuanceProfile
         self.proximityDeviceAuth = proximityDeviceAuth
+        self.verifierRequireEKU = verifierRequireEKU
+        self.registrarRequireEKU = registrarRequireEKU
     }
 
     enum CodingKeys: String, CodingKey {
@@ -141,6 +155,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case development, locales, batchSize = "batch_size"
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy", issuanceProfile = "issuance_profile"
         case tlsPins = "tls_pins", proximityDeviceAuth = "proximity_device_auth"
+        case verifierRequireEKU = "verifier_require_eku", registrarRequireEKU = "registrar_require_eku"
     }
 
     public init(from decoder: Decoder) throws {
@@ -160,7 +175,9 @@ public struct WalletConfiguration: Codable, Sendable {
                   copyPolicy: try c.decodeIfPresent(CopyPolicy.self, forKey: .copyPolicy) ?? .perPresentation,
                   issuanceProfile: try c.decodeIfPresent(IssuanceProfile.self, forKey: .issuanceProfile) ?? .openID4VCI,
                   tlsPins: try c.decodeIfPresent([String: [String]].self, forKey: .tlsPins) ?? [:],
-                  proximityDeviceAuth: try c.decodeIfPresent(ProximityDeviceAuth.self, forKey: .proximityDeviceAuth) ?? .signature)
+                  proximityDeviceAuth: try c.decodeIfPresent(ProximityDeviceAuth.self, forKey: .proximityDeviceAuth) ?? .signature,
+                  verifierRequireEKU: try c.decodeIfPresent(String.self, forKey: .verifierRequireEKU) ?? "",
+                  registrarRequireEKU: try c.decodeIfPresent(String.self, forKey: .registrarRequireEKU) ?? "")
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
