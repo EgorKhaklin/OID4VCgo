@@ -44,7 +44,12 @@ public struct WalletConfiguration: Codable, Sendable {
     /// `development`, required when `registrarRoots` shares a trust anchor
     /// with another role's roots.
     public var registrarRequireEKU: String
-    /// Allows services on loopback addresses.
+    /// Relaxes what production requires, for a wallet talking to services
+    /// on a development machine. Never ship an app with it set. It lets
+    /// issuers, Authorization Servers, Verifiers and status lists be on
+    /// loopback addresses, over http there too, and skips the production
+    /// checks on receiving credentials: durable stores and keys, and the
+    /// random source.
     public var development: Bool
     /// The holder's preferred languages (BCP 47, most preferred first),
     /// for issuers' display metadata. `Locale.preferredLanguages` is the

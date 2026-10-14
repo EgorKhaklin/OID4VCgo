@@ -245,7 +245,13 @@ support unsigned requests. The Kotlin library sets it
 (`requireSignedDCAPIRequests`); the Swift package doesn't, since Safari
 asks only with `org-iso-mdoc`.
 `development`
-allows services on loopback addresses. `development_roots`, only with
+relaxes what production requires, for a wallet talking to services on a
+development machine. Never ship an app with it set. It lets issuers,
+Authorization Servers, Verifiers and status lists be on loopback
+addresses, over http there too; with `development_roots`, makes requests
+through an ordinary HTTPS client, without the hardened one's refusal of
+private network addresses; and skips the production checks on
+receiving credentials: durable stores and keys, and the random source. `development_roots`, only with
 `development`, are CAs the wallet's HTTPS requests trust besides the
 system's: a development service's own, where the platform's trust store
 can't be given it — Go on Android reads only the system's CA files. `locales` are the holder's

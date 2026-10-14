@@ -48,3 +48,12 @@ func TestDevelopmentRoots(t *testing.T) {
 }
 
 func quote(s string) string { return `"` + strings.ReplaceAll(s, "\n", `\n`) + `"` }
+
+// A misspelled key is refused, not silently left at its default.
+func TestNewWalletRefusesUnknownKeys(t *testing.T) {
+	_, err := NewWallet(`{"client_id":"c","redirect_uri":"c:/cb","development":true,"require_signed_dcapi_request":true}`,
+		&goKeyStore{keys: map[string]*ecdsa.PrivateKey{}}, memStore{records: map[string][]byte{}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "require_signed_dcapi_request") {
+		t.Errorf("NewWallet with a misspelled key = %v, want refused", err)
+	}
+}
