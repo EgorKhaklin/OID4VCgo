@@ -8,11 +8,13 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"slices"
 
 	fapi "github.com/idfoundry/fapigo"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
 
 // Config is this Verifier's immutable configuration.
@@ -169,8 +171,8 @@ func (cfg Config) validate() error {
 	if !jose.IsSupported(cfg.SigningAlg) {
 		return fmt.Errorf("verifier: config: signing_alg %q is not supported", cfg.SigningAlg)
 	}
-	if len(cfg.EncValuesSupported) == 0 {
-		return fmt.Errorf("verifier: config: enc_values_supported must be non-empty")
+	if err := validateEncValues(cfg.EncValuesSupported, cfg.Assurance); err != nil {
+		return err
 	}
 	if len(cfg.VPFormatsSupported) == 0 {
 		return fmt.Errorf("verifier: config: vp_formats_supported must be non-empty")
@@ -224,3 +226,24 @@ func ClientIDForCertificate(cert *x509.Certificate) string {
 // ClientID is this Verifier's own "x509_hash:..." Client Identifier
 // (§5.9.3), computed once in New from Config.ClientCertificate.
 func (v *Verifier) ClientID() string { return v.clientID }
+
+// validateEncValues checks the enc values a Verifier advertises: each
+// one this package can decrypt, and, under AssuranceProduction, both of
+// HAIP 1.0 §5's ("Verifiers MUST list both A128GCM and A256GCM in
+// encrypted_response_enc_values_supported").
+func validateEncValues(values []oid4vci.JWEEnc, assurance AssuranceLevel) error {
+	if len(values) == 0 {
+		return fmt.Errorf("verifier: config: enc_values_supported must be non-empty")
+	}
+	for _, v := range values {
+		switch v {
+		case jwe.A128GCM, jwe.A192GCM, jwe.A256GCM:
+		default:
+			return fmt.Errorf("verifier: config: enc_values_supported: %q can't be decrypted (A128GCM, A192GCM and A256GCM can)", v)
+		}
+	}
+	if assurance == AssuranceProduction && (!slices.Contains(values, oid4vci.A128GCM) || !slices.Contains(values, oid4vci.A256GCM)) {
+		return fmt.Errorf("verifier: config: enc_values_supported must list both A128GCM and A256GCM under AssuranceProduction (HAIP 1.0 §5)")
+	}
+	return nil
+}
