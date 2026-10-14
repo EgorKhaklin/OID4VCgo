@@ -456,13 +456,15 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 	if err := checkShape(sel); err != nil {
 		return nil, err
 	}
-	return p.w.reserve(ctx, sel, p.verifier(), p.Linkable)
+	return p.w.reserve(ctx, sel, p.verifier(), p.Linkable, p.byID)
 }
 
 // reserve is Presentation.reserve for the Verifier whose VerifierHash is
 // verifier; linkable is what the holder was told about each credential
-// (Presentation.Linkable), which a reserved copy must agree with.
-func (w *Wallet) reserve(ctx context.Context, sel Selection, verifier string, linkable func(id string) bool) ([]reservedCopy, error) {
+// (Presentation.Linkable), which a reserved copy must agree with, and
+// shown the credentials as the holder was shown them, which the stored
+// ones must still be.
+func (w *Wallet) reserve(ctx context.Context, sel Selection, verifier string, linkable func(id string) bool, shown map[string]StoredCredential) ([]reservedCopy, error) {
 	w.credMu.Lock()
 	defer w.credMu.Unlock()
 	current := map[string]StoredCredential{}
@@ -474,6 +476,11 @@ func (w *Wallet) reserve(ctx context.Context, sel Selection, verifier string, li
 				var err error
 				if c, err = w.loadForReserve(ctx, id); err != nil {
 					return nil, err
+				}
+				if was, ok := shown[id]; ok && !was.ReceivedAt.Equal(c.ReceivedAt) {
+					// Refreshed since: its claims, or which of them are
+					// always disclosed, may not be what the holder saw.
+					return nil, fmt.Errorf("walletflow: credential %q: %w", id, ErrCredentialChanged)
 				}
 			}
 			r, err := w.reserveCopy(&c, q, id, verifier, linkable(id))

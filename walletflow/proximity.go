@@ -307,7 +307,7 @@ func (p *ProximityPresentation) Respond(ctx context.Context, request int, creden
 	if err := p.checkSelection(request, credentialID, elements); err != nil {
 		return ProximityPresented{}, err
 	}
-	reserved, err := p.w.reserve(ctx, Selection{"": {credentialID}}, p.verifier, p.linkable)
+	reserved, err := p.w.reserve(ctx, Selection{"": {credentialID}}, p.verifier, p.linkable, p.byID)
 	if err != nil {
 		return ProximityPresented{}, err
 	}

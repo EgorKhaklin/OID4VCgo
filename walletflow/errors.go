@@ -45,6 +45,13 @@ var (
 	// Nothing is sent. Check Linkable again — it now says true — and let
 	// the holder decide, or refresh the credential first.
 	ErrLinkable = errors.New("walletflow: a copy another verifier has seen would now be presented")
+	// ErrCredentialChanged is wrapped by Presentation.Respond (and the
+	// mdoc presentations' Respond) when a selected credential was
+	// replaced — refreshed, say — after the presentation started, so
+	// what would be sent isn't what the holder was shown. Nothing is
+	// sent. Start the presentation again to show the holder the new
+	// credential.
+	ErrCredentialChanged = errors.New("walletflow: the credential changed after the holder was shown it")
 
 	// ErrMalformedRequest is wrapped for a Digital Credentials API
 	// request (StartDCAPIPresentation, StartMdocPresentation) that can't
