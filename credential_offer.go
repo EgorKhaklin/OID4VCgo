@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 )
 
 // maxTxCodeDescriptionLength is §4.1.1's own bound on tx_code.description.
@@ -50,7 +51,7 @@ func (t TxCode) Validate() error {
 	if t.Length < 0 {
 		return fmt.Errorf("length must not be negative")
 	}
-	if len(t.Description) > maxTxCodeDescriptionLength {
+	if utf8.RuneCountInString(t.Description) > maxTxCodeDescriptionLength {
 		return fmt.Errorf("description must not exceed %d characters", maxTxCodeDescriptionLength)
 	}
 	return nil

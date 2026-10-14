@@ -131,3 +131,14 @@ func TestCredentialOffer_AppendToURL(t *testing.T) {
 		t.Errorf("AppendToURL = %q, want the existing query preserved and credential_offer appended with '&'", uriWithExistingQuery)
 	}
 }
+
+// The description's 300 limit counts characters, not bytes (§4.1.1):
+// 300 in a non-Latin script fit, 301 don't.
+func TestTxCode_DescriptionCountsCharacters(t *testing.T) {
+	if err := (oid4vci.TxCode{Description: strings.Repeat("認", 300)}).Validate(); err != nil {
+		t.Errorf("300 characters: %v", err)
+	}
+	if err := (oid4vci.TxCode{Description: strings.Repeat("認", 301)}).Validate(); err == nil {
+		t.Error("301 characters accepted")
+	}
+}
