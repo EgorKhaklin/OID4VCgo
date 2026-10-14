@@ -2,6 +2,7 @@ package issuer_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,5 +80,35 @@ func TestCreatePreAuthorizedOffer(t *testing.T) {
 		if _, err := f.iss.CreatePreAuthorizedOffer(ctx, req); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// Under production, a pre-authorized code grant goes through
+// CreatePreAuthorizedOffer, so the offer's tx_code and the stored
+// record's can't disagree; CreateCredentialOffer refuses one.
+func TestCreateCredentialOffer_ProductionRefusesPreAuthorizedGrant(t *testing.T) {
+	cfg, deps := preAuthorizedCodeProductionConfig(t)
+	iss, err := issuer.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	_, err = iss.CreateCredentialOffer(ctx, issuer.CreateCredentialOfferRequest{
+		CredentialConfigurationIDs: []string{"IdentityCredential"},
+		Grants: &oid4vci.Grants{PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
+			PreAuthorizedCode: "caller-code", TxCode: &oid4vci.TxCode{InputMode: oid4vci.TxCodeInputModeNumeric, Length: 4},
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "CreatePreAuthorizedOffer") {
+		t.Errorf("CreateCredentialOffer with a pre-authorized grant under production: %v, want refused", err)
+	}
+	if _, err := iss.CreatePreAuthorizedOffer(ctx, issuer.CreatePreAuthorizedOfferRequest{
+		CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"},
+		Subject: "holder-1", TxCode: "4821", Lifetime: time.Minute,
+	}); err != nil {
+		t.Errorf("CreatePreAuthorizedOffer under production: %v", err)
+	}
+	if _, err := iss.CreateCredentialOffer(ctx, issuer.CreateCredentialOfferRequest{CredentialConfigurationIDs: []string{"IdentityCredential"}}); err != nil {
+		t.Errorf("CreateCredentialOffer without a pre-authorized grant: %v", err)
 	}
 }

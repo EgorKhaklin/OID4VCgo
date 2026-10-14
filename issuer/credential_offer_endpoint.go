@@ -70,8 +70,18 @@ type CredentialOfferResult struct {
 // which generates the code and stores its record too: an offer built
 // here asks for whatever Transaction Code its tx_code says, while
 // redemption checks the one the stored record holds, so the two must
-// agree.
+// agree. Under AssuranceProduction it refuses a pre-authorized code
+// grant: use CreatePreAuthorizedOffer.
 func (iss *Issuer) CreateCredentialOffer(ctx context.Context, req CreateCredentialOfferRequest) (CredentialOfferResult, error) {
+	if iss.cfg.Assurance == AssuranceProduction && req.Grants != nil && req.Grants.PreAuthorizedCode != nil {
+		return CredentialOfferResult{}, fmt.Errorf("issuer: create credential offer: a pre-authorized code grant needs CreatePreAuthorizedOffer under AssuranceProduction, so the offer's tx_code and the stored record's agree")
+	}
+	return iss.createCredentialOffer(ctx, req)
+}
+
+// createCredentialOffer is CreateCredentialOffer without the production
+// check, for CreatePreAuthorizedOffer.
+func (iss *Issuer) createCredentialOffer(ctx context.Context, req CreateCredentialOfferRequest) (CredentialOfferResult, error) {
 	offer := oid4vci.CredentialOffer{
 		CredentialIssuer:           iss.cfg.Issuer.String(),
 		CredentialConfigurationIDs: req.CredentialConfigurationIDs,
