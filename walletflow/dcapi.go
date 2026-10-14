@@ -80,25 +80,15 @@ func (p *Presentation) answerDCAPI(ctx context.Context, held map[string][]wallet
 	return presented, nil
 }
 
-// declineDCAPI answers a DC API request with the holder's refusal
-// (access_denied), encrypted as every dc_api.jwt response is, for the
-// platform to hand back. It's built once, and the same refusal returned
-// again; Respond is refused after it.
+// declineDCAPI answers a DC API request with the holder's refusal, as
+// OpenID4VP Appendix A.4's protocol error: {"error": "access_denied"}
+// in the data the platform hands back, not encrypted, since it carries
+// nothing about the holder. Respond is refused after it.
 func (p *Presentation) declineDCAPI() (Presented, error) {
-	if p.declined == "" {
-		responseJWE, err := wallet.BuildDirectPostErrorResponse(wallet.BuildDirectPostErrorResponseParams{
-			Error: "access_denied", ErrorDescription: "the holder declined",
-			EncryptionKey: p.req.ResponseEncryptionKey, EncryptionKeyID: p.req.ResponseEncryptionKeyID,
-			EncryptionEnc: p.req.ResponseEncryptionEnc,
-		})
-		if err != nil {
-			return Presented{}, fmt.Errorf("walletflow: decline: %w", err)
-		}
-		p.declined = responseJWE
-	}
-	data, err := dcapiResponse(p.declined)
+	p.declined = "access_denied"
+	data, err := json.Marshal(map[string]string{"error": p.declined})
 	if err != nil {
-		return Presented{}, err
+		return Presented{}, fmt.Errorf("walletflow: decline: %w", err)
 	}
 	return Presented{DCAPIResponse: data}, nil
 }

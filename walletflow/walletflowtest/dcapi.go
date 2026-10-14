@@ -44,14 +44,23 @@ func (v *Verifier) BeginDCAPI(query dcql.Query, origin string) (*DCAPIRequest, e
 }
 
 // VerifyDCAPIResponse decrypts and verifies the wallet's answer to r,
-// the data it handed back to the platform ({"response": JWE}), as the
-// page would. An error response is a *verifier.ResponseError.
+// the data it handed back to the platform ({"response": JWE}, or
+// Appendix A.4's {"error": code}), as the page would. An error response
+// is a *verifier.ResponseError.
 func (v *Verifier) VerifyDCAPIResponse(ctx context.Context, r *DCAPIRequest, data []byte) (verifier.VerifyResponseResult, error) {
 	var answer struct {
 		Response string `json:"response"`
+		Error    string `json:"error"`
 	}
-	if err := json.Unmarshal(data, &answer); err != nil || answer.Response == "" {
-		return verifier.VerifyResponseResult{}, errors.New("walletflowtest: the DC API response's data isn't {\"response\": JWE}")
+	if err := json.Unmarshal(data, &answer); err != nil {
+		return verifier.VerifyResponseResult{}, fmt.Errorf("walletflowtest: the DC API response's data: %w", err)
+	}
+	if answer.Error != "" {
+		// OpenID4VP Appendix A.4's protocol error.
+		return verifier.VerifyResponseResult{}, &verifier.ResponseError{Code: answer.Error}
+	}
+	if answer.Response == "" {
+		return verifier.VerifyResponseResult{}, errors.New("walletflowtest: the DC API response's data is neither {\"response\": JWE} nor {\"error\": code}")
 	}
 	parsed, err := v.v.ParseDirectPostJWTResponse(answer.Response, r.key)
 	if err != nil {

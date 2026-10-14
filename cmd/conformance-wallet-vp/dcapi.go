@@ -55,7 +55,7 @@ const maxDCAPIRequestBytes = 1 << 20
 // it arrives (wallet.ParseDCAPIRequestData), presents the fixture
 // credential bound to the origin, and returns its encrypted response.
 // A request the wallet rejects with a protocol error is answered with
-// that error, encrypted the same way; one it can't trust at all (a bad
+// that error, as Appendix A.4's {"error": code}; one it can't trust at all (a bad
 // signature, an untrusted or mismatched client) is answered with no
 // response — the browser's promise rejects — as a wallet would only
 // show the holder an error.
@@ -110,20 +110,14 @@ func (s *server) answerDCAPI(r *http.Request, req dcapiRequest) dcapiAnswer {
 	return dcapiAnswer{Result: dcapiResponse(req.Protocol, responseJWE)}
 }
 
-// dcapiError is an error response for the DC API: the Authorization
-// Error Response, encrypted as dc_api.jwt encrypts every response
-// (OID4VP §8.3), in data's "response".
+// dcapiError is an error response for the DC API: Appendix A.4's
+// object in data with a single error property, not encrypted.
 func (s *server) dcapiError(protocol string, p errorResponseParams) dcapiAnswer {
-	responseJWE, err := wallet.BuildDirectPostErrorResponse(wallet.BuildDirectPostErrorResponseParams{
-		Error: p.code, ErrorDescription: p.description,
-		EncryptionKey: p.encryptionKey, EncryptionKeyID: p.encryptionKeyID, EncryptionEnc: p.encryptionEnc,
-	})
-	if err != nil {
-		log.Printf("build dc_api.jwt error response: %v", err)
-		return dcapiAnswer{Result: dcapiResult{Exception: &dcapiException{Name: "UnknownError", Message: err.Error()}}}
-	}
+	// OID4VP Appendix A.4: a protocol error is an object in data with a
+	// single error property.
+	data, _ := json.Marshal(map[string]string{"error": p.code})
 	log.Printf("sent dc api error response: %s: %s", p.code, p.description)
-	return dcapiAnswer{Result: dcapiResponse(protocol, responseJWE), SentError: p.code}
+	return dcapiAnswer{Result: dcapiResult{Protocol: protocol, Data: data}, SentError: p.code}
 }
 
 func dcapiResponse(protocol, responseJWE string) dcapiResult {

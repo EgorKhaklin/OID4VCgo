@@ -364,7 +364,7 @@ class SessionTest {
     /**
      * An OpenID4VP request over the Digital Credentials API, signed or
      * not, is answered with the response's data for the platform, which
-     * the page verifies; declining hands back the encrypted refusal.
+     * the page verifies; declining hands back {"error": "access_denied"}.
      */
     @Test
     fun dcapiPresentation(): Unit = runBlocking {
