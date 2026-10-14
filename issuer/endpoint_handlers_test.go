@@ -23,7 +23,8 @@ func clientGrant(clientID string) *fakeTokens {
 
 func protectedEndpoint(t *testing.T, tokens issuer.AccessTokenVerifier) issuer.ProtectedEndpointConfig {
 	t.Helper()
-	return issuer.ProtectedEndpointConfig{URL: mustURL(t, "https://issuer.example.com/endpoint"), Tokens: tokens}
+	// URL unset: the handler uses the one Config.Endpoints publishes.
+	return issuer.ProtectedEndpointConfig{Tokens: tokens}
 }
 
 func deferredHandler(t *testing.T, mutate func(*issuer.Config)) (http.Handler, *fakeDeferredTransactionStore) {
@@ -171,7 +172,7 @@ func TestNotificationEndpointHandler(t *testing.T) {
 func TestProtectedEndpointHandlers_RequireConfig(t *testing.T) {
 	iss := newTestIssuer(t, validConfig(t), validDependencies(t))
 	for name, cfg := range map[string]issuer.ProtectedEndpointConfig{
-		"no URL":       {Tokens: &fakeTokens{}},
+		"another URL":  {URL: mustURL(t, "https://issuer.example.com/other"), Tokens: &fakeTokens{}},
 		"relative URL": {URL: &url.URL{Path: "/x"}, Tokens: &fakeTokens{}},
 		"no Tokens":    {URL: mustURL(t, "https://issuer.example.com/x")},
 	} {

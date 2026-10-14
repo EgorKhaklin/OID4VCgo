@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	fapi "github.com/idfoundry/fapigo"
 	"io"
 	"net/http"
 	"net/url"
@@ -50,7 +51,9 @@ type Grant struct {
 // CredentialHandlerConfig configures CredentialHandler.
 type CredentialHandlerConfig struct {
 	// URL is the Credential Endpoint's absolute URL, as published in
-	// the Issuer's metadata. REQUIRED.
+	// the Issuer's metadata. Leave it nil to use
+	// Config.Endpoints.Credential; set, it must equal it, the URL a
+	// Wallet's DPoP proofs name (htu).
 	URL *url.URL
 
 	// Tokens checks each request's access token. REQUIRED.
@@ -81,9 +84,11 @@ type CredentialHandlerConfig struct {
 // Cache-Control: no-store. Errors are Credential Error Responses
 // (WriteError).
 func (iss *Issuer) CredentialHandler(cfg CredentialHandlerConfig) (http.Handler, error) {
+	var err error
+	if cfg.URL, err = endpointURL("credential handler", cfg.URL, iss.cfg.Endpoints.Credential); err != nil {
+		return nil, err
+	}
 	switch {
-	case cfg.URL == nil || !cfg.URL.IsAbs():
-		return nil, fmt.Errorf("issuer: credential handler: URL must be the endpoint's absolute URL")
 	case cfg.Tokens == nil:
 		return nil, fmt.Errorf("issuer: credential handler: Tokens is required")
 	case cfg.Prepare == nil:
@@ -165,21 +170,42 @@ func authorizePost(w http.ResponseWriter, r *http.Request, endpoint *url.URL, to
 // DeferredCredentialHandler through DeferredCredentialHandlerConfig.
 type ProtectedEndpointConfig struct {
 	// URL is the endpoint's absolute URL, as published in the Issuer's
-	// metadata. REQUIRED.
+	// metadata. Leave it nil to use the one in Config.Endpoints
+	// (DeferredCredential or Notification); set, it must equal it, the
+	// URL a Wallet's DPoP proofs name (htu).
 	URL *url.URL
 
 	// Tokens checks each request's access token. REQUIRED.
 	Tokens AccessTokenVerifier
 }
 
-func (cfg ProtectedEndpointConfig) validate(handler string) error {
-	switch {
-	case cfg.URL == nil || !cfg.URL.IsAbs():
-		return fmt.Errorf("issuer: %s: URL must be the endpoint's absolute URL", handler)
-	case cfg.Tokens == nil:
+// validate checks cfg for handler, defaulting its URL to published.
+func (cfg *ProtectedEndpointConfig) validate(handler string, published fapi.URL) error {
+	var err error
+	if cfg.URL, err = endpointURL(handler, cfg.URL, published); err != nil {
+		return err
+	}
+	if cfg.Tokens == nil {
 		return fmt.Errorf("issuer: %s: Tokens is required", handler)
 	}
 	return nil
+}
+
+// endpointURL is a handler's URL: given, which must equal published
+// when both are set, or published when given is nil.
+func endpointURL(handler string, given *url.URL, published fapi.URL) (*url.URL, error) {
+	switch {
+	case given == nil && published.IsZero():
+		return nil, fmt.Errorf("issuer: %s: URL is required: Config.Endpoints doesn't publish this endpoint", handler)
+	case given == nil:
+		u := published.URL()
+		return &u, nil
+	case !given.IsAbs():
+		return nil, fmt.Errorf("issuer: %s: URL must be the endpoint's absolute URL", handler)
+	case !published.IsZero() && given.String() != published.String():
+		return nil, fmt.Errorf("issuer: %s: URL %s isn't the published endpoint %s, which Wallets' DPoP proofs name", handler, given, published)
+	}
+	return given, nil
 }
 
 // DeferredCredentialHandlerConfig configures DeferredCredentialHandler.
@@ -209,7 +235,7 @@ type DeferredCredentialHandlerConfig struct {
 // encrypted when the Wallet asked for that, and with Cache-Control:
 // no-store. Errors are Credential Error Responses (WriteError).
 func (iss *Issuer) DeferredCredentialHandler(cfg DeferredCredentialHandlerConfig) (http.Handler, error) {
-	if err := cfg.validate("deferred credential handler"); err != nil {
+	if err := cfg.validate("deferred credential handler", iss.cfg.Endpoints.DeferredCredential); err != nil {
 		return nil, err
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -267,7 +293,7 @@ func (iss *Issuer) writeDeferredResult(w http.ResponseWriter, r *http.Request, g
 // Dependencies.NotificationHandler. It answers 204 No Content (§11.2);
 // errors are Notification Error Responses (WriteError).
 func (iss *Issuer) NotificationEndpointHandler(cfg ProtectedEndpointConfig) (http.Handler, error) {
-	if err := cfg.validate("notification endpoint handler"); err != nil {
+	if err := cfg.validate("notification endpoint handler", iss.cfg.Endpoints.Notification); err != nil {
 		return nil, err
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
