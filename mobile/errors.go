@@ -62,6 +62,10 @@ func classify(err error) error {
 		// What the holder agreed to no longer holds: the selection would
 		// now present a copy another Verifier has seen. Nothing was sent.
 		return newError(CodeInvalidSelection, walletflow.ErrLinkable)
+	case errors.Is(err, walletflow.ErrCredentialChanged):
+		// Likewise: a selected credential was refreshed since the
+		// holder was shown it. Nothing was sent.
+		return newError(CodeInvalidSelection, walletflow.ErrCredentialChanged)
 	case errors.Is(err, walletflow.ErrReissueRequired):
 		return newError(CodeReissueRequired, err)
 	case errors.Is(err, walletflow.ErrDeliveryUnknown):

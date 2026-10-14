@@ -59,7 +59,7 @@ format or error code below changes incompatibly.
 | `no_matching_credential` | nothing held answers the Verifier's request |
 | `reissue_required` | a credential can't be refreshed: no refresh token was kept, or the Authorization Server no longer accepts it |
 | `untrusted_verifier` | the Verifier's request is signed with a certificate that doesn't chain to `verifier_roots`: it's refused unread |
-| `invalid_selection` | a presentation's selection doesn't answer the request as it asks |
+| `invalid_selection` | a presentation's selection doesn't answer the request as it asks, or, at `Respond`, what the holder was shown no longer holds (a copy another Verifier has seen would now be presented, or a selected credential was refreshed since): nothing was sent |
 | `delivery_unknown` | sending a presentation failed in a way that leaves it unknown whether the Verifier received it; it isn't sent again, which could present twice |
 | `tls_pin` | a host in `tls_pins` presented a certificate matching none of its pins; nothing was sent to it |
 | `profile_violation` | under `"issuance_profile": "haip"`, the issuer doesn't follow HAIP 1.0: it's refused |
