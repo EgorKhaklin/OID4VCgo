@@ -320,15 +320,24 @@ func (a *App) register(sc Scenario, clientID string, until time.Time, registrar 
 	if err != nil {
 		return "", err
 	}
-	var claims []dcql.Path
+	// Each claim is registered for its query's type of credential, so
+	// the registration doesn't cover the same claim from another.
+	var credentials []registration.RegisteredCredential
 	for _, cq := range q.Credentials {
-		for _, c := range cq.Claims {
-			claims = append(claims, c.Path)
+		var rc registration.RegisteredCredential
+		if m, err := cq.MdocMeta(); err == nil && cq.Format == "mso_mdoc" {
+			rc.DoctypeValue = m.DoctypeValue
+		} else if m, err := cq.SDJWTVCMeta(); err == nil {
+			rc.VCTValues = m.VCTValues
 		}
+		for _, c := range cq.Claims {
+			rc.Claims = append(rc.Claims, c.Path)
+		}
+		credentials = append(credentials, rc)
 	}
 	token, err := registration.Issue(registration.Registration{
 		Registrar: registrarID, ClientID: clientID, Name: info.Verifier, Purpose: asInfo.Title,
-		Claims: claims, IssuedAt: a.now(), Expires: until,
+		Credentials: credentials, IssuedAt: a.now(), Expires: until,
 	}, registrar.key, []*x509.Certificate{registrar.cert})
 	if err != nil {
 		return "", fmt.Errorf("verifierapp: register %s: %w", sc, err)
