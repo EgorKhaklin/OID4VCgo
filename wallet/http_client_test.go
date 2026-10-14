@@ -3,6 +3,7 @@ package wallet
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,5 +69,18 @@ func TestWalletHTTPClient_FollowsNoRedirect(t *testing.T) {
 	}
 	if given.CheckRedirect != nil {
 		t.Error("the caller's client was changed")
+	}
+}
+
+// A Content-Type's parameters don't change its media type (RFC 9110
+// §8.3.1): "application/jwt; charset=utf-8" is an encrypted response.
+func TestDecryptResponseBody_MediaTypeParameters(t *testing.T) {
+	for _, contentType := range []string{"application/jwt", "application/jwt; charset=utf-8", "Application/JWT"} {
+		if _, err := decryptResponseBody([]byte("x"), contentType, nil, ""); err == nil || !strings.Contains(err.Error(), "no response_encryption was requested") {
+			t.Errorf("%q: %v; want it read as an encrypted response", contentType, err)
+		}
+	}
+	if body, err := decryptResponseBody([]byte(`{}`), "application/json; charset=utf-8", nil, ""); err != nil || string(body) != `{}` {
+		t.Errorf("plaintext JSON: %s, %v", body, err)
 	}
 }
