@@ -2,8 +2,6 @@ package issuerapp
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,7 +9,6 @@ import (
 	"github.com/idfoundry/fapigo/server"
 	"github.com/idfoundry/fapigo/storage"
 
-	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
@@ -28,31 +25,18 @@ import (
 // grant_type (OID4VCI 1.0 §3.5).
 const preAuthorizedCodeGrantType = "urn:ietf:params:oauth:grant-type:pre-authorized_code"
 
-// preAuthorizedCodeTxCode describes the PIN to the wallet (§4.1.1).
-var preAuthorizedCodeTxCode = &oid4vci.TxCode{
-	InputMode: "numeric", Length: 6,
-	Description: "The PIN shown on the issuer's offer page",
-}
+// preAuthorizedCodeTxCodeDescription tells the wallet where the PIN is
+// (§4.1.1).
+const preAuthorizedCodeTxCodeDescription = "The PIN shown on the issuer's offer page"
 
 // preAuthorizedOffer records a claimed transaction's pre-authorized code,
 // redeemable with its PIN, and returns the Credential Offer for it.
+// CreatePreAuthorizedOffer generates the code and derives the offer's
+// tx_code from the PIN it stores, so the two can't disagree.
 func (a *App) preAuthorizedOffer(ctx context.Context, txID, pin string, configIDs []string) (string, error) {
-	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", fmt.Errorf("issuerapp: pre-authorized code: %w", err)
-	}
-	code := base64.RawURLEncoding.EncodeToString(b[:])
-	if err := a.preAuthCodes.Issue(ctx, code, issuer.PreAuthorizedCodeRecord{
-		TxCode: pin, Scopes: []string{MdocScope, SDJWTScope},
-		ExpiresAt: a.now().Add(a.cfg.transactionLifetime()), Subject: txID,
-	}); err != nil {
-		return "", fmt.Errorf("issuerapp: pre-authorized code: %w", err)
-	}
-	result, err := a.issuer.CreateCredentialOffer(ctx, issuer.CreateCredentialOfferRequest{
-		CredentialConfigurationIDs: configIDs,
-		Grants: &oid4vci.Grants{PreAuthorizedCode: &oid4vci.GrantPreAuthorizedCode{
-			PreAuthorizedCode: code, TxCode: preAuthorizedCodeTxCode,
-		}},
+	result, err := a.issuer.CreatePreAuthorizedOffer(ctx, issuer.CreatePreAuthorizedOfferRequest{
+		CredentialConfigurationIDs: configIDs, Scopes: []string{MdocScope, SDJWTScope}, Subject: txID,
+		TxCode: pin, TxCodeDescription: preAuthorizedCodeTxCodeDescription, Lifetime: a.cfg.transactionLifetime(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("issuerapp: credential offer: %w", err)

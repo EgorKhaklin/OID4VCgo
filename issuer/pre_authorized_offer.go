@@ -107,7 +107,7 @@ func (iss *Issuer) CreatePreAuthorizedOffer(ctx context.Context, req CreatePreAu
 	if err := iss.deps.PreAuthorizedCodes.Issue(ctx, code, record); err != nil {
 		return CredentialOfferResult{}, fmt.Errorf("issuer: create pre-authorized offer: store code: %w", err)
 	}
-	return iss.CreateCredentialOffer(ctx, offerReq)
+	return iss.createCredentialOffer(ctx, offerReq)
 }
 
 // txCodeFor is the offer's tx_code object for txCode: numeric input
