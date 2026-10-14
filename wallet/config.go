@@ -3,6 +3,7 @@ package wallet
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/idfoundry/fapigo/fapihttp"
@@ -76,6 +77,17 @@ type Dependencies struct {
 	// itself — see RequestCredential's own ProtectedResourceClient
 	// parameter for why that one is sender-constrained per request,
 	// not a Dependencies-level HTTP client.
+	//
+	// nil (recommended) means fapihttp's hardened client
+	// (fapihttp.NewClient): it dials only public addresses, unless
+	// Config.Fetch allows loopback or named private hosts, so an offer
+	// or metadata can't aim the Wallet at internal hosts. Set one only
+	// to change that, and build it with fapihttp.NewClient too: a plain
+	// http.Client has no such guard. An *http.Client is used through a
+	// copy that follows no redirect, so a DPoP proof, access token or
+	// client attestation is never resent to a host the Wallet didn't
+	// choose; another HTTPClient (a wrapper) must not follow redirects
+	// itself.
 	HTTP fapihttp.HTTPClient
 
 	// Clock supplies the current time — the jwt-type key proof's own
@@ -116,9 +128,11 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if !jose.IsSupported(cfg.ProofSigningAlg) {
 		return nil, fmt.Errorf("wallet: config: proof_signing_alg %q is not supported", cfg.ProofSigningAlg)
 	}
-	if deps.HTTP == nil {
-		return nil, fmt.Errorf("wallet: dependencies: http is required")
+	httpClient, err := walletHTTPClient(cfg, deps.HTTP)
+	if err != nil {
+		return nil, err
 	}
+	deps.HTTP = httpClient
 	if deps.Clock == nil {
 		return nil, fmt.Errorf("wallet: dependencies: clock is required")
 	}
@@ -128,4 +142,42 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		return nil, fmt.Errorf("wallet: config: fetch: %w", err)
 	}
 	return &Wallet{cfg: cfg, deps: deps, fetcher: fetcher}, nil
+}
+
+// defaultHTTPTimeout bounds each request of the HTTP client New builds
+// when Dependencies.HTTP is nil and Config.Fetch sets no RequestTimeout.
+const defaultHTTPTimeout = 30 * time.Second
+
+// walletHTTPClient is the HTTP client the Wallet uses: with none given,
+// fapihttp's hardened one, its loopback and private-host allowances
+// those of cfg.Fetch; with an *http.Client, a copy that follows no
+// redirect, so a token request's or a Credential Request's DPoP proof,
+// access token or client attestation is never resent to a host the
+// Wallet didn't choose. Another HTTPClient is used as it is.
+func walletHTTPClient(cfg Config, given fapihttp.HTTPClient) (fapihttp.HTTPClient, error) {
+	switch c := given.(type) {
+	case nil:
+		client, err := fapihttp.NewClient(fapihttp.TransportConfig{
+			DialTimeout: defaultHTTPTimeout, TLSHandshakeTimeout: defaultHTTPTimeout,
+			AllowLoopbackHosts: cfg.Fetch.AllowLoopbackHosts, AllowLoopbackHTTP: cfg.Fetch.AllowLoopbackHTTP,
+			AllowedLoopbackHosts: cfg.Fetch.AllowedLoopbackHosts, AllowedPrivateHosts: cfg.Fetch.AllowedPrivateHosts,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("wallet: dependencies: http: %w", err)
+		}
+		client.Timeout = cfg.Fetch.RequestTimeout
+		if client.Timeout <= 0 {
+			client.Timeout = defaultHTTPTimeout
+		}
+		return client, nil
+	case *http.Client:
+		if c == nil {
+			return nil, fmt.Errorf("wallet: dependencies: http is a nil *http.Client")
+		}
+		noRedirects := *c
+		noRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		return &noRedirects, nil
+	default:
+		return given, nil
+	}
 }
