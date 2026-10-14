@@ -31,9 +31,8 @@ import (
 // scopes is the caller's own resolved scope value(s) for the Credential
 // Configuration(s) it wants — typically each
 // credential_configurations_supported[id].scope from the Issuer's own
-// Metadata (§5.1.2: "Using Scope Parameter"). This package has no
-// Metadata-fetching of its own yet, so resolving which scope maps to
-// which credential_configuration_id is the caller's job.
+// Metadata (§5.1.2: "Using Scope Parameter"). PlanAuthorization works
+// them out from the offer and FetchCredentialIssuerMetadata's result.
 //
 // If offer carries an authorization_code grant with a non-empty
 // IssuerState, it's attached as the issuer_state extension parameter

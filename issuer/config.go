@@ -20,11 +20,9 @@ import (
 )
 
 // Endpoints are this Credential Issuer's own endpoint URLs — what
-// Metadata advertises. Credential is required even though there is no
-// RequestCredential method yet — §12.2.4 requires credential_endpoint
-// in every Credential Issuer's metadata unconditionally, independent
-// of which endpoints this package itself has wired up an HTTP handler
-// for so far.
+// Metadata advertises. Credential is required: §12.2.4 requires
+// credential_endpoint in every Credential Issuer's metadata. Mount
+// CredentialHandler at it.
 type Endpoints struct {
 	// Credential is this issuer's Credential Endpoint (§8). Required.
 	Credential fapi.URL

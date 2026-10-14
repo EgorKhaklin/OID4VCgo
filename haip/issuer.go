@@ -28,12 +28,9 @@ func RecommendedJWTProofType() oid4vci.ProofTypeConfiguration {
 // combination with ... attestation proof type."
 //
 // §4.5.1 also names a second combination, "jwt proof type using
-// key_attestation" — deliberately not offered here: issuer's own
-// resolveJWTProofKeys rejects any ProofTypeConfiguration with
-// KeyAttestationsRequired set on the jwt proof type outright (not
-// supported yet — see its own doc comment), so recommending that
-// combination today would describe a configuration issuer can't
-// actually serve.
+// key_attestation" — deliberately not offered here: issuer doesn't
+// verify a jwt proof's key_attestation header, and issuer.New refuses
+// KeyAttestationsRequired on the jwt proof type.
 func RecommendedAttestationProofType() oid4vci.ProofTypeConfiguration {
 	return oid4vci.ProofTypeConfiguration{
 		ProofSigningAlgValuesSupported: []string{string(RecommendedJOSEAlgorithm)},
