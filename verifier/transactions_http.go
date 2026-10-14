@@ -60,6 +60,9 @@ const maxResponseBodyBytes = 2*jwe.MaxCompactBytes + 4096
 // cross-device one, or a 400 error whose description says only that
 // the answer was refused: why is recorded as the request's LastError,
 // for the Verifier's own display, not told to whoever sent it. A
+// failure of the Verifier's own, such as its TransactionStore's, is a
+// 500 server_error instead, so the Wallet isn't told its answer was
+// refused. A
 // Wallet's error response for a pending request is processed, recorded
 // as LastError, and answered with 200 and {} (OpenID4VP §8.2: "If the
 // Response URI has successfully processed the Authorization Response or
@@ -84,6 +87,13 @@ func (t *Transactions) ResponseHandler() http.Handler {
 			answered = Answered{}
 		case errors.Is(err, ErrTransactionAnswered):
 			writeResponseError(w, "this request has already been answered")
+			return
+		case errors.As(err, new(*serverFault)):
+			// The Verifier's own failure, not the answer's.
+			w.Header().Set(headerContentType, "application/json")
+			w.Header().Set(headerCacheControl, cacheNoStore)
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "server_error"})
 			return
 		case err != nil:
 			writeResponseError(w, "the response was not accepted")
