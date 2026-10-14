@@ -48,6 +48,9 @@ func CheckDocumentSigner(verified VerifiedMSO, chains [][]*x509.Certificate) ([]
 		return nil, errors.New("mdoc: no verified document signer certificate path")
 	}
 	ds := chains[0][0]
+	if ds == nil {
+		return nil, errors.New("mdoc: no verified document signer certificate path")
+	}
 	if signed := verified.ValidityInfo.Signed; signed.Before(ds.NotBefore) || signed.After(ds.NotAfter) {
 		return nil, fmt.Errorf("mdoc: MSO signed %s, outside the document signer certificate's validity", signed.Format(time.RFC3339))
 	}
@@ -58,6 +61,12 @@ func CheckDocumentSigner(verified VerifiedMSO, chains [][]*x509.Certificate) ([]
 	}
 	var lastErr error
 	for _, chain := range chains {
+		// A custom resolver's paths: an empty one, or a nil certificate,
+		// verifies nothing.
+		if len(chain) == 0 || slices.Contains(chain, nil) {
+			lastErr = errors.New("mdoc: an empty document signer certificate path")
+			continue
+		}
 		leaf, iaca := chain[0], chain[len(chain)-1]
 		// Annex B makes countryName mandatory in both certificates: two
 		// without one don't match.
