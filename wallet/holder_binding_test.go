@@ -1,8 +1,9 @@
 package wallet_test
 
 import (
-	"errors"
 	"encoding/json"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -59,5 +60,21 @@ func TestPresentCredentials_WithoutHolderKey(t *testing.T) {
 	m.HolderKey = nil
 	if _, err := present(testmdoc.Query(t), m); err == nil {
 		t.Error("presented an mdoc without a device key")
+	}
+}
+
+// The preview reports which presented mdoc elements the Verifier says
+// it will keep (intent_to_retain, OID4VP Appendix B.2.4).
+func TestPreviewPresentation_Retained(t *testing.T) {
+	held := heldMdoc(t, testmdoc.Issue(t))
+	q := testmdoc.Query(t)
+	keep := true
+	q.Credentials[0].Claims[0].IntentToRetain = &keep
+	preview, err := wallet.PreviewPresentation(t.Context(), q, []wallet.HeldCredential{held}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview) != 1 || len(preview[0].Retained) != 1 || !slices.Equal(preview[0].Retained[0], q.Credentials[0].Claims[0].Path) {
+		t.Errorf("Retained = %v, want only %v", preview[0].Retained, q.Credentials[0].Claims[0].Path)
 	}
 }
