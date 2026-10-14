@@ -140,7 +140,7 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 // fillClaims builds req's claims from e, in both formats:
 // RequestCredential uses whichever the requested configuration needs.
 func (a *App) fillClaims(e passport.Evidence, req *issuer.CredentialRequest) error {
-	opts := credential.Options{Now: a.now()}
+	opts := credential.Options{Now: a.now(), IssuingCountry: demoCountry}
 	mdocClaims, err := credential.MdocClaims(e, opts)
 	if err == nil {
 		req.SDJWTClaims, err = credential.SDJWTClaims(e, a.vct, opts)

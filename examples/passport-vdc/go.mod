@@ -8,7 +8,6 @@ require (
 	github.com/idfoundry/fapigo v0.55.0
 	github.com/idfoundry/oid4vcgo v0.0.0-00010101000000-000000000000
 	github.com/mrjoshuak/go-jpeg2000 v1.5.12
-	golang.org/x/text v0.42.0
 	rsc.io/qr v0.2.0
 )
 

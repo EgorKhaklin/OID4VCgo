@@ -170,7 +170,7 @@ func issueAndVerifyMdoc(t *testing.T, claims *mdoc.Claims) map[string]map[string
 }
 
 func TestMdocClaims_Adult(t *testing.T) {
-	claims, err := MdocClaims(adult(), Options{Now: now})
+	claims, err := MdocClaims(adult(), Options{Now: now, IssuingCountry: "ZZ"})
 	if err != nil {
 		t.Fatalf("MdocClaims: %v", err)
 	}
@@ -180,9 +180,18 @@ func TestMdocClaims_Adult(t *testing.T) {
 	if identity[FamilyName] != "DOE" || identity[GivenName] != "JANE" || identity[IssuingAuthority] != IssuingAuthorityName {
 		t.Errorf("org.iso.23220.1 = %v", identity)
 	}
-	// ISO/IEC 5218 sex, alpha-2 issuing country, alpha-3 nationality.
-	if identity[Sex] != uint64(2) || identity[IssuingCountry] != "SG" || identity[Nationality] != "SGP" {
-		t.Errorf("sex/issuing_country/nationality = %v/%v/%v, want 2/SG/SGP", identity[Sex], identity[IssuingCountry], identity[Nationality])
+	// ISO/IEC 5218 sex; the issuer's own country, not the passport's,
+	// as issuing_country (what verifiers hold to the document signer);
+	// alpha-3 nationality.
+	if identity[Sex] != uint64(2) || identity[IssuingCountry] != "ZZ" || identity[Nationality] != "SGP" {
+		t.Errorf("sex/issuing_country/nationality = %v/%v/%v, want 2/ZZ/SGP", identity[Sex], identity[IssuingCountry], identity[Nationality])
+	}
+	none, err := MdocClaims(adult(), Options{Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := none.NameSpaces[ISONamespace][IssuingCountry]; ok {
+		t.Error("issuing_country set without Options.IssuingCountry")
 	}
 	// The mobile document's own issue and expiry dates: the credential's
 	// validity, not the passport's.
@@ -323,17 +332,8 @@ func birthDateOf(t *testing.T, ns map[string]interface{}) birthDateValue {
 	return birthDateValue{date: s, mask: v.Mask}
 }
 
-// MRZ codes map to ISO/IEC 23220-2's encodings: countries to ISO 3166-1
-// alpha-2 (ICAO's own codes included, a code with no alpha-2 kept), sex
-// to ISO/IEC 5218.
+// MRZ sex codes map to ISO/IEC 23220-2's encoding, ISO/IEC 5218.
 func TestISOEncodings(t *testing.T) {
-	for mrz, want := range map[string]string{
-		"DEU": "DE", "D": "DE", "D<<": "DE", "GBR": "GB", "GBD": "GB", "SGP": "SG", "RKS": "XK", "UTO": "UTO", "UNO": "UNO",
-	} {
-		if got := alpha2(mrz); got != want {
-			t.Errorf("alpha2(%q) = %q, want %q", mrz, got, want)
-		}
-	}
 	for mrz, want := range map[string]uint{"M": 1, "F": 2, "X": 0, "<": 0, "": 0} {
 		if got := isoSex(mrz); got != want {
 			t.Errorf("isoSex(%q) = %d, want %d", mrz, got, want)
