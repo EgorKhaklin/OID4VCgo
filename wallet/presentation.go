@@ -372,33 +372,16 @@ func PresentSDJWTVC(held HeldCredential, aud, nonce string) (string, error) {
 // PresentCredentials is this function's own real caller, via
 // dcql.CredentialQuery.SelectedSDJWTVCClaimPaths.
 //
-// Each Path in requiredPaths is walked as a sequence of
-// object-property names — SelectDisclosures's own contract. A Path
-// with a Wildcard/Index component (selecting into an *array*, as
-// opposed to an object property) isn't supported for trimming yet —
-// this function returns an error rather than guessing which array
-// elements matter. It deliberately does NOT fall back to PresentSDJWTVC's
-// own full disclosure in that case: §6.4.1's own "the Wallet MUST NOT
-// send selectively disclosable claims that have not been selected" is
-// the whole security property this function exists to guarantee, so
-// silently exceeding what a query actually asked for is a privacy
-// violation, not a graceful degradation — a caller that hits this
-// error needs to know its query isn't satisfiable by this package
-// today, not receive an over-broad Presentation it never asked for.
-// (An earlier version of this function did fall back to full
-// disclosure here; found and fixed in a repo-wide security review —
-// every Claims Path Pointer either format's own DCQL query fixtures in
-// this repo actually uses today is Wildcard/Index-free, so this was
-// always unreachable in practice, but silently wrong the moment a real
-// Verifier sent one.)
+// Each Path in requiredPaths is walked as OpenID4VP §7.1 defines,
+// object members and array elements alike
+// (credential/sdjwtvc.SelectDisclosuresAt): an array index or a
+// wildcard discloses that element, or every element, with what the
+// rest of the path needs inside it, and nothing else in the array.
 func PresentSDJWTVCSelective(held HeldCredential, aud, nonce string, requiredPaths []dcql.Path) (string, error) {
 	if held.Format != sdjwtvc.CredentialFormat {
 		return "", fmt.Errorf("wallet: present sd-jwt vc: held credential format is %q, want %q", held.Format, sdjwtvc.CredentialFormat)
 	}
-	disclosurePaths, ok := sdjwtvcDisclosurePaths(requiredPaths)
-	if !ok {
-		return "", fmt.Errorf("wallet: present sd-jwt vc: one or more requested claim paths use a wildcard/array-index component, which selective disclosure trimming doesn't support yet — refusing to fall back to disclosing the whole credential")
-	}
+	disclosurePaths := sdjwtvcDisclosurePaths(requiredPaths)
 
 	pres, hashAlg, _, err := resolveHeldSDJWTVC(held.Credential)
 	if err != nil {
@@ -408,7 +391,7 @@ func PresentSDJWTVCSelective(held HeldCredential, aud, nonce string, requiredPat
 	if err != nil {
 		return "", fmt.Errorf("wallet: present sd-jwt vc: %w", err)
 	}
-	selected, err := sdjwtvc.SelectDisclosures(payload, hashAlg, pres.Disclosures, disclosurePaths)
+	selected, err := sdjwtvc.SelectDisclosuresAt(payload, hashAlg, pres.Disclosures, disclosurePaths)
 	if err != nil {
 		return "", fmt.Errorf("wallet: present sd-jwt vc: select disclosures: %w", err)
 	}
@@ -470,24 +453,26 @@ func rawSDJWTVCPayload(pres sdjwtvc.Presentation) (map[string]any, error) {
 	return payload, nil
 }
 
-// sdjwtvcDisclosurePaths converts paths into the plain object-property
-// key sequences credential/sdjwtvc.SelectDisclosures needs, or
-// ok=false if any Path has a Wildcard/Index component — see
-// PresentSDJWTVCSelective's own doc comment for what a caller gets in
-// that case.
-func sdjwtvcDisclosurePaths(paths []dcql.Path) ([][]string, bool) {
-	out := make([][]string, 0, len(paths))
+// sdjwtvcDisclosurePaths converts paths into
+// credential/sdjwtvc.SelectDisclosuresAt's form: a string for an object
+// member, an int for an array index, nil for every element.
+func sdjwtvcDisclosurePaths(paths []dcql.Path) [][]any {
+	out := make([][]any, 0, len(paths))
 	for _, p := range paths {
-		keys := make([]string, 0, len(p))
+		components := make([]any, 0, len(p))
 		for _, elem := range p {
-			if !elem.IsKey() {
-				return nil, false
+			switch {
+			case elem.IsKey():
+				components = append(components, elem.Key())
+			case elem.IsIndex():
+				components = append(components, elem.Index())
+			default:
+				components = append(components, nil)
 			}
-			keys = append(keys, elem.Key())
 		}
-		out = append(out, keys)
+		out = append(out, components)
 	}
-	return out, true
+	return out
 }
 
 // signAndCompactSDJWTVCPresentation builds a fresh Key Binding JWT
@@ -782,9 +767,9 @@ type PresentationRequest struct {
 // exactly the matched Credential Query's own Claims/ClaimSets
 // (dcql.CredentialQuery.SelectedSDJWTVCClaimPaths/SelectedMdocClaimPaths)
 // — §6.4.1's own "MUST NOT send selectively disclosable claims that
-// have not been selected" — see PresentSDJWTVCSelective/PresentMdocSelective's
-// own doc comments for the one narrow case each (a Wildcard/Index
-// Claims Path) that still falls back to full disclosure. Returns the
+// have not been selected". An SD-JWT VC's claims path may walk into
+// arrays; an mdoc's is always [namespace, element], and anything else
+// is refused rather than disclosing the whole credential. Returns the
 // vp_token map ready for a direct_post(.jwt)/dc_api(.jwt) response
 // body (§8.1): {<Credential Query id>: [<Presentation>]}.
 func PresentCredentials(ctx context.Context, req PresentationRequest) (map[string][]string, error) {
