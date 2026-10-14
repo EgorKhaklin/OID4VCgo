@@ -65,11 +65,12 @@ type CredentialOfferResult struct {
 // in a deep-link URI or, when req.ByReference is set, stored and
 // referenced by a credential_offer_uri deep-link URI.
 //
-// This package has no Authorization or Token Endpoint yet (see
-// ARCHITECTURE.md): a pre-authorized_code grant's own code, and an
-// authorization_code grant's own issuer_state, are caller-supplied —
-// generating and later redeeming them is that future endpoint's job,
-// not this method's.
+// A grant's pre-authorized_code and issuer_state are the caller's.
+// For a pre-authorized code grant, prefer CreatePreAuthorizedOffer,
+// which generates the code and stores its record too: an offer built
+// here asks for whatever Transaction Code its tx_code says, while
+// redemption checks the one the stored record holds, so the two must
+// agree.
 func (iss *Issuer) CreateCredentialOffer(ctx context.Context, req CreateCredentialOfferRequest) (CredentialOfferResult, error) {
 	offer := oid4vci.CredentialOffer{
 		CredentialIssuer:           iss.cfg.Issuer.String(),

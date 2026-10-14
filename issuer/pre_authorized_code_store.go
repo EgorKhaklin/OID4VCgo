@@ -25,10 +25,10 @@ var ErrTooManyTxCodeAttempts = errors.New("issuer: too many incorrect tx_code at
 // pre-authorized_code — as part of a Credential Offer's own
 // Grants.PreAuthorizedCode (§4.1.1) — everything ExchangePreAuthorizedCode
 // needs to validate a Token Request presenting it and decide what
-// access to grant. This package never creates or issues a
-// pre-authorized_code value itself, the same "caller-supplied" split
-// CreateCredentialOffer's own doc comment already draws for it and
-// issuer_state.
+// access to grant. CreatePreAuthorizedOffer generates the code,
+// stores this record and builds the offer in one step, its tx_code
+// derived from TxCode; a caller issuing a code itself must keep the
+// two consistent.
 type PreAuthorizedCodeRecord struct {
 	// TxCode is REQUIRED whenever the original Credential Offer's own
 	// Grants.PreAuthorizedCode.TxCode was non-nil — the Wallet must
