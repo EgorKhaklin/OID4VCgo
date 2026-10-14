@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -98,7 +99,9 @@ type Dependencies struct {
 	// Config.Fetch allows loopback or named private hosts, so an offer
 	// or metadata can't aim the Wallet at internal hosts. Set one only
 	// to change that, and build it with fapihttp.NewClient too: a plain
-	// http.Client has no such guard. An *http.Client is used through a
+	// http.Client has no such guard. Under AssuranceProduction New
+	// refuses any other (fapihttp.HardeningOf), one whose transport was
+	// changed after NewClient built it, and one allowing loopback. An *http.Client is used through a
 	// copy that follows no redirect, so a DPoP proof, access token or
 	// client attestation is never resent to a host the Wallet didn't
 	// choose; another HTTPClient (a wrapper) must not follow redirects
@@ -145,6 +148,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	}
 	if !jose.IsSupported(cfg.ProofSigningAlg) {
 		return nil, fmt.Errorf("wallet: config: proof_signing_alg %q is not supported", cfg.ProofSigningAlg)
+	}
+	if err := checkProductionHTTP(cfg.Assurance, deps.HTTP); err != nil {
+		return nil, err
 	}
 	httpClient, err := walletHTTPClient(cfg, deps.HTTP)
 	if err != nil {
@@ -208,4 +214,28 @@ func walletHTTPClient(cfg Config, given fapihttp.HTTPClient) (fapihttp.HTTPClien
 	default:
 		return given, nil
 	}
+}
+
+// checkProductionHTTP refuses, under AssuranceProduction, an HTTP client
+// other than fapihttp.NewClient's with its transport intact and no
+// loopback exception: only that transport refuses private and loopback
+// addresses when it dials, which is what keeps an offer's or a
+// Verifier's URLs from reaching into the Wallet's own network, DNS
+// rebinding included. nil is fine: New then builds that client itself.
+func checkProductionHTTP(assurance AssuranceLevel, given fapihttp.HTTPClient) error {
+	if assurance != AssuranceProduction || given == nil {
+		return nil
+	}
+	c, ok := given.(*http.Client)
+	if !ok {
+		return errors.New("wallet: dependencies: http must be fapihttp.NewClient's *http.Client under AssuranceProduction, or nil")
+	}
+	h, ok := fapihttp.HardeningOf(c)
+	switch {
+	case !ok:
+		return errors.New("wallet: dependencies: http must be fapihttp.NewClient's client, its transport unchanged, under AssuranceProduction")
+	case h.AllowsLoopback():
+		return errors.New("wallet: dependencies: http allows loopback addresses, which AssuranceProduction refuses")
+	}
+	return nil
 }

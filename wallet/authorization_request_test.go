@@ -470,7 +470,7 @@ func TestNew_RejectsNoVerifierTrustInProduction(t *testing.T) {
 		}
 	}
 	cfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: x509.NewCertPool()}
-	if _, err := wallet.New(cfg, validDependencies()); err != nil {
+	if _, err := wallet.New(cfg, productionDependencies()); err != nil {
 		t.Errorf("New(X5CVerifierRoots) under AssuranceProduction: %v", err)
 	}
 }
