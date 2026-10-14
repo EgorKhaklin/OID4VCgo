@@ -72,6 +72,12 @@ type HeldCredential struct {
 	// cose.Alg, not a jose.Alg.
 	HolderKeyAlg oid4vci.JOSEAlg
 
+	// withoutKeyBinding presents a "dc+sd-jwt" credential that has no
+	// HolderKey without a Key Binding JWT: set only by
+	// PresentCredentials, for a Credential Query that sets
+	// require_cryptographic_holder_binding to false (OID4VP §6.1).
+	withoutKeyBinding bool
+
 	// MdocDocType is this credential's own ISO/IEC 18013-5 docType
 	// (e.g. "org.iso.18013.5.1.mDL") — "mso_mdoc" only, REQUIRED for
 	// that format. Unlike "dc+sd-jwt"'s own "vct" claim, an mdoc's
@@ -296,6 +302,9 @@ func matchAllSDJWTVCQuery(ctx context.Context, cq dcql.CredentialQuery, candidat
 		if cq.SatisfiedBySDJWTVCClaims(claims) != nil {
 			continue
 		}
+		if _, bound := claims["cnf"]; !bound && cq.RequiresCryptographicHolderBinding() {
+			continue // no holder key to bind it to, which the query requires (OID4VP §6.1)
+		}
 		header, _, err := jose.DecodeUnverified(pres.IssuerJWT)
 		if err != nil {
 			continue
@@ -406,6 +415,7 @@ func PresentSDJWTVCSelective(held HeldCredential, aud, nonce string, requiredPat
 // PresentCredentials uses so its own vp_token is §6.4.1-compliant by
 // construction, unlike calling PresentSDJWTVC directly.
 func presentSDJWTVCSelectively(held HeldCredential, cq dcql.CredentialQuery, aud, nonce string) (string, error) {
+	held.withoutKeyBinding = held.HolderKey == nil && !cq.RequiresCryptographicHolderBinding()
 	paths, err := selectedClaimPaths(held, cq)
 	if err != nil {
 		return "", fmt.Errorf("wallet: present sd-jwt vc: %w", err)
@@ -481,6 +491,16 @@ func sdjwtvcDisclosurePaths(paths []dcql.Path) [][]any {
 // PresentSDJWTVCSelective both need once pres.Disclosures already
 // carries exactly what each of them decided to disclose.
 func signAndCompactSDJWTVCPresentation(held HeldCredential, pres sdjwtvc.Presentation, hashAlg sdjwtvc.HashAlg, aud, nonce string) (string, error) {
+	if held.HolderKey == nil {
+		if !held.withoutKeyBinding {
+			return "", errors.New("wallet: present sd-jwt vc: the credential has no holder key to sign a Key Binding JWT with")
+		}
+		compact, err := pres.Compact()
+		if err != nil {
+			return "", fmt.Errorf("wallet: present sd-jwt vc: %w", err)
+		}
+		return compact, nil
+	}
 	kbJWT, err := sdjwtvc.NewKeyBindingJWT(held.HolderKey, held.HolderKeyAlg, pres, hashAlg, sdjwtvc.KeyBindingClaims{
 		Audience: aud, Nonce: nonce,
 	})
@@ -694,6 +714,9 @@ func presentMdocWithIssuerSigned(held HeldCredential, params PresentMdocParams, 
 	sessionTranscriptBytes, err := buildMdocSessionTranscriptBytes(params)
 	if err != nil {
 		return "", fmt.Errorf("wallet: present mdoc: %w", err)
+	}
+	if held.HolderKey == nil {
+		return "", errors.New("wallet: present mdoc: the credential has no holder key to sign the DeviceSignature with")
 	}
 	alg, err := mdocDeviceAlgForKey(held.HolderKey.Public())
 	if err != nil {
