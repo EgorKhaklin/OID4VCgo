@@ -33,3 +33,15 @@ var IssuerStateExtension = extension.Definition[string]{
 	MaxBytes:       2048,
 	Sensitivity:    extension.Sensitive,
 }
+
+// ResourceExtension declares the resource authorization parameter (RFC
+// 8707 §2): the Credential Issuer's identifier, which OpenID4VCI §5.1.2
+// has a Wallet send so an Authorization Server serving more than one
+// Credential Issuer can tell them apart, and restrict the token to the
+// one it's for.
+var ResourceExtension = extension.Definition[string]{
+	Name:           "resource",
+	Cardinality:    extension.Single,
+	AllowedSources: extension.SourcePlainParameter | extension.SourceRequestObject,
+	MaxBytes:       2048,
+}
