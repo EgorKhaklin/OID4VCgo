@@ -56,9 +56,11 @@ type Verified struct {
 	Missing map[string][]string
 	// ValidityInfo is the MSO's: when it was signed, and its validity.
 	ValidityInfo mdoc.ValidityInfo
-	// IssuerChain is the IssuerAuth x5chain, when its leaf's key is the
-	// one IssuerKeys resolved and the document verified with; nil
-	// otherwise.
+	// IssuerChain is the issuer certificate path IssuerKeys (an
+	// verifier.MdocIssuerChainResolver) verified, document signer first,
+	// without the trust anchor; nil when IssuerKeys verifies no chain.
+	// Never the IssuerAuth x5chain itself, which is unprotected
+	// (verifier.CheckMdocIssuer).
 	IssuerChain [][]byte
 	// Status is the MSO's revocation reference, nil if it has none;
 	// checking it is the caller's (package statuslist).
