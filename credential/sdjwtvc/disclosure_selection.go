@@ -27,14 +27,29 @@ import "fmt"
 // error" stance ResolveDisclosures itself takes for an unmatched
 // digest (§7.1 step 3.c.i).
 //
-// This function only understands object-property traversal — it has
-// no notion of selecting one array element or one specific index (the
-// §7.1 wildcard/integer path components a JSON-based Claims Path
-// Pointer can carry into an *array*, as opposed to indexing into an
-// object). A caller whose own paths need that is expected to fall back
-// to disclosing more broadly itself; see wallet's own doc comment for
-// where this repo currently draws that line.
+// SelectDisclosures walks object members only; SelectDisclosuresAt
+// also walks into arrays, by index or every element.
 func SelectDisclosures(payload map[string]any, alg HashAlg, all []Disclosure, paths [][]string) ([]Disclosure, error) {
+	general := make([][]any, len(paths))
+	for i, path := range paths {
+		general[i] = make([]any, len(path))
+		for j, key := range path {
+			general[i][j] = key
+		}
+	}
+	return SelectDisclosuresAt(payload, alg, all, general)
+}
+
+// SelectDisclosuresAt is SelectDisclosures for claims path pointers
+// that also walk into arrays (OpenID4VP §7.1): each path component is a
+// string (an object member), a non-negative int (one array element) or
+// nil (every element of an array). An array element is either a plain
+// value or, when selectively disclosable, a {"...": digest} placeholder
+// whose Disclosure is then included (RFC 9901 §4.2.4.2). An index
+// counts the elements the holder's credential has, so placeholders with
+// no matching Disclosure (decoys) aren't counted. As for an absent
+// member, an index past the array's end selects nothing.
+func SelectDisclosuresAt(payload map[string]any, alg HashAlg, all []Disclosure, paths [][]any) ([]Disclosure, error) {
 	byDigest := make(map[string]Disclosure, len(all))
 	for _, d := range all {
 		digest, err := d.Digest(alg)
@@ -59,31 +74,109 @@ func SelectDisclosures(payload map[string]any, alg HashAlg, all []Disclosure, pa
 }
 
 // selectPath walks node — a raw, not-yet-resolved SD-JWT subtree —
-// following path's own sequence of object-property names, marking
-// every Disclosure traversed along the way into selected (keyed by
-// digest, so revisiting the same one via a different path is a no-op).
-func selectPath(node any, byDigest map[string]Disclosure, path []string, selected map[string]Disclosure) error {
+// following path, marking every Disclosure traversed along the way
+// into selected (keyed by digest, so revisiting the same one via a
+// different path is a no-op).
+func selectPath(node any, byDigest map[string]Disclosure, path []any, selected map[string]Disclosure) error {
 	if len(path) == 0 {
 		return includeAllDisclosures(node, byDigest, selected)
 	}
+	switch c := path[0].(type) {
+	case string:
+		return selectMember(node, byDigest, c, path[1:], selected)
+	case int:
+		if c < 0 {
+			return fmt.Errorf("sdjwtvc: select disclosures: negative array index %d", c)
+		}
+		return selectElements(node, byDigest, c, path[1:], selected)
+	case nil:
+		return selectElements(node, byDigest, -1, path[1:], selected)
+	default:
+		return fmt.Errorf("sdjwtvc: select disclosures: path component %v is neither a string, an int nor nil", c)
+	}
+}
+
+// selectMember is selectPath for an object member key: a plaintext one
+// is followed directly, a selectively disclosable one through its
+// Disclosure among the object's "_sd" digests.
+func selectMember(node any, byDigest map[string]Disclosure, key string, rest []any, selected map[string]Disclosure) error {
 	obj, ok := node.(map[string]any)
 	if !ok {
-		return fmt.Errorf("sdjwtvc: select disclosures: path element %q: not an object", path[0])
+		return fmt.Errorf("sdjwtvc: select disclosures: path element %q: not an object", key)
 	}
-	key := path[0]
 	if child, present := obj[key]; present {
-		return selectPath(child, byDigest, path[1:], selected)
+		return selectPath(child, byDigest, rest, selected)
 	}
-
 	for _, digest := range sdDigests(obj) {
 		d, found := byDigest[digest]
 		if !found || d.IsArrayElement() || d.Name != key {
 			continue
 		}
 		selected[digest] = d
-		return selectPath(d.Value, byDigest, path[1:], selected)
+		return selectPath(d.Value, byDigest, rest, selected)
 	}
 	return nil
+}
+
+// selectElements is selectPath for an array: element index, or every
+// element when index is -1. Under a wildcard, an element the rest of
+// the path can't walk (another type than it expects) is skipped, as
+// OpenID4VP §7.1 drops it from the selection.
+func selectElements(node any, byDigest map[string]Disclosure, index int, rest []any, selected map[string]Disclosure) error {
+	arr, ok := node.([]any)
+	if !ok {
+		return fmt.Errorf("sdjwtvc: select disclosures: path element %v: not an array", indexComponent(index))
+	}
+	position := 0
+	for _, el := range arr {
+		value, digest := el, ""
+		if ref, isRef := disclosureRefDigest(el); isRef {
+			d, found := byDigest[ref]
+			if !found {
+				continue // a decoy, which the holder's credential doesn't have
+			}
+			value, digest = d.Value, ref
+		}
+		if index == -1 || position == index {
+			if index == -1 && !walkable(value, rest) {
+				position++
+				continue
+			}
+			if digest != "" {
+				selected[digest] = byDigest[digest]
+			}
+			if err := selectPath(value, byDigest, rest, selected); err != nil {
+				return err
+			}
+			if index != -1 {
+				return nil
+			}
+		}
+		position++
+	}
+	return nil
+}
+
+// walkable reports whether value has the type rest's first component
+// walks: an object for a member, an array for an index or wildcard.
+func walkable(value any, rest []any) bool {
+	if len(rest) == 0 {
+		return true
+	}
+	if _, member := rest[0].(string); member {
+		_, ok := value.(map[string]any)
+		return ok
+	}
+	_, ok := value.([]any)
+	return ok
+}
+
+// indexComponent is index as a path component, for an error.
+func indexComponent(index int) any {
+	if index == -1 {
+		return nil
+	}
+	return index
 }
 
 // sdDigests returns obj's own "_sd" array entries that are actually

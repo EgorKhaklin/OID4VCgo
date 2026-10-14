@@ -1,6 +1,9 @@
 package sdjwtvc
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestSelectDisclosuresTopLevel(t *testing.T) {
 	tree := map[string]any{
@@ -227,5 +230,58 @@ func TestSelectDisclosuresMandatoryClaimInPath(t *testing.T) {
 	address, ok := resolved["address"].(map[string]any)
 	if !ok || address["street_address"] != "123 Main St" {
 		t.Errorf("resolved[address] = %v", resolved["address"])
+	}
+}
+
+// Paths walk into arrays (OpenID4VP 7.1): an index discloses that
+// element, a nil every element, each with only what the rest of the
+// path needs; a decoy placeholder isn't counted as an element.
+func TestSelectDisclosuresAtArrays(t *testing.T) {
+	tree := map[string]any{
+		"nationalities": []any{SDElement("DE"), SDElement("FR"), SDElement("IT")},
+		"degrees": []any{
+			map[string]any{"type": SD("BSc"), "university": SD("A")},
+			map[string]any{"type": SD("MSc"), "university": SD("B")},
+		},
+		"other": SD("hidden"),
+	}
+	sealed, disclosures, err := sealMap(tree, SHA256)
+	if err != nil {
+		t.Fatalf("sealMap: %v", err)
+	}
+	// A decoy, first in nationalities: index 1 is still FR.
+	nats := sealed["nationalities"].([]any)
+	sealed["nationalities"] = append([]any{map[string]any{"...": "decoy-digest-without-a-disclosure"}}, nats...)
+
+	resolve := func(paths ...[]any) map[string]any {
+		t.Helper()
+		selected, err := SelectDisclosuresAt(sealed, SHA256, disclosures, paths)
+		if err != nil {
+			t.Fatalf("SelectDisclosuresAt(%v): %v", paths, err)
+		}
+		resolved, err := ResolveDisclosures(sealed, SHA256, selected)
+		if err != nil {
+			t.Fatalf("ResolveDisclosures: %v", err)
+		}
+		return resolved
+	}
+	if got := resolve([]any{"nationalities", 1}); fmt.Sprint(got["nationalities"]) != "[FR]" {
+		t.Errorf("index 1: nationalities = %v, want [FR]", got["nationalities"])
+	}
+	if got := resolve([]any{"nationalities", nil}); fmt.Sprint(got["nationalities"]) != "[DE FR IT]" {
+		t.Errorf("wildcard: nationalities = %v, want [DE FR IT]", got["nationalities"])
+	}
+	got := resolve([]any{"degrees", nil, "type"})
+	if fmt.Sprint(got["degrees"]) != "[map[type:BSc] map[type:MSc]]" {
+		t.Errorf("degrees[*].type: degrees = %v, want only the types", got["degrees"])
+	}
+	if _, leaked := got["other"]; leaked {
+		t.Error("disclosed a claim no path named")
+	}
+	if got := resolve([]any{"nationalities", 9}); fmt.Sprint(got["nationalities"]) != "[]" {
+		t.Errorf("an index past the end: nationalities = %v, want none", got["nationalities"])
+	}
+	if _, err := SelectDisclosuresAt(sealed, SHA256, disclosures, [][]any{{"other", 0}}); err == nil {
+		t.Error("indexed into a value that isn't an array")
 	}
 }
