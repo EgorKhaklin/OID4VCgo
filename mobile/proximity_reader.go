@@ -232,8 +232,40 @@ type verifiedJSON struct {
 }
 
 type statusRefJSON struct {
-	URI string `json:"uri"`
-	Idx uint64 `json:"idx"`
+	// Type is "status_list" or "identifier_list" (ISO/IEC 18013-5
+	// §12.3.6.2).
+	Type string `json:"type"`
+	URI  string `json:"uri"`
+	// Idx is a status list's index.
+	Idx uint64 `json:"idx,omitempty"`
+	// ID is the document's identifier in an identifier list, as base64.
+	ID string `json:"id,omitempty"`
+	// Certificate is the list signer's trust anchor, when the MSO names
+	// one, as base64 DER.
+	Certificate string `json:"certificate,omitempty"`
+}
+
+// statusRefOf is an MSO's status reference as JSON: either mechanism,
+// so a document revoked through an identifier list doesn't look like
+// one with no status at all.
+func statusRefOf(status *mdoc.Status) *statusRefJSON {
+	switch {
+	case status == nil:
+		return nil
+	case status.StatusList != nil:
+		return &statusRefJSON{
+			Type: "status_list", URI: status.StatusList.URI, Idx: status.StatusList.Idx,
+			Certificate: base64.StdEncoding.EncodeToString(status.StatusList.Certificate),
+		}
+	case status.IdentifierList != nil:
+		return &statusRefJSON{
+			Type: "identifier_list", URI: status.IdentifierList.URI,
+			ID:          base64.StdEncoding.EncodeToString(status.IdentifierList.ID),
+			Certificate: base64.StdEncoding.EncodeToString(status.IdentifierList.Certificate),
+		}
+	default:
+		return nil
+	}
 }
 
 // HandleMessage processes the holder's answer, one whole message
@@ -303,9 +335,7 @@ func verifiedOf(v proximity.Verified) *verifiedJSON {
 			out.DeviceSignedClaims[ns] = jsonClaims(map[string]any(els))
 		}
 	}
-	if v.Status != nil && v.Status.StatusList != nil {
-		out.Status = &statusRefJSON{URI: v.Status.StatusList.URI, Idx: v.Status.StatusList.Idx}
-	}
+	out.Status = statusRefOf(v.Status)
 	return out
 }
 
