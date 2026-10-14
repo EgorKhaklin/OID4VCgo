@@ -80,3 +80,18 @@ func TestBuildAuthorizationRequest_OmitsIssuerStateWhenAbsent(t *testing.T) {
 		})
 	}
 }
+
+// The authorization request names the Credential Issuer as its resource
+// (OpenID4VCI §5.1.2, RFC 8707), so an Authorization Server serving
+// more than one can restrict the token to it.
+func TestBuildAuthorizationRequest_AttachesResource(t *testing.T) {
+	req, err := wallet.BuildAuthorizationRequest(oid4vci.CredentialOffer{
+		CredentialIssuer: "https://issuer.example.com", CredentialConfigurationIDs: []string{"IdentityCredential"},
+	}, []string{"identity_credential"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := extension.Get(req.Extensions, oid4vci.ResourceExtension); !ok || got != "https://issuer.example.com" {
+		t.Errorf("resource = %q, %v; want the Credential Issuer", got, ok)
+	}
+}
