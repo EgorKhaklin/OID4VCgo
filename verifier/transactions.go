@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 )
 
@@ -303,6 +305,9 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 	if sameDevice && t.cfg.RedirectURI == "" {
 		return Begun{}, errors.New("verifier: transactions: a same-device request needs TransactionsConfig.RedirectURI")
 	}
+	if err := t.checkVerifies(query); err != nil {
+		return Begun{}, err
+	}
 	id, err := t.randomToken()
 	if err != nil {
 		return Begun{}, err
@@ -381,11 +386,11 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 	}
 	id, err := t.store.IDByKeyID(ctx, kid)
 	if err != nil {
-		return Answered{}, err
+		return Answered{}, storeFault(err)
 	}
 	tx, err := t.store.Get(ctx, id)
 	if err != nil {
-		return Answered{}, err
+		return Answered{}, storeFault(err)
 	}
 	if err := t.checkPending(tx); err != nil {
 		return Answered{}, err
@@ -399,7 +404,7 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 	var code string
 	if tx.SameDevice {
 		if code, err = t.randomToken(); err != nil {
-			return Answered{}, err
+			return Answered{}, &serverFault{err}
 		}
 	}
 	err = t.store.Update(ctx, id, func(cur *Transaction) error {
@@ -415,7 +420,7 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 		return nil
 	})
 	if err != nil {
-		return Answered{}, err
+		return Answered{}, storeFault(err)
 	}
 	answered := Answered{ID: id}
 	if tx.SameDevice {
@@ -668,4 +673,52 @@ func isLoopback(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// checkVerifies refuses a query the Verify configuration can't verify
+// an answer to, so the mistake shows when the request is made, not as
+// every answer's LastError: a resolver for each credential format it
+// asks for, MaxKeyBindingAge where holder binding applies, and
+// TrustedAuthorities where it declares trusted_authorities.
+func (t *Transactions) checkVerifies(query dcql.Query) error {
+	for _, cq := range query.Credentials {
+		switch {
+		case cq.Format == sdjwtvc.CredentialFormat && t.cfg.Verify.IssuerKeys == nil:
+			return fmt.Errorf("verifier: transactions: credential query %q asks for %q, and Verify.IssuerKeys isn't set", cq.ID, cq.Format)
+		case cq.Format == mdoc.CredentialFormat && t.cfg.Verify.MdocIssuerKeys == nil:
+			return fmt.Errorf("verifier: transactions: credential query %q asks for %q, and Verify.MdocIssuerKeys isn't set", cq.ID, cq.Format)
+		}
+	}
+	req := t.cfg.Verify
+	req.Query = query
+	if err := checkMaxKeyBindingAgeRequired(req); err != nil {
+		return fmt.Errorf("verifier: transactions: Verify: %w", err)
+	}
+	if err := checkTrustedAuthoritiesConfigured(req); err != nil {
+		return fmt.Errorf("verifier: transactions: Verify: %w", err)
+	}
+	return nil
+}
+
+// serverFault is a failure of the Verifier's own, such as its store's,
+// not of the answer: ResponseHandler reports it as a 500, so the Wallet
+// isn't told its answer was refused.
+type serverFault struct{ err error }
+
+func (e *serverFault) Error() string { return e.err.Error() }
+func (e *serverFault) Unwrap() error { return e.err }
+
+// storeFault is err, a TransactionStore's, as a serverFault unless it's
+// one of the outcomes the store reports about the request itself.
+func storeFault(err error) error {
+	for _, known := range []error{ErrTransactionUnknown, ErrTransactionExpired, ErrTransactionAnswered, ErrTransactionClosed} {
+		if errors.Is(err, known) {
+			return err
+		}
+	}
+	var fault *serverFault
+	if errors.As(err, &fault) {
+		return err
+	}
+	return &serverFault{err}
 }
