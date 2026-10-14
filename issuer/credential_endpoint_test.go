@@ -1593,3 +1593,40 @@ func TestRequestCredential_AttestationStatus(t *testing.T) {
 		})
 	}
 }
+
+// The attestation proof type takes exactly one key attestation, which
+// attests every key (Appendix F.3).
+func TestRequestCredential_RejectsMoreThanOneAttestation(t *testing.T) {
+	f := newCredentialEndpointFixture(t)
+	key1, key2 := testP256Key(t), testP256Key(t)
+	nonce := f.issueNonce(t)
+	att1 := buildAttestation(t, f.attestationSigner, nonce, &key1.PublicKey)
+	att2 := buildAttestation(t, f.attestationSigner, nonce, &key2.PublicKey)
+	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeAttestation: {att1, att2}},
+		SDJWTClaims:               testSDJWTClaims(),
+	})
+	var ierr *issuer.Error
+	if !errors.As(err, &ierr) || ierr.Code() != issuer.ErrorInvalidProof {
+		t.Fatalf("two attestations: %v, want invalid_proof", err)
+	}
+}
+
+// New refuses key_attestations_required on the jwt proof type, whose
+// key_attestation header isn't verified, rather than publishing a
+// requirement every request then fails.
+func TestNewRefusesKeyAttestationsOnJWTProofType(t *testing.T) {
+	cfg := validConfig(t)
+	cc := cfg.CredentialConfigurationsSupported["IdentityCredential"]
+	cc.ProofTypesSupported = map[string]oid4vci.ProofTypeConfiguration{
+		oid4vci.ProofTypeJWT: {
+			ProofSigningAlgValuesSupported: []string{"ES256"},
+			KeyAttestationsRequired:        &oid4vci.KeyAttestationRequirement{KeyStorage: []string{"iso_18045_moderate"}},
+		},
+	}
+	cfg.CredentialConfigurationsSupported["IdentityCredential"] = cc
+	if _, err := issuer.New(cfg, validDependencies(t)); err == nil || !strings.Contains(err.Error(), "key_attestations_required") {
+		t.Errorf("New: %v, want key_attestations_required on jwt refused", err)
+	}
+}
