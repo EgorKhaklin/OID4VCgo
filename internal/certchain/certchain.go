@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -156,4 +157,33 @@ func DERsFromBase64(entries []any) ([][]byte, error) {
 		ders = append(ders, der)
 	}
 	return ders, nil
+}
+
+// CheckPresentedChain checks a certificate chain a signer presents in
+// x5c or x5chain, leaf first, as HAIP 1.0 requires it (§4.1, §5,
+// §6.1.1): the leaf isn't self-signed, each intermediate signs the
+// certificate before it, and the trust anchor isn't included (a
+// self-signed intermediate is one). A verifier then builds the path to
+// its own anchors.
+func CheckPresentedChain(leaf *x509.Certificate, intermediates []*x509.Certificate) error {
+	if leaf == nil {
+		return errors.New("certchain: no leaf certificate")
+	}
+	if IsSelfSigned(leaf) {
+		return errors.New("certchain: the leaf certificate is self-signed; it must be issued by a CA")
+	}
+	child := leaf
+	for i, parent := range intermediates {
+		if parent == nil {
+			return fmt.Errorf("certchain: intermediate %d is nil", i)
+		}
+		if err := child.CheckSignatureFrom(parent); err != nil {
+			return fmt.Errorf("certchain: intermediate %d didn't sign the certificate before it: %w", i, err)
+		}
+		if IsSelfSigned(parent) {
+			return fmt.Errorf("certchain: intermediate %d is self-signed: leave the trust anchor out of the chain", i)
+		}
+		child = parent
+	}
+	return nil
 }

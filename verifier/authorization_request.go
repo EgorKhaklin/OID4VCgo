@@ -196,7 +196,7 @@ func (v *Verifier) signRequestObject(payload map[string]any) (string, error) {
 	}
 	header := map[string]any{
 		"typ": requestObjectTyp,
-		"x5c": []string{base64.StdEncoding.EncodeToString(v.cfg.ClientCertificate.Raw)},
+		"x5c": v.requestX5C(),
 	}
 	requestObject, err := jose.Sign(v.cfg.SigningAlg, v.deps.Signer, header, payloadJSON)
 	if err != nil {
@@ -214,4 +214,14 @@ func randomToken(random io.Reader) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// requestX5C is the Request Object's x5c: the client certificate, then
+// its chain to (not including) the trust anchor.
+func (v *Verifier) requestX5C() []string {
+	x5c := []string{base64.StdEncoding.EncodeToString(v.cfg.ClientCertificate.Raw)}
+	for _, c := range v.cfg.ClientCertificateChain {
+		x5c = append(x5c, base64.StdEncoding.EncodeToString(c.Raw))
+	}
+	return x5c
 }

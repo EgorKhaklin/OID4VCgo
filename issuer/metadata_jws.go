@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
@@ -33,7 +34,14 @@ const MetadataJWSTyp = "openidvci-issuer-metadata+jwt"
 // parameters like x5c, kid or trust_chain") — this repo's own
 // established convention (see verifier/authorization_request.go's
 // signRequestObject).
-func SignMetadataJWS(meta oid4vci.Metadata, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate) (string, error) {
+//
+// cert must be issued by a CA, not self-signed, and intermediates are
+// the CA certificates between it and the trust anchor, in order, the
+// anchor left out: x5c carries cert followed by them (HAIP 1.0 §4.1).
+func SignMetadataJWS(meta oid4vci.Metadata, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate, intermediates ...*x509.Certificate) (string, error) {
+	if err := certchain.CheckPresentedChain(cert, intermediates); err != nil {
+		return "", fmt.Errorf("issuer: sign metadata: %w", err)
+	}
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
 		return "", fmt.Errorf("issuer: sign metadata: marshal metadata: %w", err)
@@ -53,9 +61,13 @@ func SignMetadataJWS(meta oid4vci.Metadata, signer crypto.Signer, alg oid4vci.JO
 	if err != nil {
 		return "", fmt.Errorf("issuer: sign metadata: marshal claims: %w", err)
 	}
+	x5c := []string{base64.StdEncoding.EncodeToString(cert.Raw)}
+	for _, c := range intermediates {
+		x5c = append(x5c, base64.StdEncoding.EncodeToString(c.Raw))
+	}
 	header := map[string]any{
 		"typ": MetadataJWSTyp,
-		"x5c": []string{base64.StdEncoding.EncodeToString(cert.Raw)},
+		"x5c": x5c,
 	}
 	signed, err := jose.Sign(alg, signer, header, claimsJSON)
 	if err != nil {
@@ -75,11 +87,14 @@ func SignMetadataJWS(meta oid4vci.Metadata, signer crypto.Signer, alg oid4vci.JO
 // to plain JSON rather than a 500 — an operator error in signer/cert
 // config shouldn't take down the one endpoint every OID4VCI flow
 // starts with.
-func MetadataHandler(iss *Issuer, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate) http.HandlerFunc {
+//
+// intermediates follow cert in the signed metadata's x5c, as
+// SignMetadataJWS describes.
+func MetadataHandler(iss *Issuer, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate, intermediates ...*x509.Certificate) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		meta := iss.Metadata()
 		if strings.Contains(r.Header.Get("Accept"), "application/jwt") {
-			if signed, err := SignMetadataJWS(meta, signer, alg, cert); err == nil {
+			if signed, err := SignMetadataJWS(meta, signer, alg, cert, intermediates...); err == nil {
 				w.Header().Set("Content-Type", "application/jwt")
 				_, _ = w.Write([]byte(signed))
 				return

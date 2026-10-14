@@ -2,8 +2,6 @@ package issuer_test
 
 import (
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -18,11 +16,8 @@ import (
 
 func testSignerAndCert(t *testing.T) (*ecdsa.PrivateKey, *x509.Certificate) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	cert := testcert.SelfSigned(t, "issuer.example.com", &key.PublicKey, key)
+	ca, caKey := testcert.CA(t, "metadata test CA")
+	cert, key := testcert.Leaf(t, "issuer.example.com", ca, caKey)
 	return key, cert
 }
 

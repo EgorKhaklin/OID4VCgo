@@ -77,6 +77,34 @@ func CA(t testing.TB, commonName string) (*x509.Certificate, *ecdsa.PrivateKey) 
 	return cert, key
 }
 
+// Intermediate issues an intermediate CA certificate under
+// parent/parentKey, for a fresh EC P-256 key: a chain's middle link.
+func Intermediate(t testing.TB, commonName string, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("testcert: generate intermediate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(3),
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, parentKey)
+	if err != nil {
+		t.Fatalf("testcert: create intermediate certificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("testcert: parse intermediate certificate: %v", err)
+	}
+	return cert, key
+}
+
 // Leaf issues a leaf certificate under ca/caKey (ordinarily built with
 // CA) for a fresh EC P-256 key.
 func Leaf(t testing.TB, commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
