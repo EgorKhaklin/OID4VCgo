@@ -553,8 +553,12 @@ the request asked for. `claims` is `{namespace: {identifier: value}}`
 with values as a wallet's claims (byte strings as base64, dates as
 their text). The holder may withhold elements, so check that each one
 needed is there. `device_auth` is `signature` or `mac`. `status`, when
-present, is the MSO's status list reference `{"uri", "idx"}`, which
-isn't checked: check it before relying on the document.
+present, is the MSO's revocation reference, which isn't checked: check
+it before relying on the document. It's `{"type": "status_list", "uri",
+"idx"}` or `{"type": "identifier_list", "uri", "id"}` (`id` as base64),
+with `certificate` (base64 DER), the list signer's trust anchor, when
+the MSO names one. `type` and the identifier list were added within ABI
+version 12; before, an identifier list gave no `status`.
 
 ProximityReader was added within ABI version 12.
 

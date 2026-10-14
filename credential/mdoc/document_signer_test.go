@@ -101,3 +101,18 @@ func TestCheckDocumentSigner(t *testing.T) {
 		t.Errorf("a namespace that doesn't define issuing_country: %v", err)
 	}
 }
+
+// A custom resolver's empty path or nil certificate is refused, not a
+// panic.
+func TestCheckDocumentSigner_EmptyPaths(t *testing.T) {
+	verified := mdoc.VerifiedMSO{ValidityInfo: mdoc.ValidityInfo{Signed: time.Now()}}
+	for name, chains := range map[string][][]*x509.Certificate{
+		"nil leaf":             {{nil}},
+		"empty second path":    {signerChain(t, "US", "", "DE", ""), {}},
+		"nil in a second path": {signerChain(t, "US", "", "DE", ""), {nil, nil}},
+	} {
+		if _, err := mdoc.CheckDocumentSigner(verified, chains); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
