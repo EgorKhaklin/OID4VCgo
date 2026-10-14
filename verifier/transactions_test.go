@@ -412,6 +412,7 @@ func TestNewTransactions_Validates(t *testing.T) {
 	}
 
 	cfg, deps := validConfig(t)
+	caIssuedClientCert(t, &cfg, &deps)
 	cfg.Assurance = verifier.AssuranceProduction
 	prod, err := verifier.New(cfg, deps)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -35,6 +36,7 @@ func loopbackResponseURI(t *testing.T) fapi.URL {
 
 func TestNewLoopbackResponseURIByAssurance(t *testing.T) {
 	cfg, deps := validConfig(t)
+	caIssuedClientCert(t, &cfg, &deps)
 	cfg.ResponseURI = loopbackResponseURI(t)
 	if _, err := verifier.New(cfg, deps); err != nil {
 		t.Fatalf("New(AssuranceDevelopment, loopback http response_uri): %v", err)
@@ -49,6 +51,7 @@ func TestNewLoopbackResponseURIByAssurance(t *testing.T) {
 
 func TestNewProductionAcceptsHTTPSResponseURI(t *testing.T) {
 	cfg, deps := validConfig(t)
+	caIssuedClientCert(t, &cfg, &deps)
 	cfg.Assurance = verifier.AssuranceProduction
 	if _, err := verifier.New(cfg, deps); err != nil {
 		t.Fatalf("New(AssuranceProduction): %v", err)
@@ -61,6 +64,7 @@ func TestNewProductionAcceptsHTTPSResponseURI(t *testing.T) {
 // guessable.
 func TestNewProductionRequiresCryptoRand(t *testing.T) {
 	cfg, deps := validConfig(t)
+	caIssuedClientCert(t, &cfg, &deps)
 	deps.Random = bytes.NewReader(make([]byte, 1<<16))
 	if _, err := verifier.New(cfg, deps); err != nil {
 		t.Fatalf("New(AssuranceDevelopment, another reader): %v", err)
@@ -86,6 +90,7 @@ func TestNewValidatesEncValues(t *testing.T) {
 		"empty":               {},
 	} {
 		cfg, deps := validConfig(t)
+		caIssuedClientCert(t, &cfg, &deps)
 		cfg.EncValuesSupported = tc.values
 		if tc.production {
 			cfg.Assurance = verifier.AssuranceProduction
@@ -145,6 +150,7 @@ func TestVerifyResponseKeySourceAssurance(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, deps := validConfig(t)
+			caIssuedClientCert(t, &cfg, &deps)
 			cfg.Assurance = tc.assurance
 			v, err := verifier.New(cfg, deps)
 			if err != nil {
@@ -171,4 +177,13 @@ func TestVerifyResponseKeySourceAssurance(t *testing.T) {
 			}
 		})
 	}
+}
+
+// caIssuedClientCert gives cfg a CA-issued client certificate, with
+// deps' signer its key: AssuranceProduction refuses a self-signed one.
+func caIssuedClientCert(t *testing.T, cfg *verifier.Config, deps *verifier.Dependencies) {
+	t.Helper()
+	ca, caKey := testcert.CA(t, "verifier test CA")
+	cert, key := testcert.Leaf(t, "verifier test", ca, caKey)
+	cfg.ClientCertificate, deps.Signer = cert, key
 }

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 )
 
 func mustCert(t *testing.T, tmpl, parent *x509.Certificate, pub *ecdsa.PublicKey, signer *ecdsa.PrivateKey) *x509.Certificate {
@@ -91,5 +93,31 @@ func TestVerifyChainsAt(t *testing.T) {
 	}
 	if _, _, err := VerifyChainsAt([][]byte{leaf.Raw}, roots, now.Add(2*time.Hour)); err == nil {
 		t.Error("after the leaf's NotAfter: verified, want refused")
+	}
+}
+
+// A presented chain is a CA-issued leaf, then each intermediate that
+// signed the certificate before it, without the trust anchor.
+func TestCheckPresentedChain(t *testing.T) {
+	root, rootKey := testcert.CA(t, "root")
+	mid, midKey := testcert.Intermediate(t, "intermediate", root, rootKey)
+	leaf, _ := testcert.Leaf(t, "leaf", mid, midKey)
+	direct, _ := testcert.Leaf(t, "direct leaf", root, rootKey)
+	selfSigned, _ := testcert.SelfSignedLeaf(t, "self-signed")
+	for name, tc := range map[string]struct {
+		leaf          *x509.Certificate
+		intermediates []*x509.Certificate
+		ok            bool
+	}{
+		"leaf and intermediate":     {leaf, []*x509.Certificate{mid}, true},
+		"leaf under the root":       {direct, nil, true},
+		"self-signed leaf":          {selfSigned, nil, false},
+		"anchor included":           {leaf, []*x509.Certificate{mid, root}, false},
+		"intermediate out of order": {direct, []*x509.Certificate{mid}, false},
+		"no leaf":                   {nil, nil, false},
+	} {
+		if err := CheckPresentedChain(tc.leaf, tc.intermediates); (err == nil) != tc.ok {
+			t.Errorf("%s: %v, want ok=%v", name, err, tc.ok)
+		}
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
@@ -252,10 +253,19 @@ type SDJWTSigner struct {
 	// "dc+sd-jwt" issuance to the same standing, added once a real
 	// need (this conformance suite check) confirmed it, matching this
 	// package's own "extend only when a real need arises" discipline.
+	// New checks its key is Signer's, and under AssuranceProduction
+	// that it isn't self-signed (HAIP 1.0 §6.1.1).
 	IssuerCertificate *x509.Certificate
+
+	// IssuerIntermediates are the CA certificates between
+	// IssuerCertificate and the trust anchor, in order, the anchor left
+	// out: they follow it in x5c (credential/sdjwtvc.IssueOptions.
+	// IssuerIntermediates), so a Verifier holding only the anchor can
+	// build the path. Requires IssuerCertificate.
+	IssuerIntermediates []*x509.Certificate
 }
 
-func (s *SDJWTSigner) validate() error {
+func (s *SDJWTSigner) validate(assurance AssuranceLevel) error {
 	if s == nil {
 		return fmt.Errorf("sdjwt_signer is required when a credential_configurations_supported entry uses format %q", sdjwtvc.CredentialFormat)
 	}
@@ -267,6 +277,40 @@ func (s *SDJWTSigner) validate() error {
 	}
 	if !jose.IsSupported(s.Alg) {
 		return fmt.Errorf("sdjwt_signer.alg %q is not supported", s.Alg)
+	}
+	if s.IssuerCertificate == nil {
+		if len(s.IssuerIntermediates) > 0 {
+			return fmt.Errorf("sdjwt_signer.issuer_intermediates needs issuer_certificate")
+		}
+		return nil
+	}
+	if err := checkSignerCertificate("sdjwt_signer", s.Signer, s.IssuerCertificate, s.IssuerIntermediates, assurance); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkSignerCertificate checks a signer's certificate before any
+// credential is issued with it: its key is signer's, the chain after it
+// is in order without the trust anchor, and, under AssuranceProduction,
+// it isn't self-signed (HAIP 1.0 §6.1.1, ISO/IEC 18013-5 §9.3.1: issued
+// by a CA). A mismatch would otherwise surface as a failed Credential
+// Request.
+func checkSignerCertificate(field string, signer crypto.Signer, leaf *x509.Certificate, intermediates []*x509.Certificate, assurance AssuranceLevel) error {
+	comparableKey, ok := signer.Public().(interface{ Equal(crypto.PublicKey) bool })
+	if !ok {
+		return fmt.Errorf("%s.signer's public key type %T can't be compared with the certificate's", field, signer.Public())
+	}
+	if !comparableKey.Equal(leaf.PublicKey) {
+		return fmt.Errorf("%s: the certificate's public key isn't the signer's", field)
+	}
+	if len(intermediates) > 0 {
+		if err := certchain.CheckPresentedChain(leaf, intermediates); err != nil {
+			return fmt.Errorf("%s: %w", field, err)
+		}
+	}
+	if assurance == AssuranceProduction && certchain.IsSelfSigned(leaf) {
+		return fmt.Errorf("%s: the certificate is self-signed, which AssuranceProduction refuses: verifiers need it issued by a CA they trust", field)
 	}
 	return nil
 }
@@ -285,7 +329,7 @@ type MdocSigner struct {
 	KeyID []byte
 }
 
-func (s *MdocSigner) validate() error {
+func (s *MdocSigner) validate(assurance AssuranceLevel) error {
 	if s == nil {
 		return fmt.Errorf("mdoc_signer is required when a credential_configurations_supported entry uses format %q", mdoc.CredentialFormat)
 	}
@@ -301,7 +345,15 @@ func (s *MdocSigner) validate() error {
 	if len(s.X5Chain) == 0 {
 		return fmt.Errorf("mdoc_signer.x5chain must include at least one certificate")
 	}
-	return nil
+	chain := make([]*x509.Certificate, len(s.X5Chain))
+	for i, der := range s.X5Chain {
+		c, err := x509.ParseCertificate(der)
+		if err != nil {
+			return fmt.Errorf("mdoc_signer.x5chain[%d]: %w", i, err)
+		}
+		chain[i] = c
+	}
+	return checkSignerCertificate("mdoc_signer", s.Signer, chain[0], chain[1:], assurance)
 }
 
 // AttestationVerifier resolves the trusted public key (and its JOSE
@@ -675,11 +727,11 @@ func validateSignerDependencies(cfg Config, deps Dependencies) error {
 	for id, c := range cfg.CredentialConfigurationsSupported {
 		switch c.Format {
 		case sdjwtvc.CredentialFormat:
-			if err := deps.SDJWTSigner.validate(); err != nil {
+			if err := deps.SDJWTSigner.validate(cfg.Assurance); err != nil {
 				return fmt.Errorf("credential_configurations_supported[%q]: %w", id, err)
 			}
 		case mdoc.CredentialFormat:
-			if err := deps.MdocSigner.validate(); err != nil {
+			if err := deps.MdocSigner.validate(cfg.Assurance); err != nil {
 				return fmt.Errorf("credential_configurations_supported[%q]: %w", id, err)
 			}
 		}

@@ -13,6 +13,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
@@ -32,8 +33,18 @@ type Config struct {
 	// a signed redirect-flow Authorization Request — and whose DER
 	// encoding becomes the Request Object JWS's own "x5c" header
 	// entry. Its public key must match Dependencies.Signer's own
-	// public key: New rejects a mismatch. REQUIRED.
+	// public key: New rejects a mismatch. Under AssuranceProduction it
+	// must be issued by a CA, not self-signed (HAIP 1.0 §5: "The X.509
+	// certificate signing the request MUST NOT be self-signed").
+	// REQUIRED.
 	ClientCertificate *x509.Certificate
+
+	// ClientCertificateChain are the CA certificates between
+	// ClientCertificate and the trust anchor, in order, the anchor left
+	// out: they follow it in the Request Object's x5c, so a Wallet
+	// holding only the anchor can build the path. Each must sign the
+	// certificate before it. OPTIONAL.
+	ClientCertificateChain []*x509.Certificate
 
 	// ResponseURI is where a Wallet POSTs its (encrypted) response —
 	// the Authorization Request's own "response_uri" (§8.3.1). This
@@ -158,6 +169,14 @@ func (cfg Config) validate() error {
 	}
 	if cfg.ClientCertificate == nil {
 		return fmt.Errorf("verifier: config: client_certificate is required")
+	}
+	if len(cfg.ClientCertificateChain) > 0 {
+		if err := certchain.CheckPresentedChain(cfg.ClientCertificate, cfg.ClientCertificateChain); err != nil {
+			return fmt.Errorf("verifier: config: client_certificate_chain: %w", err)
+		}
+	}
+	if cfg.Assurance == AssuranceProduction && certchain.IsSelfSigned(cfg.ClientCertificate) {
+		return fmt.Errorf("verifier: config: client_certificate is self-signed, which AssuranceProduction refuses (HAIP 1.0 §5: it MUST NOT be)")
 	}
 	if cfg.ResponseURI.IsZero() {
 		return fmt.Errorf("verifier: config: response_uri is required")

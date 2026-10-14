@@ -15,7 +15,12 @@ func baseTestConfig(t *testing.T) Config {
 	if err != nil {
 		t.Fatalf("SelfSignedPEM: %v", err)
 	}
-	issuerKeyPEM, issuerCertPEM := conformancecert.TestKeyAndSelfSignedCertPEM(t, "conformance-issuer-test-credential-issuer")
+	// CA-issued, as the live configuration's (generate-config): signed
+	// metadata refuses a self-signed certificate.
+	_, issuerKeyPEM, issuerCertPEM, _, err := conformancecert.GenerateSignerAndCert("conformance-issuer-test-credential-issuer", "conformance-issuer-test CA")
+	if err != nil {
+		t.Fatalf("GenerateSignerAndCert: %v", err)
+	}
 	attesterKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate attester key: %v", err)

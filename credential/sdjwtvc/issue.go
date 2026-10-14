@@ -9,6 +9,7 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
@@ -123,6 +124,16 @@ type IssueOptions struct {
 	// key: Issue rejects a mismatch, the same check
 	// verifier.New(Config.ClientCertificate) already makes.
 	IssuerCertificate *x509.Certificate
+
+	// IssuerIntermediates are the CA certificates between
+	// IssuerCertificate and the trust anchor, in order, the anchor
+	// itself left out: they follow IssuerCertificate in x5c, so a
+	// Verifier holding only the anchor can build the path (HAIP 1.0
+	// §6.1.1: "the credential issuer's signing certificate along with a
+	// trust chain ... The X.509 certificate of the trust anchor MUST NOT
+	// be included"). Each must sign the certificate before it. Requires
+	// IssuerCertificate.
+	IssuerIntermediates []*x509.Certificate
 }
 
 var reservedTopLevelClaims = map[string]bool{
@@ -166,7 +177,11 @@ func issuerJWTHeader(opts IssueOptions) map[string]any {
 		header["kid"] = opts.KeyID
 	}
 	if opts.IssuerCertificate != nil {
-		header["x5c"] = []string{base64.StdEncoding.EncodeToString(opts.IssuerCertificate.Raw)}
+		x5c := []string{base64.StdEncoding.EncodeToString(opts.IssuerCertificate.Raw)}
+		for _, c := range opts.IssuerIntermediates {
+			x5c = append(x5c, base64.StdEncoding.EncodeToString(c.Raw))
+		}
+		header["x5c"] = x5c
 	}
 	return header
 }
@@ -241,6 +256,14 @@ func checkIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) er
 	}
 	if opts.Decoys < 0 || opts.Decoys > MaxDecoys {
 		return fmt.Errorf("sdjwtvc: IssueOptions.Decoys must be between 0 and %d, got %d", MaxDecoys, opts.Decoys)
+	}
+	if len(opts.IssuerIntermediates) > 0 {
+		if opts.IssuerCertificate == nil {
+			return fmt.Errorf("sdjwtvc: IssueOptions.IssuerIntermediates needs IssuerCertificate")
+		}
+		if err := certchain.CheckPresentedChain(opts.IssuerCertificate, opts.IssuerIntermediates); err != nil {
+			return fmt.Errorf("sdjwtvc: issuer certificate chain: %w", err)
+		}
 	}
 	if opts.IssuerCertificate != nil {
 		// A two-value assertion, not a direct one: signer.Public() is
