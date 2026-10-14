@@ -127,6 +127,21 @@ public data class WalletConfiguration(
      * needs a key store that is also a [KeyAgreement].
      */
     @SerialName("proximity_device_auth") val proximityDeviceAuth: ProximityDeviceAuth = ProximityDeviceAuth.SIGNATURE,
+    /**
+     * A dotted object identifier: recognizes only Verifier certificates
+     * under [verifierRoots] with that extended key usage, the one your
+     * ecosystem marks its Verifiers' certificates with. Outside
+     * [development], required when [verifierRoots] shares a trust anchor
+     * with another role's roots.
+     */
+    @SerialName("verifier_require_eku") val verifierRequireEKU: String = "",
+    /**
+     * A dotted object identifier: recognizes only registrar certificates
+     * under [registrarRoots] with that extended key usage. Outside
+     * [development], required when [registrarRoots] shares a trust
+     * anchor with another role's roots.
+     */
+    @SerialName("registrar_require_eku") val registrarRequireEKU: String = "",
 ) {
     /** How an in-person response authenticates the mdoc (ISO/IEC 18013-5 §9.1.3). */
     @Serializable

@@ -41,8 +41,17 @@ type config struct {
 	// (mdocdcapi.RequireReaderAuthenticationEKU), and
 	// RequireTrustedMdocReader refuses a request no recognized reader
 	// signed (walletflow.Config.RequireTrustedMdocReader).
-	MdocReaderRequireEKU     bool `json:"mdoc_reader_require_eku,omitempty"`
-	RequireTrustedMdocReader bool `json:"require_trusted_mdoc_reader,omitempty"`
+	MdocReaderRequireEKU bool `json:"mdoc_reader_require_eku,omitempty"`
+	// VerifierRequireEKU and RegistrarRequireEKU, dotted object
+	// identifiers, recognize only certificates under VerifierRoots and
+	// RegistrarRoots with that extended key usage, the one an ecosystem
+	// marks its verifiers' or registrars' certificates with. Outside
+	// development, each is required when its roots share a trust anchor
+	// with another role's, which would otherwise take that role's
+	// certificates for its own.
+	VerifierRequireEKU       string `json:"verifier_require_eku,omitempty"`
+	RegistrarRequireEKU      string `json:"registrar_require_eku,omitempty"`
+	RequireTrustedMdocReader bool   `json:"require_trusted_mdoc_reader,omitempty"`
 	// RequireSignedDCAPIRequests refuses an unsigned OpenID4VP request
 	// over the Digital Credentials API, as untrusted_verifier
 	// (walletflow.Config.RequireSignedDCAPIRequests).
@@ -208,10 +217,20 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 	if err != nil {
 		return walletflow.Config{}, err
 	}
+	if err := checkRoleRoots(cfg); err != nil {
+		return walletflow.Config{}, err
+	}
+	verifierPolicy, err := roleEKU("verifier_require_eku", cfg.VerifierRequireEKU)
+	if err != nil {
+		return walletflow.Config{}, err
+	}
 	if verifierRoots != nil {
-		wcfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: verifierRoots}
+		wcfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: verifierRoots, LeafPolicy: verifierPolicy}
 	}
 	if wcfg.RegistrarRoots, err = optionalCertPool("registrar_roots", cfg.RegistrarRoots); err != nil {
+		return walletflow.Config{}, err
+	}
+	if wcfg.RegistrarLeafPolicy, err = roleEKU("registrar_require_eku", cfg.RegistrarRequireEKU); err != nil {
 		return walletflow.Config{}, err
 	}
 	if wcfg.MdocReaderRoots, err = optionalCertPool("mdoc_reader_roots", cfg.MdocReaderRoots); err != nil {
