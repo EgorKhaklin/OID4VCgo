@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/registration"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
@@ -67,6 +68,7 @@ func (p *Presentation) Verifier() string {
 		if r.Claims == nil {
 			r.Claims = []dcql.Path{}
 		}
+		r.Credentials = reg.Credentials
 	}
 	text, _ := marshal(struct {
 		result
@@ -86,7 +88,10 @@ type registrationJSON struct {
 	PrivacyPolicy string      `json:"privacy_policy,omitempty"`
 	Registrar     string      `json:"registrar,omitempty"`
 	Claims        []dcql.Path `json:"claims,omitempty"`
-	Expires       string      `json:"expires,omitempty"`
+	// Credentials are the claims it's registered to request from given
+	// types of credential.
+	Credentials []registration.RegisteredCredential `json:"credentials,omitempty"`
+	Expires     string                              `json:"expires,omitempty"`
 }
 
 type queryJSON struct {

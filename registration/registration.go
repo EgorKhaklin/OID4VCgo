@@ -22,7 +22,12 @@
 //	purpose         why it asks, in words (optional)
 //	privacy_policy  its privacy policy's https URL (optional)
 //	claims          the claim paths it's registered to request, as DCQL
-//	                claims paths (OpenID4VP 1.0 §7)
+//	                claims paths (OpenID4VP 1.0 §7), from any type of
+//	                credential (optional)
+//	credentials     the claim paths it's registered to request from
+//	                given types of credential: each entry's vct_values
+//	                (SD-JWT VC) or doctype_value (mdoc), and its claims
+//	                (optional)
 package registration
 
 import (
@@ -62,8 +67,14 @@ type Registration struct {
 	Name, Purpose string
 	// PrivacyPolicy is its privacy policy's https URL, if given.
 	PrivacyPolicy string
-	// Claims are the claim paths it's registered to request.
+	// Claims are the claim paths it's registered to request, from any
+	// type of credential. Prefer Credentials, which ties each to one:
+	// a path registered here for a loyalty card is registered for a PID
+	// too.
 	Claims []dcql.Path
+	// Credentials are the claim paths it's registered to request from
+	// given types of credential.
+	Credentials []RegisteredCredential
 	// IssuedAt and Expires bound when the registration holds.
 	IssuedAt, Expires time.Time
 	// RegistrarCertificate is the certificate that signed it, chained
@@ -71,15 +82,61 @@ type Registration struct {
 	RegistrarCertificate *x509.Certificate
 }
 
+// RegisteredCredential is a type of credential a relying party is
+// registered to request claims from: an SD-JWT VC of one of VCTValues,
+// or an mdoc of DoctypeValue.
+type RegisteredCredential struct {
+	VCTValues    []string    `json:"vct_values,omitempty"`
+	DoctypeValue string      `json:"doctype_value,omitempty"`
+	Claims       []dcql.Path `json:"claims"`
+}
+
+// covers reports whether rc is cq's type of credential: an mdoc query's
+// doctype, or every vct an SD-JWT VC query accepts, since any of them
+// may be the one presented.
+func (rc RegisteredCredential) covers(cq dcql.CredentialQuery) bool {
+	switch cq.Format {
+	case "mso_mdoc":
+		m, err := cq.MdocMeta()
+		return err == nil && rc.DoctypeValue != "" && m.DoctypeValue == rc.DoctypeValue
+	case "dc+sd-jwt":
+		m, err := cq.SDJWTVCMeta()
+		if err != nil || len(m.VCTValues) == 0 {
+			return false
+		}
+		for _, vct := range m.VCTValues {
+			if !slices.Contains(rc.VCTValues, vct) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func (rc RegisteredCredential) validate() error {
+	if (len(rc.VCTValues) == 0) == (rc.DoctypeValue == "") {
+		return errors.New("registration: credentials: each entry needs vct_values or doctype_value, not both")
+	}
+	for _, p := range rc.Claims {
+		if err := p.Validate(); err != nil {
+			return fmt.Errorf("registration: credentials: %w", err)
+		}
+	}
+	return nil
+}
+
 type wireClaims struct {
-	Iss           string      `json:"iss"`
-	Sub           string      `json:"sub"`
-	Iat           int64       `json:"iat"`
-	Exp           int64       `json:"exp"`
-	Name          string      `json:"name"`
-	Purpose       string      `json:"purpose,omitempty"`
-	PrivacyPolicy string      `json:"privacy_policy,omitempty"`
-	Claims        []dcql.Path `json:"claims"`
+	Iss           string                 `json:"iss"`
+	Sub           string                 `json:"sub"`
+	Iat           int64                  `json:"iat"`
+	Exp           int64                  `json:"exp"`
+	Name          string                 `json:"name"`
+	Purpose       string                 `json:"purpose,omitempty"`
+	PrivacyPolicy string                 `json:"privacy_policy,omitempty"`
+	Claims        []dcql.Path            `json:"claims,omitempty"`
+	Credentials   []RegisteredCredential `json:"credentials,omitempty"`
 }
 
 // Issue signs r as a registration JWT with key, carrying chain (the
@@ -98,12 +155,18 @@ func Issue(r Registration, key *ecdsa.PrivateKey, chain []*x509.Certificate) (st
 			return "", fmt.Errorf("registration: claims: %w", err)
 		}
 	}
+	for _, rc := range r.Credentials {
+		if err := rc.validate(); err != nil {
+			return "", err
+		}
+	}
 	if r.IssuedAt.IsZero() {
 		r.IssuedAt = time.Now()
 	}
 	payload, err := json.Marshal(wireClaims{
 		Iss: r.Registrar, Sub: r.ClientID, Iat: r.IssuedAt.Unix(), Exp: r.Expires.Unix(),
 		Name: r.Name, Purpose: r.Purpose, PrivacyPolicy: r.PrivacyPolicy, Claims: r.Claims,
+		Credentials: r.Credentials,
 	})
 	if err != nil {
 		return "", fmt.Errorf("registration: %w", err)
@@ -214,9 +277,14 @@ func VerifyWithPolicy(token string, roots *x509.CertPool, clientID string, now t
 			return Registration{}, fmt.Errorf("registration: claims: %w", err)
 		}
 	}
+	for _, rc := range c.Credentials {
+		if err := rc.validate(); err != nil {
+			return Registration{}, err
+		}
+	}
 	return Registration{
 		Registrar: c.Iss, ClientID: c.Sub, Name: c.Name, Purpose: c.Purpose, PrivacyPolicy: c.PrivacyPolicy,
-		Claims: c.Claims, IssuedAt: issuedAt, Expires: expires, RegistrarCertificate: leaf,
+		Claims: c.Claims, Credentials: c.Credentials, IssuedAt: issuedAt, Expires: expires, RegistrarCertificate: leaf,
 	}, nil
 }
 
@@ -230,14 +298,28 @@ func checkPolicyURL(raw string) error {
 	return nil
 }
 
-// Permits reports whether r registers path: a claims path equal to one
-// of r.Claims, element by element.
+// Permits reports whether r registers path for any type of credential:
+// a claims path equal to one of r.Claims, element by element. It
+// doesn't look at Credentials, which are per type: see PermitsFor.
 func (r Registration) Permits(path dcql.Path) bool {
 	return slices.ContainsFunc(r.Claims, func(p dcql.Path) bool { return slices.Equal(p, path) })
 }
 
+// PermitsFor reports whether r registers path for cq's type of
+// credential: in Claims, for any type, or in a Credentials entry for
+// cq's.
+func (r Registration) PermitsFor(cq dcql.CredentialQuery, path dcql.Path) bool {
+	if r.Permits(path) {
+		return true
+	}
+	return slices.ContainsFunc(r.Credentials, func(rc RegisteredCredential) bool {
+		return rc.covers(cq) && slices.ContainsFunc(rc.Claims, func(p dcql.Path) bool { return slices.Equal(p, path) })
+	})
+}
+
 // Unregistered is what q requests beyond r, by credential query ID: each
-// claims path r doesn't register, in query order. A credential query
+// claims path r doesn't register for that query's type of credential
+// (PermitsFor), in query order. A credential query
 // requesting no claims in particular asks for every claim (OpenID4VP 1.0
 // §6.1), which no registration covers: it's listed with a nil path.
 func (r Registration) Unregistered(q dcql.Query) map[string][]dcql.Path {
@@ -248,7 +330,7 @@ func (r Registration) Unregistered(q dcql.Query) map[string][]dcql.Path {
 			continue
 		}
 		for _, c := range cq.Claims {
-			if !r.Permits(c.Path) {
+			if !r.PermitsFor(cq, c.Path) {
 				out[cq.ID] = append(out[cq.ID], c.Path)
 			}
 		}
