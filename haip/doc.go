@@ -1,7 +1,7 @@
 // Package haip is the OpenID4VC High Assurance Interoperability
 // Profile (HAIP) 1.0 profile layer: recommendations that wire HAIP's
 // own specific overrides on top of the protocol-generic role packages
-// (issuer, and — once they exist — wallet/verifier), mirroring
+// (issuer, wallet and verifier), mirroring
 // FAPIgo's own server.RecommendedLimits/RecommendedAlgorithms pattern.
 //
 // Every value here is traceable to a specific HAIP 1.0 section — see

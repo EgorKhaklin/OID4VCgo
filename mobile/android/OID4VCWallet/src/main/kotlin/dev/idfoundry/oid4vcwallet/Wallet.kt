@@ -74,7 +74,16 @@ public data class WalletConfiguration(
      * [verifierRoots] accepts.
      */
     @SerialName("require_signed_dcapi_requests") val requireSignedDCAPIRequests: Boolean = false,
-    /** Allows services on loopback addresses. */
+    /**
+     * Relaxes what production requires, for a wallet talking to services
+     * on a development machine. Never ship an app with it set. It lets
+     * issuers, Authorization Servers, Verifiers and status lists be on
+     * loopback addresses, over http there too; with [developmentRoots],
+     * makes requests through an ordinary HTTPS client, without the
+     * hardened one's refusal of private network addresses; and skips the
+     * production checks on receiving credentials: durable stores and
+     * keys, and the random source.
+     */
     val development: Boolean = false,
     /**
      * PEM certificates the wallet's HTTPS requests trust besides the

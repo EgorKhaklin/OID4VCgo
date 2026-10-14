@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -56,7 +57,14 @@ type config struct {
 	// over the Digital Credentials API, as untrusted_verifier
 	// (walletflow.Config.RequireSignedDCAPIRequests).
 	RequireSignedDCAPIRequests bool `json:"require_signed_dcapi_requests,omitempty"`
-	// Development allows services on loopback addresses.
+	// Development relaxes what production requires, for a wallet talking to services on a
+	// development machine. Never ship an app with it set. It lets issuers,
+	// Authorization Servers, Verifiers and status lists be on loopback
+	// addresses, over http there too; with development_roots, makes requests
+	// through an ordinary HTTPS client, without the hardened one's refusal of
+	// private network addresses; and skips the production checks on
+	// receiving credentials: durable stores and keys, and the random source.
+	// (walletflow.Config.Development).
 	Development bool `json:"development"`
 	// IssuanceProfile is "openid4vci" (the default) or "haip"
 	// (walletflow.Config.IssuanceProfile).
@@ -157,7 +165,11 @@ func (w *Wallet) SetKeyAgreement(ka KeyAgreement) {
 // needs a provider and client_id.
 func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, provider WalletProvider) (*Wallet, error) {
 	var cfg config
-	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+	// A misspelled key, a require_* option say, is refused rather than
+	// silently left at its default.
+	dec := json.NewDecoder(strings.NewReader(configJSON))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("configuration: %w", err))
 	}
 	if keys == nil || credentials == nil {

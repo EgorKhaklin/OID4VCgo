@@ -629,7 +629,8 @@ func PresentMdoc(held HeldCredential, params PresentMdocParams) (string, error) 
 // Each Path in requiredPaths must be a two-component mdoc-form path
 // (dcql.Path.MdocNamespaceAndElement) — a Claims Path Pointer that
 // isn't (a Wildcard/Index component, or any length other than two)
-// isn't supported for trimming yet, and this function returns an
+// isn't a valid mdoc claims path (OpenID4VP §7.2, which
+// dcql.Query.Validate also enforces), and this function returns an
 // error rather than guessing. It deliberately does NOT fall back to
 // PresentMdoc's own full disclosure in that case, the same
 // "silently exceeding what a query asked for is a privacy violation,
