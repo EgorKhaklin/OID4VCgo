@@ -193,7 +193,7 @@ func TestCredentialHandler_RequiresConfig(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	prepare := func(context.Context, issuer.Grant, *issuer.CredentialRequest) (func(bool), error) { return nil, nil }
 	for name, cfg := range map[string]issuer.CredentialHandlerConfig{
-		"no URL":       {Tokens: &fakeTokens{}, Prepare: prepare},
+		"another URL":  {URL: mustURL(t, "https://issuer.example.com/other"), Tokens: &fakeTokens{}, Prepare: prepare},
 		"relative URL": {URL: &url.URL{Path: "/credential"}, Tokens: &fakeTokens{}, Prepare: prepare},
 		"no Tokens":    {URL: mustURL(t, testCredentialEndpoint), Prepare: prepare},
 		"no Prepare":   {URL: mustURL(t, testCredentialEndpoint), Tokens: &fakeTokens{}},
@@ -201,5 +201,18 @@ func TestCredentialHandler_RequiresConfig(t *testing.T) {
 		if _, err := f.iss.CredentialHandler(cfg); err == nil {
 			t.Errorf("%s: CredentialHandler succeeded, want an error", name)
 		}
+	}
+}
+
+// A handler's URL defaults to the published endpoint, the one a
+// Wallet's DPoP proofs name.
+func TestCredentialHandler_DefaultsURL(t *testing.T) {
+	f := newCredentialEndpointFixture(t)
+	prepare := func(context.Context, issuer.Grant, *issuer.CredentialRequest) (func(bool), error) { return nil, nil }
+	if _, err := f.iss.CredentialHandler(issuer.CredentialHandlerConfig{Tokens: &fakeTokens{}, Prepare: prepare}); err != nil {
+		t.Errorf("CredentialHandler without a URL: %v", err)
+	}
+	if _, err := f.iss.CredentialHandler(issuer.CredentialHandlerConfig{URL: mustURL(t, testCredentialEndpoint), Tokens: &fakeTokens{}, Prepare: prepare}); err != nil {
+		t.Errorf("CredentialHandler with the published URL: %v", err)
 	}
 }
