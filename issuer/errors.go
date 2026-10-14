@@ -70,6 +70,10 @@ const (
 	// fapigo/server.ErrorUseDPoPNonce's own value and semantics for the
 	// Authorization Code Flow's Token Endpoint.
 	ErrorUseDPoPNonce ErrorCode = "use_dpop_nonce"
+
+	// ErrorInvalidDPoPProof indicates a DPoP proof presented to
+	// ExchangePreAuthorizedCode that doesn't verify (RFC 9449 §5).
+	ErrorInvalidDPoPProof ErrorCode = "invalid_dpop_proof"
 )
 
 // Error is the error type RequestCredential returns for a Credential
