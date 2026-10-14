@@ -55,6 +55,17 @@ func TestNewAcceptsRequestAndResponseEncryption(t *testing.T) {
 	}
 }
 
+// OpenID4VCI §8.2: an encrypted response is asked for in an encrypted
+// request, so response encryption without request encryption would
+// advertise something no request could use.
+func TestNewRejectsResponseEncryptionWithoutRequestEncryption(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.ResponseEncryption = &issuer.ResponseEncryptionSupport{EncValuesSupported: []jwe.Enc{jwe.A128GCM}}
+	if _, err := issuer.New(cfg, validDependencies(t)); err == nil {
+		t.Fatal("New accepted response_encryption without request_encryption")
+	}
+}
+
 func TestNewRejectsInvalidRequestEncryption(t *testing.T) {
 	nonP256, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
 	if err != nil {
@@ -474,6 +485,7 @@ func TestEncryptResponseBody_RoundTrip(t *testing.T) {
 
 func TestRequestCredential_RejectsResponseEncryptionWithoutEncryptedRequest(t *testing.T) {
 	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.RequestEncryption = &issuer.RequestEncryptionSupport{Keys: []issuer.RequestDecryptionKey{testRequestDecryptionKey(t, "req-1")}, EncValuesSupported: []jwe.Enc{jwe.A128GCM}}
 		cfg.ResponseEncryption = &issuer.ResponseEncryptionSupport{EncValuesSupported: []jwe.Enc{jwe.A128GCM}}
 	})
 	nonce := f.issueNonce(t)
@@ -490,6 +502,7 @@ func TestRequestCredential_RejectsResponseEncryptionWithoutEncryptedRequest(t *t
 
 func TestRequestCredential_AcceptsResponseEncryptionWithEncryptedRequest(t *testing.T) {
 	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.RequestEncryption = &issuer.RequestEncryptionSupport{Keys: []issuer.RequestDecryptionKey{testRequestDecryptionKey(t, "req-1")}, EncValuesSupported: []jwe.Enc{jwe.A128GCM}}
 		cfg.ResponseEncryption = &issuer.ResponseEncryptionSupport{EncValuesSupported: []jwe.Enc{jwe.A128GCM}}
 	})
 	nonce := f.issueNonce(t)
@@ -526,6 +539,7 @@ func TestRequestCredential_AcceptsResponseEncryptionWithEncryptedRequest(t *test
 // method directly rather than through RequestCredential.
 func TestEncryptResponseBody_RejectsMismatchedJWKAlg(t *testing.T) {
 	cfg := validConfig(t)
+	cfg.RequestEncryption = &issuer.RequestEncryptionSupport{Keys: []issuer.RequestDecryptionKey{testRequestDecryptionKey(t, "req-1")}, EncValuesSupported: []jwe.Enc{jwe.A128GCM}}
 	cfg.ResponseEncryption = &issuer.ResponseEncryptionSupport{
 		EncValuesSupported: []jwe.Enc{jwe.A128GCM},
 	}
@@ -729,6 +743,7 @@ func TestEncryptedCredentialRequestResponseRoundTrip(t *testing.T) {
 // retry with the same nonce.
 func TestRequestCredential_RejectsUnusableResponseEncryptionBeforeConsumingNonce(t *testing.T) {
 	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.RequestEncryption = &issuer.RequestEncryptionSupport{Keys: []issuer.RequestDecryptionKey{testRequestDecryptionKey(t, "req-1")}, EncValuesSupported: []jwe.Enc{jwe.A128GCM}}
 		cfg.ResponseEncryption = &issuer.ResponseEncryptionSupport{EncValuesSupported: []jwe.Enc{jwe.A128GCM}}
 	})
 	nonce := f.issueNonce(t)

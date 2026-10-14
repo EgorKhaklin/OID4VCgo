@@ -10,6 +10,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -67,6 +68,31 @@ func TestNewProductionRequiresCryptoRand(t *testing.T) {
 	cfg.Assurance = verifier.AssuranceProduction
 	if _, err := verifier.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "crypto/rand") {
 		t.Errorf("New(AssuranceProduction, another reader) error = %v, want refused", err)
+	}
+}
+
+// The enc values a Verifier advertises are ones it can decrypt, and in
+// production include both of HAIP 1.0 §5's.
+func TestNewValidatesEncValues(t *testing.T) {
+	for name, tc := range map[string]struct {
+		values     []oid4vci.JWEEnc
+		production bool
+		ok         bool
+	}{
+		"HAIP pair":           {values: []oid4vci.JWEEnc{oid4vci.A128GCM, oid4vci.A256GCM}, production: true, ok: true},
+		"A256GCM alone, dev":  {values: []oid4vci.JWEEnc{oid4vci.A256GCM}, ok: true},
+		"A256GCM alone, prod": {values: []oid4vci.JWEEnc{oid4vci.A256GCM}, production: true},
+		"undecryptable":       {values: []oid4vci.JWEEnc{oid4vci.A128GCM, "A128CBC-HS256"}},
+		"empty":               {},
+	} {
+		cfg, deps := validConfig(t)
+		cfg.EncValuesSupported = tc.values
+		if tc.production {
+			cfg.Assurance = verifier.AssuranceProduction
+		}
+		if _, err := verifier.New(cfg, deps); (err == nil) != tc.ok {
+			t.Errorf("%s: New = %v, want ok=%v", name, err, tc.ok)
+		}
 	}
 }
 

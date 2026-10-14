@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"mime"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
@@ -166,7 +167,8 @@ func encryptRequestBody(body []byte, reqEnc *RequestEncryption) (encoded []byte,
 // response can cost the Wallet far more memory than it sent, so it
 // happens only when the Wallet opted in.
 func decryptResponseBody(body []byte, contentType string, priv *ecdsa.PrivateKey, requestedZip jwe.Zip) ([]byte, error) {
-	encrypted := contentType == "application/jwt"
+	mediaType, _, _ := mime.ParseMediaType(contentType)
+	encrypted := mediaType == "application/jwt"
 	switch {
 	case priv != nil && !encrypted:
 		return nil, fmt.Errorf("requested an encrypted response but the issuer returned content-type %q", contentType)

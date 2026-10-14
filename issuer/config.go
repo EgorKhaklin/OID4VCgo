@@ -498,6 +498,12 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 	if err := cfg.ResponseEncryption.validate(); err != nil {
 		return nil, fmt.Errorf("issuer: config: response_encryption: %w", err)
 	}
+	// §8.2: "Credential Request encryption MUST be used if the
+	// credential_response_encryption parameter is included", so an
+	// issuer offering encrypted responses must take encrypted requests.
+	if cfg.ResponseEncryption != nil && cfg.RequestEncryption == nil {
+		return nil, fmt.Errorf("issuer: config: response_encryption needs request_encryption (OpenID4VCI §8.2: an encrypted response is asked for in an encrypted request)")
+	}
 
 	if cfg.Assurance == AssuranceProduction {
 		if err := checkProductionAssurance(cfg, deps); err != nil {

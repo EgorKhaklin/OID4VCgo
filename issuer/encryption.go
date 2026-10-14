@@ -5,6 +5,7 @@ import (
 	"crypto/elliptic"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"slices"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -180,7 +181,7 @@ type ResponseEncryptionRequest struct {
 // credential_response_encryption parameter is included, to prevent it
 // being substituted by an attacker."
 func (iss *Issuer) DecryptRequestBody(body []byte, contentType string) (plaintext []byte, wasEncrypted bool, err error) {
-	if contentType != jweContentType {
+	if !isMediaType(contentType, jweContentType) {
 		if iss.cfg.RequestEncryption != nil && iss.cfg.RequestEncryption.Required {
 			return nil, false, newError(ErrorInvalidEncryptionParameters, 400, "this issuer requires an encrypted request", nil)
 		}
@@ -312,4 +313,12 @@ func (iss *Issuer) responseEncryptionKey(req *ResponseEncryptionRequest) (*ecdsa
 	}
 
 	return ecPub, jwkFields.KeyID, nil
+}
+
+// isMediaType reports whether a Content-Type header names want,
+// ignoring case and parameters (RFC 9110 §8.3.1): "application/jwt;
+// charset=utf-8" is application/jwt.
+func isMediaType(header, want string) bool {
+	mediaType, _, err := mime.ParseMediaType(header)
+	return err == nil && mediaType == want
 }
