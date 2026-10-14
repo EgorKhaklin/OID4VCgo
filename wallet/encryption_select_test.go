@@ -52,21 +52,77 @@ func TestEncryptionFromMetadata(t *testing.T) {
 			t.Errorf("= %v, %v, %v; want request encryption only", r, s, err)
 		}
 	})
-	for name, meta := range map[string]oid4vci.Metadata{
-		"response without request": {CredentialResponseEncryption: resp},
-		"no usable key":            {CredentialRequestEncryption: req(rsa, wrongAlg, verifyOnly)},
-		"no common request enc": {CredentialRequestEncryption: &oid4vci.RequestEncryptionMetadata{
-			JWKS: oid4vci.JWKSet{Keys: []oid4vci.JWK{ec}}, EncValuesSupported: []jwe.Enc{"A128CBC-HS256"},
-		}},
-		"response without ECDH-ES": {CredentialRequestEncryption: req(ec), CredentialResponseEncryption: &oid4vci.ResponseEncryptionMetadata{
-			AlgValuesSupported: []jwe.Alg{"RSA-OAEP"}, EncValuesSupported: []jwe.Enc{jwe.A128GCM},
-		}},
-		"no common response enc": {CredentialRequestEncryption: req(ec), CredentialResponseEncryption: &oid4vci.ResponseEncryptionMetadata{
-			AlgValuesSupported: []jwe.Alg{jwe.ECDHES}, EncValuesSupported: []jwe.Enc{"A128CBC-HS256"},
-		}},
-	} {
-		if _, _, err := wallet.EncryptionFromMetadata(meta); err == nil {
-			t.Errorf("%s: accepted", name)
+	// Offered encryption this wallet can't use: optional, it's skipped
+	// (plaintext that way, and no encrypted response without an
+	// encrypted request, §8.2); required, it's an error.
+	cases := map[string]struct {
+		meta         func(reqRequired, respRequired bool) oid4vci.Metadata
+		wantRequest  bool // with nothing required, request encryption is still used
+		requiredSide string
+	}{
+		"response without request": {
+			meta: func(_, respRequired bool) oid4vci.Metadata {
+				r := *resp
+				r.EncryptionRequired = respRequired
+				return oid4vci.Metadata{CredentialResponseEncryption: &r}
+			},
+			requiredSide: "response",
+		},
+		"no usable key": {
+			meta: func(reqRequired, _ bool) oid4vci.Metadata {
+				m := req(rsa, wrongAlg, verifyOnly)
+				m.EncryptionRequired = reqRequired
+				return oid4vci.Metadata{CredentialRequestEncryption: m}
+			},
+			requiredSide: "request",
+		},
+		"no common request enc": {
+			meta: func(reqRequired, _ bool) oid4vci.Metadata {
+				return oid4vci.Metadata{CredentialRequestEncryption: &oid4vci.RequestEncryptionMetadata{
+					JWKS: oid4vci.JWKSet{Keys: []oid4vci.JWK{ec}}, EncValuesSupported: []jwe.Enc{"A128CBC-HS256"}, EncryptionRequired: reqRequired,
+				}}
+			},
+			requiredSide: "request",
+		},
+		"response without ECDH-ES": {
+			meta: func(_, respRequired bool) oid4vci.Metadata {
+				return oid4vci.Metadata{CredentialRequestEncryption: req(ec), CredentialResponseEncryption: &oid4vci.ResponseEncryptionMetadata{
+					AlgValuesSupported: []jwe.Alg{"RSA-OAEP"}, EncValuesSupported: []jwe.Enc{jwe.A128GCM}, EncryptionRequired: respRequired,
+				}}
+			},
+			wantRequest: true, requiredSide: "response",
+		},
+		"no common response enc": {
+			meta: func(_, respRequired bool) oid4vci.Metadata {
+				return oid4vci.Metadata{CredentialRequestEncryption: req(ec), CredentialResponseEncryption: &oid4vci.ResponseEncryptionMetadata{
+					AlgValuesSupported: []jwe.Alg{jwe.ECDHES}, EncValuesSupported: []jwe.Enc{"A128CBC-HS256"}, EncryptionRequired: respRequired,
+				}}
+			},
+			wantRequest: true, requiredSide: "response",
+		},
+		"unusable request with usable response": {
+			meta: func(reqRequired, respRequired bool) oid4vci.Metadata {
+				m := req(rsa)
+				m.EncryptionRequired = reqRequired
+				r := *resp
+				r.EncryptionRequired = respRequired
+				return oid4vci.Metadata{CredentialRequestEncryption: m, CredentialResponseEncryption: &r}
+			},
+			requiredSide: "either",
+		},
+	}
+	for name, tc := range cases {
+		r, s, err := wallet.EncryptionFromMetadata(tc.meta(false, false))
+		if err != nil || (r != nil) != tc.wantRequest || s != nil {
+			t.Errorf("%s, optional: = %v, %v, %v; want request encryption %v, no response encryption, no error", name, r, s, err, tc.wantRequest)
+		}
+		for _, side := range []string{"request", "response"} {
+			if tc.requiredSide != side && tc.requiredSide != "either" {
+				continue
+			}
+			if _, _, err := wallet.EncryptionFromMetadata(tc.meta(side == "request", side == "response")); err == nil {
+				t.Errorf("%s, %s encryption required: accepted", name, side)
+			}
 		}
 	}
 }
