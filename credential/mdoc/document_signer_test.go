@@ -82,9 +82,22 @@ func TestCheckDocumentSigner(t *testing.T) {
 			}
 		})
 	}
-	// Another doctype's issuing_country isn't the mDL's: not checked here.
-	other := mdoc.VerifiedMSO{ValidityInfo: mdoc.ValidityInfo{Signed: now}, NameSpaces: map[string]map[string]any{"org.iso.23220.1": {"issuing_country": "SG"}}}
-	if _, err := mdoc.CheckDocumentSigner(other, [][]*x509.Certificate{signerChain(t, "ZZ", "", "ZZ", "")}); err != nil {
-		t.Errorf("a non-mDL namespace's issuing_country: %v", err)
+	// In the ISO/IEC 23220-2 and EU PID namespaces too, issuing_country
+	// names the issuer's country: held to the DS's. A namespace that
+	// doesn't define it that way isn't checked.
+	in := func(ns, country string) mdoc.VerifiedMSO {
+		return mdoc.VerifiedMSO{ValidityInfo: mdoc.ValidityInfo{Signed: now}, NameSpaces: map[string]map[string]any{ns: {"issuing_country": country}}}
+	}
+	zz := [][]*x509.Certificate{signerChain(t, "ZZ", "", "ZZ", "")}
+	for _, ns := range []string{mdoc.ISO23220NameSpace, mdoc.EUDIPIDNameSpace} {
+		if _, err := mdoc.CheckDocumentSigner(in(ns, "SG"), zz); err == nil || !strings.Contains(err.Error(), "issuing_country") {
+			t.Errorf("%s: another country's issuing_country: %v, want refused", ns, err)
+		}
+		if _, err := mdoc.CheckDocumentSigner(in(ns, "ZZ"), zz); err != nil {
+			t.Errorf("%s: the signer's own country: %v", ns, err)
+		}
+	}
+	if _, err := mdoc.CheckDocumentSigner(in("org.example.custom.1", "SG"), zz); err != nil {
+		t.Errorf("a namespace that doesn't define issuing_country: %v", err)
 	}
 }

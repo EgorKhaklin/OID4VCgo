@@ -8,9 +8,22 @@ import (
 	"time"
 )
 
-// MDLNameSpace is the mDL's own namespace (ISO/IEC 18013-5), whose
-// issuing_country and issuing_jurisdiction CheckDocumentSigner checks.
-const MDLNameSpace = "org.iso.18013.5.1"
+// The namespaces whose issuing_country and issuing_jurisdiction name
+// the country and jurisdiction of the document's issuer, which
+// CheckDocumentSigner holds to the document signer certificate.
+const (
+	// MDLNameSpace is the mDL's (ISO/IEC 18013-5).
+	MDLNameSpace = "org.iso.18013.5.1"
+	// ISO23220NameSpace is ISO/IEC 23220-2's, shared by documents built
+	// on it, such as the Photo ID (org.iso.23220.photoid.1).
+	ISO23220NameSpace = "org.iso.23220.1"
+	// EUDIPIDNameSpace is the EU Digital Identity Wallet PID's.
+	EUDIPIDNameSpace = "eu.europa.ec.eudi.pid.1"
+)
+
+// issuingAuthorityNameSpaces are the namespaces CheckDocumentSigner
+// checks issuing_country and issuing_jurisdiction in.
+var issuingAuthorityNameSpaces = []string{MDLNameSpace, ISO23220NameSpace, EUDIPIDNameSpace}
 
 // CheckDocumentSigner applies ISO/IEC 18013-5's checks of a verified
 // mdoc against its document signer (DS) certificate, on top of
@@ -22,13 +35,14 @@ const MDLNameSpace = "org.iso.18013.5.1"
 //     stateOrProvinceName when both carry one (§9.3.3);
 //   - the MSO was signed within the DS certificate's validity
 //     (§9.3.1);
-//   - an mDL's issuing_country, when disclosed, matches the DS's
-//     countryName, and its issuing_jurisdiction the DS's
-//     stateOrProvinceName when the DS has one (the mDL data elements'
-//     requirements).
+//   - an issuing_country disclosed in the mDL, ISO/IEC 23220-2 or EU
+//     PID namespace matches the DS's countryName, and an
+//     issuing_jurisdiction the DS's stateOrProvinceName when the DS
+//     has one: in each, they name the country and jurisdiction of the
+//     document's issuer, whose key the DS certificate carries.
 //
 // Without the last, any document signer under a shared trust list
-// could issue mDLs naming another country.
+// could issue documents naming another country.
 func CheckDocumentSigner(verified VerifiedMSO, chains [][]*x509.Certificate) ([]*x509.Certificate, error) {
 	if len(chains) == 0 || len(chains[0]) == 0 {
 		return nil, errors.New("mdoc: no verified document signer certificate path")
@@ -37,8 +51,10 @@ func CheckDocumentSigner(verified VerifiedMSO, chains [][]*x509.Certificate) ([]
 	if signed := verified.ValidityInfo.Signed; signed.Before(ds.NotBefore) || signed.After(ds.NotAfter) {
 		return nil, fmt.Errorf("mdoc: MSO signed %s, outside the document signer certificate's validity", signed.Format(time.RFC3339))
 	}
-	if err := checkIssuingAuthority(verified.NameSpaces[MDLNameSpace], ds); err != nil {
-		return nil, err
+	for _, ns := range issuingAuthorityNameSpaces {
+		if err := checkIssuingAuthority(ns, verified.NameSpaces[ns], ds); err != nil {
+			return nil, err
+		}
 	}
 	var lastErr error
 	for _, chain := range chains {
@@ -58,20 +74,20 @@ func CheckDocumentSigner(verified VerifiedMSO, chains [][]*x509.Certificate) ([]
 	return nil, lastErr
 }
 
-// checkIssuingAuthority checks an mDL's issuing_country and
+// checkIssuingAuthority checks namespace ns's issuing_country and
 // issuing_jurisdiction, when disclosed, against the DS certificate's
 // subject.
-func checkIssuingAuthority(mdl map[string]any, ds *x509.Certificate) error {
-	if v, ok := mdl["issuing_country"]; ok {
+func checkIssuingAuthority(ns string, elements map[string]any, ds *x509.Certificate) error {
+	if v, ok := elements["issuing_country"]; ok {
 		country, isString := v.(string)
 		if !isString || !slices.Contains(ds.Subject.Country, country) {
-			return fmt.Errorf("mdoc: issuing_country %v doesn't match the document signer's countryName %v", v, ds.Subject.Country)
+			return fmt.Errorf("mdoc: %s issuing_country %v doesn't match the document signer's countryName %v", ns, v, ds.Subject.Country)
 		}
 	}
-	if v, ok := mdl["issuing_jurisdiction"]; ok && len(ds.Subject.Province) > 0 {
+	if v, ok := elements["issuing_jurisdiction"]; ok && len(ds.Subject.Province) > 0 {
 		jurisdiction, isString := v.(string)
 		if !isString || !slices.Contains(ds.Subject.Province, jurisdiction) {
-			return fmt.Errorf("mdoc: issuing_jurisdiction %v doesn't match the document signer's stateOrProvinceName %v", v, ds.Subject.Province)
+			return fmt.Errorf("mdoc: %s issuing_jurisdiction %v doesn't match the document signer's stateOrProvinceName %v", ns, v, ds.Subject.Province)
 		}
 	}
 	return nil
