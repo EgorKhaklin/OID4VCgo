@@ -46,7 +46,10 @@ const (
 	// the request as it asks: an unknown query or credential, a
 	// credential that doesn't answer its query, more than one for a
 	// query that takes one, a required set left unanswered, or two
-	// alternatives of one set answered.
+	// alternatives of one set answered. Also what the holder agreed to
+	// no longer holding at Respond: a copy another Verifier has seen
+	// would now be presented, or a selected credential was refreshed
+	// since it was shown. Nothing is sent.
 	CodeInvalidSelection = "invalid_selection"
 	// CodeReissueRequired: the credential can't be refreshed (no refresh
 	// token was kept, or the Authorization Server no longer accepts it):

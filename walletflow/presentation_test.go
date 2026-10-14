@@ -290,3 +290,36 @@ func TestPresentation_PreviewShowsAlwaysDisclosed(t *testing.T) {
 		t.Errorf("the Verifier received %v, without the plaintext claim the preview named", view.Result.Credentials[0].Claims)
 	}
 }
+
+// A credential refreshed between Preview and Respond isn't presented:
+// what would be sent isn't what the holder was shown.
+func TestPresentation_RefreshedSinceShown(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	v := f.env.StartVerifier(t)
+	w := f.newRefreshingWallet(t, v.Trust, walletflow.NewMemoryGrantStore())
+	held := receive(t, f, w, walletflowtest.SDJWTConfigurationID)
+	ctx := context.Background()
+	_, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
+	p, err := w.StartPresentation(ctx, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := walletflow.Selection{"pid": {held[0].ID}}
+	if _, err := p.Preview(ctx, sel); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.RefreshCredential(ctx, held[0].ID); err != nil {
+		t.Fatalf("RefreshCredential: %v", err)
+	}
+	if _, err := p.Respond(ctx, sel); !errors.Is(err, walletflow.ErrCredentialChanged) {
+		t.Fatalf("Respond after a refresh = %v, want ErrCredentialChanged", err)
+	}
+	// A new presentation shows, and sends, the refreshed credential.
+	_, link = v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
+	if p, err = w.StartPresentation(ctx, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Respond(ctx, sel); err != nil {
+		t.Errorf("Respond in a new presentation: %v", err)
+	}
+}

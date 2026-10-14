@@ -171,7 +171,7 @@ func (p *MdocPresentation) Respond(ctx context.Context, request int, credentialI
 		return MdocPresented{}, err
 	}
 	verifier := p.verifier()
-	reserved, err := p.w.reserve(ctx, Selection{"": {credentialID}}, verifier, p.Linkable)
+	reserved, err := p.w.reserve(ctx, Selection{"": {credentialID}}, verifier, p.Linkable, p.byID)
 	if err != nil {
 		return MdocPresented{}, err
 	}
