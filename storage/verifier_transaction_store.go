@@ -194,6 +194,7 @@ func cloneCredentialQuery(c dcql.CredentialQuery) dcql.CredentialQuery {
 				// copying the slice copies the values.
 				claim.Values = append([]any(nil), claim.Values...)
 			}
+			claim.IntentToRetain = cloneBool(claim.IntentToRetain)
 			claims[i] = claim
 		}
 		c.Claims = claims

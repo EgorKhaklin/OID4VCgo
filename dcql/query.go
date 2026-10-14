@@ -3,6 +3,7 @@ package dcql
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 )
@@ -223,8 +224,17 @@ func (c CredentialQuery) validateClaims() (map[string]bool, error) {
 	claimIDs := make(map[string]bool, len(c.Claims))
 	seenPaths := make(map[string]bool, len(c.Claims))
 	requireClaimID := len(c.ClaimSets) > 0
+	if c.Claims != nil && len(c.Claims) == 0 {
+		return nil, fmt.Errorf("dcql: credential query %q: claims must be non-empty when present", c.ID)
+	}
+	if c.ClaimSets != nil && len(c.ClaimSets) == 0 {
+		return nil, fmt.Errorf("dcql: credential query %q: claim_sets must be non-empty when present", c.ID)
+	}
 	for i, cl := range c.Claims {
 		if err := cl.Validate(requireClaimID); err != nil {
+			return nil, fmt.Errorf("dcql: credential query %q: claims[%d]: %w", c.ID, i, err)
+		}
+		if err := c.validateClaimFormat(cl); err != nil {
 			return nil, fmt.Errorf("dcql: credential query %q: claims[%d]: %w", c.ID, i, err)
 		}
 		if cl.ID != "" {
@@ -243,6 +253,22 @@ func (c CredentialQuery) validateClaims() (map[string]bool, error) {
 		seenPaths[string(pathKey)] = true
 	}
 	return claimIDs, nil
+}
+
+// validateClaimFormat checks cl against c's format: an "mso_mdoc"
+// claims path is exactly a namespace and an element name (§7.2), and
+// only an "mso_mdoc" claim has intent_to_retain (Appendix B.2.4).
+func (c CredentialQuery) validateClaimFormat(cl ClaimsQuery) error {
+	if c.Format != "mso_mdoc" {
+		if cl.IntentToRetain != nil {
+			return fmt.Errorf("intent_to_retain is only for an mso_mdoc claim")
+		}
+		return nil
+	}
+	if len(cl.Path) != 2 || !cl.Path[0].IsKey() || !cl.Path[1].IsKey() {
+		return fmt.Errorf("an mso_mdoc claims path must be two strings, a namespace and an element name")
+	}
+	return nil
 }
 
 func (c CredentialQuery) validateClaimSets(claimIDs map[string]bool) error {
@@ -371,6 +397,12 @@ type ClaimsQuery struct {
 	// these: the Wallet's filter, and verifier.VerifyResponse's check
 	// that what it received matches the query.
 	Values []any `json:"values,omitempty"`
+
+	// IntentToRetain is OPTIONAL, for an "mso_mdoc" claim only: whether
+	// the Verifier intends to keep the element (OID4VP Appendix B.2.4,
+	// ISO/IEC 18013-5's IntentToRetain), for the Wallet to show the
+	// holder.
+	IntentToRetain *bool `json:"intent_to_retain,omitempty"`
 }
 
 // Validate checks c's own structural MUSTs (§6.3). requireID is true
@@ -386,5 +418,33 @@ func (c ClaimsQuery) Validate(requireID bool) error {
 	if err := c.Path.Validate(); err != nil {
 		return fmt.Errorf("dcql: claims query: %w", err)
 	}
+	if c.Values != nil && len(c.Values) == 0 {
+		return fmt.Errorf("dcql: claims query: values must be non-empty when present")
+	}
+	for i, v := range c.Values {
+		if !isValuesElement(v) {
+			return fmt.Errorf("dcql: claims query: values[%d] is not a string, integer or boolean", i)
+		}
+	}
 	return nil
+}
+
+// isValuesElement reports whether v is a string, an integer or a
+// boolean, as a values array's elements must be (§6.3). A JSON number
+// decodes to float64, so a float64 without a fractional part counts as
+// an integer.
+func isValuesElement(v any) bool {
+	switch n := v.(type) {
+	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return true
+	case float64:
+		return n == math.Trunc(n) && !math.IsInf(n, 0)
+	case float32:
+		return float64(n) == math.Trunc(float64(n)) && !math.IsInf(float64(n), 0)
+	case json.Number:
+		_, err := n.Int64()
+		return err == nil
+	default:
+		return false
+	}
 }

@@ -35,6 +35,26 @@ type PreviewedCredential struct {
 	// iat, nbf, exp, status, jti) aside. Show them with Claims. None for
 	// an mdoc, whose every element is selectively disclosed.
 	AlwaysDisclosed []dcql.Path
+
+	// Retained are the Claims the Verifier says it intends to keep: an
+	// mdoc's elements its query marks intent_to_retain (OpenID4VP
+	// Appendix B.2.4). Show them to the holder with Claims.
+	Retained []dcql.Path
+}
+
+// retainedClaims are the paths among selected that cq marks
+// intent_to_retain.
+func retainedClaims(cq dcql.CredentialQuery, selected []dcql.Path) []dcql.Path {
+	var retained []dcql.Path
+	for _, cl := range cq.Claims {
+		if cl.IntentToRetain == nil || !*cl.IntentToRetain {
+			continue
+		}
+		if slices.ContainsFunc(selected, func(p dcql.Path) bool { return slices.Equal(p, cl.Path) }) {
+			retained = append(retained, cl.Path)
+		}
+	}
+	return retained
 }
 
 // PreviewPresentation reports what PresentCredentials would present for
@@ -67,7 +87,7 @@ func PreviewPresentation(ctx context.Context, query dcql.Query, candidates []Hel
 			if err != nil {
 				return nil, fmt.Errorf("wallet: preview presentation: credential query %q: %w", id, err)
 			}
-			preview = append(preview, PreviewedCredential{QueryID: id, Credential: held, Claims: paths, AlwaysDisclosed: alwaysDisclosed(held)})
+			preview = append(preview, PreviewedCredential{QueryID: id, Credential: held, Claims: paths, AlwaysDisclosed: alwaysDisclosed(held), Retained: retainedClaims(byID[id], paths)})
 		}
 	}
 	return preview, nil
