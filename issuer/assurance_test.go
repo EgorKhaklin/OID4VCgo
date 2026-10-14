@@ -1,6 +1,7 @@
 package issuer_test
 
 import (
+	"bytes"
 	"crypto/x509"
 	"strings"
 	"testing"
@@ -144,6 +145,7 @@ func TestNewAcceptsAdequateKeySourcesUnderProduction(t *testing.T) {
 	cfg, deps := productionAssuredConfigAndDeps(t)
 	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool()}
 	deps.ProofBindingKeys = issuer.X5CProofBindingKeyResolver{Roots: x509.NewCertPool()}
+	cfg.NoAttestationStatusCheck = true
 
 	if _, err := issuer.New(cfg, deps); err != nil {
 		t.Fatalf("New: %v", err)
@@ -260,6 +262,7 @@ func TestNewRejectsPreAuthorizedCodeStoresUnderProduction(t *testing.T) {
 // Endpoint.
 func TestNewRequiresNonceEndpointForAttestationProofsUnderProduction(t *testing.T) {
 	cfg, deps := productionAssuredConfigAndDeps(t)
+	cfg.NoAttestationStatusCheck = true
 	deps.AttestationVerifier = assuredAttestationVerifier{
 		fixedAttestationVerifier{}, issuer.KeySourceCapabilities{LiveFetchHardened: true},
 	}
@@ -349,4 +352,68 @@ func preAuthorizedCodeProductionConfig(t *testing.T) (issuer.Config, issuer.Depe
 	deps.AccessTokens = &fakeAccessTokenIssuer{}
 	deps.Audit = newFakeAuditSink()
 	return cfg, deps
+}
+
+// productionIssuer is a production configuration New accepts, as
+// productionAssuredConfigAndDeps with the key attestation verifier its
+// attestation proof type needs.
+func productionIssuer(t *testing.T) (issuer.Config, issuer.Dependencies) {
+	t.Helper()
+	cfg, deps := productionAssuredConfigAndDeps(t)
+	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool()}
+	cfg.NoAttestationStatusCheck = true
+	return cfg, deps
+}
+
+// TestNewProductionRequiresCryptoRand: nonces, transaction IDs, offer
+// references and access tokens come from Dependencies.Random, so a
+// production issuer takes only crypto/rand.Reader.
+func TestNewProductionRequiresCryptoRand(t *testing.T) {
+	cfg, deps := productionIssuer(t)
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New with crypto/rand.Reader: %v", err)
+	}
+	deps.Random = bytes.NewReader(make([]byte, 1<<16))
+	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "crypto/rand") {
+		t.Fatalf("New with a predictable random source = %v, want a crypto/rand error", err)
+	}
+}
+
+// TestNewProductionRequiresHTTPS: every URL a production issuer
+// publishes is https, though fapi.AllowLoopbackHTTP admits http ones
+// for development.
+func TestNewProductionRequiresHTTPS(t *testing.T) {
+	loopback := func(raw string) fapi.URL {
+		u, err := fapi.ParseEndpointURL(raw, fapi.AllowLoopbackHTTP())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	for name, set := range map[string]func(*issuer.Config){
+		"credential":            func(c *issuer.Config) { c.Endpoints.Credential = loopback("http://127.0.0.1/credential") },
+		"nonce":                 func(c *issuer.Config) { c.Endpoints.Nonce = loopback("http://127.0.0.1/nonce") },
+		"authorization_servers": func(c *issuer.Config) { c.AuthorizationServers = []fapi.URL{loopback("http://127.0.0.1/as")} },
+	} {
+		cfg, deps := productionIssuer(t)
+		set(&cfg)
+		if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "must be https") {
+			t.Errorf("%s: New = %v, want an https error", name, err)
+		}
+	}
+}
+
+// TestNewProductionRequiresAttestationStatus: a production issuer that
+// verifies key attestations checks their revocation status, or says
+// it deliberately doesn't.
+func TestNewProductionRequiresAttestationStatus(t *testing.T) {
+	cfg, deps := productionAssuredConfigAndDeps(t)
+	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool()}
+	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "attestation_status") {
+		t.Fatalf("New without an attestation status check = %v, want an attestation_status error", err)
+	}
+	cfg.NoAttestationStatusCheck = true
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Errorf("New with no_attestation_status_check: %v", err)
+	}
 }

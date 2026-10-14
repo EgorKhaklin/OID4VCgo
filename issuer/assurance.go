@@ -1,8 +1,11 @@
 package issuer
 
 import (
+	"crypto/rand"
 	"fmt"
 	"time"
+
+	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo"
 )
@@ -147,6 +150,15 @@ func checkKeySourceAssurance(name string, source any) error {
 // AssuranceProduction. Split out of New purely to keep its own
 // cognitive complexity manageable.
 func checkProductionAssurance(cfg Config, deps Dependencies) error {
+	// Nonces, transaction IDs, notification IDs, Credential Offer
+	// references and access tokens all come from it: a predictable
+	// source makes them guessable.
+	if deps.Random != rand.Reader {
+		return fmt.Errorf("dependencies.random must be crypto/rand.Reader under AssuranceProduction")
+	}
+	if err := checkProductionHTTPS(cfg); err != nil {
+		return err
+	}
 	if cfg.Endpoints.Nonce.IsZero() {
 		for id, cc := range cfg.CredentialConfigurationsSupported {
 			if _, ok := cc.ProofTypesSupported[oid4vci.ProofTypeAttestation]; ok {
@@ -188,6 +200,9 @@ func checkProductionAssurance(cfg Config, deps Dependencies) error {
 		if err := checkKeySourceAssurance("attestation_verifier", deps.AttestationVerifier); err != nil {
 			return err
 		}
+		if deps.AttestationStatus == nil && !cfg.NoAttestationStatusCheck {
+			return fmt.Errorf("dependencies.attestation_status is required under AssuranceProduction when dependencies.attestation_verifier is set, unless config.no_attestation_status_check: without it, a revoked key attestation is accepted until it expires")
+		}
 	}
 	if deps.ProofBindingKeys != nil {
 		if err := checkKeySourceAssurance("proof_binding_keys", deps.ProofBindingKeys); err != nil {
@@ -222,6 +237,36 @@ func checkProductionDPoPClockSkew(cfg Config, deps Dependencies) error {
 	}
 	if skew := cfg.Limits.MaxDPoPClockSkew; skew < minProductionDPoPClockSkew || skew > maxProductionDPoPClockSkew {
 		return fmt.Errorf("config: limits.max_dpop_clock_skew is %s; under AssuranceProduction it must be from %s to %s (FAPI 2.0)", skew, minProductionDPoPClockSkew, maxProductionDPoPClockSkew)
+	}
+	return nil
+}
+
+// checkProductionHTTPS refuses, under AssuranceProduction, a published
+// URL that isn't https: the identifier, every endpoint, the Credential
+// Offer base and the Authorization Servers. fapi.URL admits http only
+// for loopback development (fapi.AllowLoopbackHTTP).
+func checkProductionHTTPS(cfg Config) error {
+	urls := []struct {
+		name string
+		u    fapi.URL
+	}{
+		{"issuer", cfg.Issuer},
+		{"endpoints.credential", cfg.Endpoints.Credential},
+		{"endpoints.nonce", cfg.Endpoints.Nonce},
+		{"endpoints.deferred_credential", cfg.Endpoints.DeferredCredential},
+		{"endpoints.notification", cfg.Endpoints.Notification},
+		{"credential_offer_endpoint", cfg.CredentialOfferEndpoint},
+	}
+	for i, as := range cfg.AuthorizationServers {
+		urls = append(urls, struct {
+			name string
+			u    fapi.URL
+		}{fmt.Sprintf("authorization_servers[%d]", i), as})
+	}
+	for _, x := range urls {
+		if !x.u.IsZero() && x.u.URL().Scheme != "https" {
+			return fmt.Errorf("config.%s must be https under AssuranceProduction", x.name)
+		}
 	}
 	return nil
 }
