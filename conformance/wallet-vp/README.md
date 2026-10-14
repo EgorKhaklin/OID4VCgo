@@ -201,7 +201,7 @@ as the page would. `POST /dcapi` (`dcapi.go`) parses the request with
 `wallet.ParseDCAPIRequestData`, presents the fixture credential bound
 to the origin, and returns the encrypted `dc_api.jwt` response; a
 protocol error (`RequestRejectedError`, no matching credential) is
-returned as an encrypted error response, and a request it can't trust
+returned as Appendix A.4's `{"error": code}`, and a request it can't trust
 at all (bad signature, untrusted or mismatched client, another
 origin) as a rejected promise.
 
@@ -221,7 +221,10 @@ expected — every positive module `FINISHED`/`PASSED`, including
 `invalid_transaction_data`, `access_denied`); and
 `invalid-request-object-signature`, `wrong-expected-origins` and
 `invalid-client-id-prefix` refused without an answer, left for
-screenshot `REVIEW` as in the redirect flow. The first run found the
+screenshot `REVIEW` as in the redirect flow. Appendix A.2 says a Wallet SHOULD answer
+an origin missing from `expected_origins` with `invalid_request`, but
+the suite fails `wrong-expected-origins` when it does (tried
+2026-10-14 on both signed plans), so the wallet answers nothing. The first run found the
 library gap it was built to find: the wallet accepted only signed
 requests (fixed by `ParseDCAPIRequestData`), and refused a request
 without a nonce instead of answering `invalid_request`.

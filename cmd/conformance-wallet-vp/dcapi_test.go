@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -120,13 +119,9 @@ func TestHandleDCAPI_Refusals(t *testing.T) {
 		t.Fatal(err)
 	}
 	answer := postDCAPI(t, s, wallet.DCAPIProtocolSigned, map[string]string{"request": other.RequestObject})
-	var data struct{ Response string }
-	if answer.SentError != "access_denied" || json.Unmarshal(answer.Result.Data, &data) != nil {
-		t.Fatalf("no matching credential: %+v, want access_denied", answer)
-	}
-	_, err = v.ParseDirectPostJWTResponse(data.Response, other.ResponseDecryptionKey)
-	var respErr *verifier.ResponseError
-	if !errors.As(err, &respErr) || respErr.Code != "access_denied" {
-		t.Errorf("the Verifier read %v, want access_denied", err)
+	// OpenID4VP Appendix A.4: the error is a plain object in data.
+	var data struct{ Error string }
+	if answer.SentError != "access_denied" || json.Unmarshal(answer.Result.Data, &data) != nil || data.Error != "access_denied" {
+		t.Fatalf("no matching credential: %+v, want {\"error\": \"access_denied\"}", answer)
 	}
 }

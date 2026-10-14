@@ -343,7 +343,9 @@ func linkableOf(reserved []reservedCopy) []string {
 }
 
 // Decline tells the Verifier the holder declined (access_denied, in an
-// encrypted direct_post.jwt error response). The refusal stands from the
+// encrypted direct_post.jwt error response; for a DC API request,
+// OpenID4VP Appendix A.4's {"error": "access_denied"} in
+// Presented.DCAPIResponse). The refusal stands from the
 // first call: Respond is refused after it. If sending it failed in
 // transit, Decline can be called again to send the same refusal; an
 // error the Verifier answered with is returned, and the Presentation is

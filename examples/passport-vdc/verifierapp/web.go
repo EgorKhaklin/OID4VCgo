@@ -141,6 +141,7 @@ document.getElementById("dcapi").addEventListener("click", async function () {
 		var offered = await r.json();
 		var credential = await navigator.credentials.get({mediation: "required", digital: {requests: offered.requests}});
 		var data = typeof credential.data === "string" ? JSON.parse(credential.data) : credential.data;
+		if (data.error) throw new Error("the wallet answered " + data.error);
 		status.textContent = "Verifying…";
 		var v = await fetch(base + "/dcapi/response", {
 			method: "POST", headers: {"Content-Type": "application/json"},

@@ -420,7 +420,8 @@ returns a `Presentation`, answered with the same steps, except:
 - `Respond` and `Decline` send nothing. Each returns, in
   `"dcapi_response"`, the response's data — a JSON object as text,
   `{"response": <the encrypted response>}` — for the platform to hand
-  back to the page; `Decline`'s is the encrypted `access_denied`.
+  back to the page; `Decline`'s is OpenID4VP Appendix A.4's
+  `{"error": "access_denied"}`, not encrypted.
 - Presentations are bound to `"origin:" + origin`, and a copy presented
   counts as shown to it (`shown_to_verifier`, `linkable_here`).
 - A request that can't be parsed, or comes with no origin, is
