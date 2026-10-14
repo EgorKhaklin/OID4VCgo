@@ -2,11 +2,9 @@ package credential
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"golang.org/x/text/language"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
@@ -38,10 +36,12 @@ func MdocClaims(e passport.Evidence, o Options) (*mdoc.Claims, error) {
 		GivenName:        id.GivenNames,
 		Sex:              isoSex(id.Sex),
 		Nationality:      id.Nationality,
-		IssuingCountry:   alpha2(id.IssuingCountry),
 		IssuingAuthority: IssuingAuthorityName,
 		IssueDate:        fullDate(o.Now),
 		ExpiryDate:       fullDate(validUntil),
+	}
+	if o.IssuingCountry != "" {
+		iso[IssuingCountry] = o.IssuingCountry
 	}
 	if bd, ok := birthDate(id.BirthDate); ok {
 		iso[BirthDate] = bd
@@ -99,31 +99,4 @@ func isoSex(mrz string) uint {
 	default:
 		return 0
 	}
-}
-
-// icaoAlpha2 maps the ICAO Doc 9303 codes that aren't ISO 3166-1 alpha-3
-// to their ISO alpha-2 country.
-var icaoAlpha2 = map[string]string{
-	"D":   "DE", // Germany
-	"GBD": "GB", // British Overseas Territories citizen
-	"GBN": "GB", // British National (Overseas)
-	"GBO": "GB", // British Overseas citizen
-	"GBP": "GB", // British protected person
-	"GBS": "GB", // British subject
-	"RKS": "XK", // Kosovo
-}
-
-// alpha2 is an MRZ country code as ISO 3166-1 alpha-2, as 23220-2's
-// issuing_country is. A code with no alpha-2 country — the ICAO
-// specimen's UTO, a UN or stateless code — stays as it is, rather than
-// becoming a meaningless "ZZ".
-func alpha2(mrz string) string {
-	code := strings.TrimRight(mrz, "<")
-	if a2, ok := icaoAlpha2[code]; ok {
-		return a2
-	}
-	if r, err := language.ParseRegion(code); err == nil && r.IsCountry() {
-		return r.String()
-	}
-	return code
 }

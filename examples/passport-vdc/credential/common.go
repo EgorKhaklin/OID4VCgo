@@ -20,6 +20,14 @@ type Options struct {
 	// AgeThresholds are the ages to issue age claims for; nil means
 	// DefaultAgeThresholds.
 	AgeThresholds []int
+
+	// IssuingCountry is the issuer's own country, ISO 3166-1 alpha-2:
+	// its document signer certificate's countryName, and so the Photo
+	// ID's issuing_country (ISO/IEC 23220-2 names the issuer's country
+	// there, which verifiers hold to the document signer). Empty leaves
+	// issuing_country out. The passport's own issuing country isn't it:
+	// this issuer isn't the passport's.
+	IssuingCountry string
 }
 
 func (o Options) thresholds() []int {

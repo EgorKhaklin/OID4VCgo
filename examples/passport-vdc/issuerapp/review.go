@@ -192,7 +192,7 @@ func (a *App) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 	case rv.decision == reviewPending:
 		return nil
 	}
-	opts := credential.Options{Now: a.now()}
+	opts := credential.Options{Now: a.now(), IssuingCountry: demoCountry}
 	mdocClaims, err := credential.MdocClaims(rv.evidence, opts)
 	if err != nil {
 		return err
