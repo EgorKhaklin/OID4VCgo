@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -199,6 +200,22 @@ type VerifiedCredential struct {
 // VerifyResponseResult is returned by a successful VerifyResponse.
 type VerifyResponseResult struct {
 	Credentials []VerifiedCredential
+
+	// Discarded are the presentations that failed verification while
+	// the rest still answered the query (OpenID4VP §8.6: "the effected
+	// Presentation MUST be discarded"): one under multiple, say, or an
+	// optional credential set's. None of their claims are in
+	// Credentials.
+	Discarded []DiscardedPresentation
+}
+
+// DiscardedPresentation is a presentation VerifyResponse discarded.
+type DiscardedPresentation struct {
+	// CredentialQueryID is the Credential Query it answered.
+	CredentialQueryID string
+	// Reason is why it failed verification: the error's text, kept as
+	// a string so a stored Transaction's result serializes.
+	Reason string
 }
 
 // Most Verifiers want Transactions, which calls VerifyResponse for each
@@ -303,15 +320,35 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", newError("the vp_token doesn't answer the query as it asks", err))
 	}
 	result := VerifyResponseResult{}
+	verifiedIDs := make(map[string]bool, len(answered))
+	var firstFailure error
 	for _, cq := range req.Query.Credentials {
 		if !answered[cq.ID] {
 			continue
 		}
-		vcs, err := v.verifyCredentialQuery(ctx, cq, req)
-		if err != nil {
+		vcs, discarded, err := v.verifyCredentialQuery(ctx, cq, req)
+		var allFailed *discardedError
+		switch {
+		case errors.As(err, &allFailed):
+			if firstFailure == nil {
+				firstFailure = fmt.Errorf("verifier: verify response: credential query %q: %w", cq.ID, allFailed.err)
+			}
+		case err != nil:
 			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: credential query %q: %w", cq.ID, err)
 		}
 		result.Credentials = append(result.Credentials, vcs...)
+		result.Discarded = append(result.Discarded, discarded...)
+		verifiedIDs[cq.ID] = len(vcs) > 0
+	}
+	if len(result.Discarded) > 0 {
+		// §8.6: what's left must still answer the query (§6.4); if it
+		// doesn't, the first failure is why.
+		if err := req.Query.CheckAnswered(verifiedIDs); err != nil {
+			if firstFailure == nil {
+				firstFailure = fmt.Errorf("verifier: verify response: %w", newError("what verified doesn't answer the query as it asks", err))
+			}
+			return VerifyResponseResult{}, firstFailure
+		}
 	}
 	return result, nil
 }
@@ -367,14 +404,16 @@ func isUnverifiedAKIChecker(checker dcql.TrustedAuthoritiesChecker) bool {
 // array MUST contain only one Presentation"), and verifies every one
 // of them, dispatching to the format-specific verification
 // VerifyResponse's own doc comment describes.
-func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, req VerifyResponseRequest) ([]VerifiedCredential, error) {
+func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, req VerifyResponseRequest) ([]VerifiedCredential, []DiscardedPresentation, error) {
 	presentations := req.Response.VPToken[cq.ID]
 	if len(presentations) == 0 {
-		return nil, newError("no presentation returned", nil)
+		return nil, nil, newError("no presentation returned", nil)
 	}
 	if len(presentations) > 1 && !cq.Multiple {
-		return nil, newError("multiple presentations were returned but multiple is not requested", nil)
+		return nil, nil, newError("multiple presentations were returned but multiple is not requested", nil)
 	}
+	var discarded []DiscardedPresentation
+	var firstErr error
 
 	vcs := make([]VerifiedCredential, 0, len(presentations))
 	for _, presented := range presentations {
@@ -388,15 +427,39 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 		case mdoc.CredentialFormat:
 			claims, status, chain, err = v.verifyMdocPresentation(ctx, cq, presented, req)
 		default:
-			return nil, fmt.Errorf("format %q is not yet supported", cq.Format)
+			return nil, nil, fmt.Errorf("format %q is not yet supported", cq.Format)
+		}
+		var failed *Error
+		if errors.As(err, &failed) {
+			// The presentation failed, not the response or the
+			// configuration: discard it (§8.6).
+			discarded = append(discarded, DiscardedPresentation{CredentialQueryID: cq.ID, Reason: err.Error()})
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		vcs = append(vcs, VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain})
 	}
-	return vcs, nil
+	if len(vcs) == 0 && firstErr != nil {
+		// Nothing verified: the query's own failure, for the caller to
+		// report if what's left doesn't answer the query.
+		return nil, discarded, &discardedError{firstErr}
+	}
+	return vcs, discarded, nil
 }
+
+// discardedError is a Credential Query all of whose presentations
+// failed verification: VerifyResponse discards them, and reports the
+// first's error only if the rest of the response doesn't answer the
+// query.
+type discardedError struct{ err error }
+
+func (e *discardedError) Error() string { return e.err.Error() }
+func (e *discardedError) Unwrap() error { return e.err }
 
 func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.CredentialQuery, compact string, req VerifyResponseRequest) (map[string]any, [][]byte, error) {
 	if req.IssuerKeys == nil {
