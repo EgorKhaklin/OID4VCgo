@@ -17,6 +17,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
@@ -207,6 +208,7 @@ type wireJWKKid struct {
 	Kid    string   `json:"kid"`
 	Use    string   `json:"use"`
 	KeyOps []string `json:"key_ops"`
+	Alg    string   `json:"alg"`
 }
 
 // ParseAuthorizationRequest validates the certificate chain in
@@ -380,11 +382,28 @@ func responseEncryption(clientMetadata json.RawMessage) (*ecdsa.PublicKey, strin
 	if err != nil {
 		return nil, "", "", err
 	}
-	enc := "A128GCM"
-	if !containsString(meta.EncValuesSupported, enc) && len(meta.EncValuesSupported) > 0 {
-		enc = meta.EncValuesSupported[0]
+	enc, err := responseEnc(meta.EncValuesSupported)
+	if err != nil {
+		return nil, "", "", err
 	}
 	return encPub, kid, enc, nil
+}
+
+// responseEnc is the content encryption for the response: the
+// strongest of the Verifier's encrypted_response_enc_values_supported
+// this package supports (HAIP 1.0 §5: a Wallet supporting both A128GCM
+// and A256GCM "SHOULD use A256GCM"), or A128GCM, OpenID4VP §5.1's
+// default, when it lists none.
+func responseEnc(offered []string) (string, error) {
+	if len(offered) == 0 {
+		return string(jwe.A128GCM), nil
+	}
+	for _, enc := range encPreference {
+		if containsString(offered, string(enc)) {
+			return string(enc), nil
+		}
+	}
+	return "", fmt.Errorf("client_metadata.encrypted_response_enc_values_supported %v has none this wallet supports", offered)
 }
 
 // FetchAuthorizationRequest is ParseAuthorizationRequest's own
@@ -439,14 +458,19 @@ func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clie
 // members a consumer doesn't understand, which it MUST ignore rather
 // than treat as fatal. Any entry that fails to parse as a P-256 EC
 // public key, or whose "use" or "key_ops" rules out encryption, is
-// skipped; only genuinely running out of candidates is an error.
+// skipped, as is one whose "alg" is another algorithm than ECDH-ES,
+// which is the only one this package encrypts with (OpenID4VP §8.3:
+// "The JWE alg algorithm used MUST be equal to the alg value of the
+// chosen jwk"). A key without "alg", which §8.3 requires, is still
+// used, for Verifiers that leave it out. Only running out of
+// candidates is an error.
 func selectResponseEncryptionKey(keys []json.RawMessage) (*ecdsa.PublicKey, string, error) {
 	for _, raw := range keys {
 		var kid wireJWKKid
 		if err := json.Unmarshal(raw, &kid); err != nil {
 			continue
 		}
-		if !usableForEncryption(kid.Use, kid.KeyOps) {
+		if !usableForEncryption(kid.Use, kid.KeyOps) || (kid.Alg != "" && kid.Alg != string(jwe.ECDHES)) {
 			continue
 		}
 		rawPub, err := jwk.ParsePublicKey(raw)

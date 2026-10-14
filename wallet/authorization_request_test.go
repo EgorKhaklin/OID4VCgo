@@ -164,8 +164,8 @@ func TestParseAuthorizationRequest_RoundTripsWithVerifierBuild(t *testing.T) {
 	if got.ResponseEncryptionKeyID == "" {
 		t.Error("ResponseEncryptionKeyID is empty")
 	}
-	if got.ResponseEncryptionEnc != "A128GCM" {
-		t.Errorf("ResponseEncryptionEnc = %q, want A128GCM (HAIP's own minimum, and what this Verifier advertises first)", got.ResponseEncryptionEnc)
+	if got.ResponseEncryptionEnc != "A256GCM" {
+		t.Errorf("ResponseEncryptionEnc = %q, want A256GCM (HAIP 1.0 §5: a Wallet supporting both SHOULD use it)", got.ResponseEncryptionEnc)
 	}
 }
 
