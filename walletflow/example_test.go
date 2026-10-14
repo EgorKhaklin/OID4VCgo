@@ -1,0 +1,85 @@
+package walletflow_test
+
+import (
+	"context"
+	"crypto/x509"
+	"fmt"
+
+	"github.com/idfoundry/oid4vcgo/wallet"
+	"github.com/idfoundry/oid4vcgo/walletflow"
+)
+
+// A wallet: its registration, the issuers and Verifiers it trusts, and
+// where it keeps keys and credentials. The memory stores are for tests;
+// a wallet holders use keeps them durably, and its keys in hardware
+// (the mobile libraries' Keychain and Keystore stores), which New
+// requires unless Development is set.
+func ExampleNew() {
+	var issuerRoots, verifierRoots *x509.CertPool // the ecosystem's trust anchors
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: "https://wallet.example.com", RedirectURI: "https://wallet.example.com/callback",
+		IssuerRoots: issuerRoots, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
+		Development: true, // for the memory stores: never in a wallet holders use
+	}, walletflow.Dependencies{
+		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(),
+		Authorizations: walletflow.NewMemoryAuthorizationStore(), Deferred: walletflow.NewMemoryDeferredStore(),
+	})
+	if err != nil {
+		panic(err)
+	}
+	_ = w
+}
+
+// Receiving a credential from a Credential Offer: with a pre-authorized
+// code, the holder enters the PIN the issuer sent; otherwise the holder
+// signs in at the Authorization Server in a browser, which redirects
+// back to Config.RedirectURI.
+func ExampleWallet_StartIssuance() {
+	var w *walletflow.Wallet // from walletflow.New
+	ctx := context.Background()
+	s, err := w.StartIssuance(ctx, "openid-credential-offer://?credential_offer_uri=…")
+	if err != nil {
+		panic(err)
+	}
+	defer func() { _ = s.Close(ctx) }()
+	if s.Offer().Grant == walletflow.GrantPreAuthorizedCode {
+		err = s.RedeemPreAuthorizedCode(ctx, "493536") // the PIN, from the holder
+	} else {
+		var signIn string
+		if signIn, err = s.BeginAuthorization(ctx); err == nil {
+			_ = signIn // open in a browser; it redirects back with the result
+			err = s.CompleteAuthorization(ctx, "https://wallet.example.com/callback?code=…&state=…")
+		}
+	}
+	if err != nil {
+		panic(err)
+	}
+	result, err := s.RequestCredentials(ctx)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(len(result.Credentials), "received,", len(result.Deferred), "deferred")
+}
+
+// Answering a Verifier: show the holder who asks and what would be
+// disclosed (Preview), then respond with their consent, or decline.
+func ExampleWallet_StartPresentation() {
+	var w *walletflow.Wallet // from walletflow.New
+	ctx := context.Background()
+	p, err := w.StartPresentation(ctx, "openid4vp://?client_id=…&request_uri=…")
+	if err != nil {
+		panic(err)
+	}
+	sel, err := p.DefaultSelection(ctx)
+	if err != nil {
+		panic(err)
+	}
+	disclosed, err := p.Preview(ctx, sel)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(p.Verifier().Name, "asks for", disclosed) // and the holder decides
+	if _, err := p.Respond(ctx, sel); err != nil {
+		panic(err)
+	}
+}
