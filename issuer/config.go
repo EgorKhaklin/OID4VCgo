@@ -180,6 +180,13 @@ type Config struct {
 	// value.
 	CredentialOfferEndpoint fapi.URL
 
+	// NoAttestationStatusCheck declares that this issuer deliberately
+	// checks no key attestation's revocation status (its Wallet
+	// Providers publish none, say). Under AssuranceProduction, New needs
+	// either it or Dependencies.AttestationStatus whenever
+	// Dependencies.AttestationVerifier is set.
+	NoAttestationStatusCheck bool
+
 	// RequestEncryption declares this issuer's own support for
 	// encrypted Credential/Deferred Credential Requests (§10, published
 	// as Metadata's own credential_request_encryption). Nil means this
@@ -374,9 +381,11 @@ type Dependencies struct {
 	// AttestationStatus, if set, checks each attestation-type proof's
 	// key attestation for revocation (its "status" claim, OID4VCI
 	// Appendix D.1) after its signature verifies, and refuses the proof
-	// when it returns an error. Optional: nil skips the check, so a key
-	// attestation its Wallet Provider has since revoked is accepted
-	// until it expires.
+	// when it returns an error. Without it, a key attestation its Wallet
+	// Provider has since revoked is accepted until it expires: under
+	// AssuranceProduction, New requires it whenever AttestationVerifier
+	// is set, unless Config.NoAttestationStatusCheck says the issuer
+	// deliberately checks none.
 	AttestationStatus AttestationStatusChecker
 
 	// ProofBindingKeys resolves a jwt-type key proof's own "kid" or

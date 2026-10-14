@@ -420,6 +420,31 @@ func TestNewTransactions_Validates(t *testing.T) {
 	if _, err := verifier.NewTransactions(prod, store, verifier.TransactionsConfig{RequestURIBase: txBase}); err == nil {
 		t.Error("an in-memory store was accepted under AssuranceProduction")
 	}
+
+	// Under production, a status check (Accept) or an explicit
+	// NoStatusCheck: a Verifier that forgot Accept would take revoked
+	// credentials.
+	assured := assuredTransactionStore{store}
+	verify := verifier.VerifyResponseRequest{IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()}}
+	if _, err := verifier.NewTransactions(prod, assured, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: verify}); err == nil || !strings.Contains(err.Error(), "no_status_check") {
+		t.Errorf("no Accept and no NoStatusCheck under AssuranceProduction: %v", err)
+	}
+	for name, cfg := range map[string]verifier.TransactionsConfig{
+		"accept":          {RequestURIBase: txBase, Verify: verify, Accept: func(context.Context, string, verifier.VerifyResponseResult) error { return nil }},
+		"no_status_check": {RequestURIBase: txBase, Verify: verify, NoStatusCheck: true},
+	} {
+		if _, err := verifier.NewTransactions(prod, assured, cfg); err != nil {
+			t.Errorf("%s under AssuranceProduction: %v", name, err)
+		}
+	}
+}
+
+// assuredTransactionStore declares the capabilities a production
+// Transactions needs.
+type assuredTransactionStore struct{ verifier.TransactionStore }
+
+func (assuredTransactionStore) Capabilities() verifier.StoreCapabilities {
+	return verifier.StoreCapabilities{Durable: true, AtomicUpdate: true}
 }
 
 func TestTransactions_HandlerEdges(t *testing.T) {

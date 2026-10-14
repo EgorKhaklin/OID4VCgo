@@ -177,6 +177,13 @@ type TransactionsConfig struct {
 	// to, with response_code added to its query (OpenID4VP §8.2).
 	// REQUIRED for Begin with sameDevice.
 	RedirectURI string
+
+	// NoStatusCheck declares that this Verifier deliberately checks no
+	// credential's revocation status — its credentials carry none, say.
+	// Under AssuranceProduction, NewTransactions needs either an Accept
+	// (RequireValidStatus, or one of the Verifier's own) or this: a
+	// Verifier that simply forgot Accept would take revoked credentials.
+	NoStatusCheck bool
 }
 
 // Transactions tracks presentation requests from creation to a verified
@@ -235,6 +242,9 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 		}
 		if err := checkProductionKeySources(cfg.Verify); err != nil {
 			return nil, fmt.Errorf("verifier: transactions: %w", err)
+		}
+		if cfg.Accept == nil && !cfg.NoStatusCheck {
+			return nil, errors.New("verifier: transactions: under AssuranceProduction, set accept (verifier.RequireValidStatus checks revocation) or no_status_check: without either, a revoked credential is accepted")
 		}
 	}
 	return &Transactions{v: v, store: store, cfg: cfg}, nil
