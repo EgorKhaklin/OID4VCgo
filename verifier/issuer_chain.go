@@ -46,15 +46,21 @@ func keyBoundChain(chain [][]byte, issuerPub crypto.PublicKey) [][]byte {
 // CheckMdocIssuer applies the checks of an mdoc's issuer that need its
 // certificates, after mdoc.Verify succeeded with issuerPub: when
 // resolver is an MdocIssuerChainResolver, ISO/IEC 18013-5's document
-// signer checks over the paths it verified x5chain on. It returns
-// x5chain when its leaf's key is issuerPub, nil otherwise.
+// signer checks over the paths it verified x5chain on.
+//
+// It returns the issuer chain to trust: the first path the resolver
+// verified, document signer first, without its trust anchor. Never
+// x5chain itself: an mdoc's x5chain is an unprotected COSE header, so
+// the holder can add, drop or reorder certificates in it, or swap the
+// leaf for one with the same key their own CA issued. A resolver that
+// isn't an MdocIssuerChainResolver authenticates only the key, so the
+// chain is nil, and a trusted_authorities check on it fails.
 func CheckMdocIssuer(ctx context.Context, resolver MdocIssuerKeyResolver, x5chain [][]byte, docType string, issuerPub crypto.PublicKey, verified mdoc.VerifiedMSO) ([][]byte, error) {
-	bound := keyBoundChain(x5chain, issuerPub)
 	chainResolver, ok := resolver.(MdocIssuerChainResolver)
 	if !ok {
-		return bound, nil
+		return nil, nil
 	}
-	if bound == nil {
+	if keyBoundChain(x5chain, issuerPub) == nil {
 		return nil, errors.New("the issuer's x5chain isn't the one its key resolved from")
 	}
 	chains, err := chainResolver.ResolveMdocIssuerChains(ctx, x5chain, docType)
@@ -64,5 +70,30 @@ func CheckMdocIssuer(ctx context.Context, resolver MdocIssuerKeyResolver, x5chai
 	if _, err := mdoc.CheckDocumentSigner(verified, chains); err != nil {
 		return nil, err
 	}
-	return bound, nil
+	return verifiedPath(chains, issuerPub), nil
+}
+
+// verifiedPath is the first of chains whose leaf has issuerPub, as DER,
+// without its last certificate, the trust anchor the path ends at: the
+// form an x5chain takes (RFC 9360 §2), every certificate in it
+// verified.
+func verifiedPath(chains [][]*x509.Certificate, issuerPub crypto.PublicKey) [][]byte {
+	for _, path := range chains {
+		if len(path) == 0 {
+			continue
+		}
+		key, ok := path[0].PublicKey.(interface{ Equal(crypto.PublicKey) bool })
+		if !ok || !key.Equal(issuerPub) {
+			continue
+		}
+		if len(path) > 1 {
+			path = path[:len(path)-1]
+		}
+		ders := make([][]byte, len(path))
+		for i, cert := range path {
+			ders[i] = cert.Raw
+		}
+		return ders
+	}
+	return nil
 }

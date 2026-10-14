@@ -185,9 +185,12 @@ type VerifiedCredential struct {
 	MdocStatus *mdoc.Status
 
 	// IssuerChain is the credential's issuer certificate chain (DER,
-	// leaf first) — an SD-JWT VC's x5c, an mdoc's IssuerAuth x5chain —
-	// when its leaf's key is the one the credential verified with, and
-	// nil otherwise. The issuer is that leaf's subject: an SD-JWT VC's
+	// leaf first) when its leaf's key is the one the credential verified
+	// with, and nil otherwise. For an SD-JWT VC it's the signed x5c
+	// header. For an mdoc it's the path MdocIssuerKeys (an
+	// MdocIssuerChainResolver) verified, without the trust anchor: the
+	// IssuerAuth x5chain is unprotected, so the holder could edit it; a
+	// resolver that verifies no chain gives none. The issuer is that leaf's subject: an SD-JWT VC's
 	// "iss" claim, when the issuer key comes from x5c, is whatever the
 	// issuer wrote, not checked against it (SD-JWT VC §3.5).
 	IssuerChain [][]byte
