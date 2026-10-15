@@ -402,3 +402,17 @@ func TestInPersonReader(t *testing.T) {
 		t.Error("the reader certificate lacks the reader authentication EKU")
 	}
 }
+
+// A request page that's gone (expired, lost with a restart, or another
+// browser's) says so, links back to the home page and returns there,
+// rather than a bare 404.
+func TestRequestPage_Ended(t *testing.T) {
+	c := newDCAPIApp(t, newDCAPIIssuer(t))
+	resp := c.do(http.MethodGet, "/demo/requests/no-such-request", "", nil)
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "This request has ended") ||
+		!strings.Contains(string(body), `href="/demo/"`) || !strings.Contains(string(body), `http-equiv="refresh"`) {
+		t.Errorf("unknown request page: %d %s", resp.StatusCode, body)
+	}
+}
