@@ -164,3 +164,25 @@ func addDecoys(payload map[string]any, alg HashAlg, n int) error {
 	payload["_sd"] = sd
 	return nil
 }
+
+// hasSDMarker reports whether v holds an SD or SDElement marker at any
+// depth.
+func hasSDMarker(v any) bool {
+	switch v := v.(type) {
+	case sdValue, sdElement:
+		return true
+	case map[string]any:
+		for _, child := range v {
+			if hasSDMarker(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if hasSDMarker(child) {
+				return true
+			}
+		}
+	}
+	return false
+}

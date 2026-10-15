@@ -251,6 +251,9 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueO
 // checkIssueInputs checks Issue's claims and options: a vct, a decoy
 // count in range, and an IssuerCertificate, if given, for signer's key.
 func checkIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) error {
+	if hasSDMarker(claims.Status) || hasSDMarker(claims.CNF) {
+		return fmt.Errorf("sdjwtvc: Claims.Status and Claims.CNF can't have selectively disclosable sub-claims (SD-JWT VC draft-19 §2.2.2.3)")
+	}
 	if claims.VCT == "" {
 		return fmt.Errorf("sdjwtvc: Claims.VCT is required")
 	}
