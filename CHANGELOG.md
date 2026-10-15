@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.43.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.42.0...v0.43.0) (2026-10-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** in fapigo/server, a TokenEndpointRequest's Parameters() no longer includes resource: a deployment serving its own token-endpoint grant type (an OpenID4VCI pre-authorized code grant beside issuer, say) that reads Parameters()["resource"] must read Resources() instead, and pass them in IssueAccessTokenRequest.Resources. With opaque access tokens, the server now records each token's audience and serverresource.NewVerifier checks it. See FAPIgo's UPGRADING.md, v0.57.0.
+
+### Features
+
+* **sdjwtvc:** ErrKeyBinding for a Key Binding JWT that fails ([0884c0e](https://github.com/IDFoundry/OID4VCgo/commit/0884c0eb695e5ee55ddced51a564db49e71b1c5c))
+* **verifier:** Error.Reason says why verification failed ([9d8a2cb](https://github.com/IDFoundry/OID4VCgo/commit/9d8a2cb159f4a6446689b9fd4d4546069cb30da2))
+* **walletflow:** ErrTxCodeRefused for a PIN the issuer refused ([92639d7](https://github.com/IDFoundry/OID4VCgo/commit/92639d7a69fac055b9d204709bb27326c3edc12a))
+* **wallet:** say which endpoint an Error came from ([852fa04](https://github.com/IDFoundry/OID4VCgo/commit/852fa044e7f5c0100b28392b8fbeaa0bd5b8f614))
+* **wallet:** send resource through fapigo/client, so the token request names it too ([3e809aa](https://github.com/IDFoundry/OID4VCgo/commit/3e809aa0ac6e41c2a3c7411a6dff1ece113c57cc))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.57.0 ([4b0b0ae](https://github.com/IDFoundry/OID4VCgo/commit/4b0b0ae926788a7c1e40d045a507f7a39395b056))
+
 ## [0.42.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.41.1...v0.42.0) (2026-10-15)
 
 
