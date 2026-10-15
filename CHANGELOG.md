@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.44.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.43.0...v0.44.0) (2026-10-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **verifier:** RequireValidStatus and walletflow's CheckStatus refuse an SD-JWT VC's Status List Token not signed by a certificate naming the credential's issuer. A deployment whose status lists come from a separate Status Issuer writes its own Accept, calling checker.RequireValid with a LeafPolicy for that issuer.
+* **verifier:** an SD-JWT VC with an iss is refused unless its x5c leaf names it (a uniformResourceIdentifier subject alternative name equal to iss, or for a "dns:" iss a matching dNSName). Issue credentials from a certificate naming the Credential Issuer's identifier.
+
+### Features
+
+* **verifier:** RequireValidStatusFrom accepts a separate Status Issuer ([a860065](https://github.com/IDFoundry/OID4VCgo/commit/a86006503de1df9f55277b03b0be3656b97e1544))
+* **wallet:** name the Credential Issuer as the resource of pre-authorized code tokens ([166e39c](https://github.com/IDFoundry/OID4VCgo/commit/166e39c78398c52481df5de3ef71f45a4242a925))
+
+
+### Bug Fixes
+
+* **verifier:** refuse a status list another issuer signed ([e51915c](https://github.com/IDFoundry/OID4VCgo/commit/e51915c5ad582db6ddce2a842e931590bfeaa77a))
+* **verifier:** refuse an SD-JWT VC whose iss doesn't name its x5c certificate ([4ec198d](https://github.com/IDFoundry/OID4VCgo/commit/4ec198d4faa9f99ebb0096c3da39dba787d32fe8))
+
 ## [0.43.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.42.0...v0.43.0) (2026-10-15)
 
 
