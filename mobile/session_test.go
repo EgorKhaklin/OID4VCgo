@@ -606,6 +606,10 @@ func TestSessions_ProductionNeedsDurableStores(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	creds := newGoCredentialStore()
 	creds.ephemeral = true
+	// Production takes only fapihttp's hardened client, which the wallet
+	// builds itself: not the test environment's.
+	prev := testHTTP.Swap(nil)
+	defer testHTTP.Store(prev)
 	w, err := NewWallet(string(raw), h.keys, creds, h.env.Provider())
 	if err != nil {
 		t.Fatal(err)

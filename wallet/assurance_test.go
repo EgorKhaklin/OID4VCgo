@@ -1,8 +1,11 @@
 package wallet_test
 
 import (
+	"github.com/idfoundry/fapigo/fapihttp"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -44,7 +47,53 @@ func TestNewProductionAcceptsHardenedFetch(t *testing.T) {
 	// development switch, so it stays permitted.
 	cfg.Fetch.AllowedPrivateHosts = []string{"issuer.internal"}
 	cfg.Fetch.AllowedLoopbackHosts = []string{"issuer-sidecar.internal"}
-	if _, err := wallet.New(cfg, validDependencies()); err != nil {
+	if _, err := wallet.New(cfg, productionDependencies()); err != nil {
 		t.Fatalf("New(AssuranceProduction): %v", err)
+	}
+}
+
+// productionDependencies is validDependencies with no HTTP client, so
+// New builds fapihttp's hardened one, as production requires.
+func productionDependencies() wallet.Dependencies {
+	deps := validDependencies()
+	deps.HTTP = nil
+	return deps
+}
+
+// Under production, the HTTP client must be fapihttp.NewClient's, its
+// transport intact, with no loopback exception: only that transport
+// refuses private addresses when it dials.
+func TestNewProductionChecksHTTPClient(t *testing.T) {
+	cfg := validConfig()
+	cfg.Assurance = wallet.AssuranceProduction
+	cfg.Fetch.AllowLoopbackHTTP = false
+	hardened, err := fapihttp.NewClient(fapihttp.RecommendedTransportConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	loopbackCfg := fapihttp.RecommendedTransportConfig()
+	loopbackCfg.AllowLoopbackHosts = true
+	loopback, err := fapihttp.NewClient(loopbackCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := *hardened
+	copied.Timeout = time.Second
+	for name, tc := range map[string]struct {
+		client fapihttp.HTTPClient
+		ok     bool
+	}{
+		"none: New builds one":       {nil, true},
+		"NewClient's":                {hardened, true},
+		"a copy of NewClient's":      {&copied, true},
+		"http.DefaultClient":         {http.DefaultClient, false},
+		"one allowing loopback":      {loopback, false},
+		"not an *http.Client at all": {validDependencies().HTTP, false},
+	} {
+		deps := validDependencies()
+		deps.HTTP = tc.client
+		if _, err := wallet.New(cfg, deps); (err == nil) != tc.ok {
+			t.Errorf("%s: %v, want ok = %v", name, err, tc.ok)
+		}
 	}
 }
