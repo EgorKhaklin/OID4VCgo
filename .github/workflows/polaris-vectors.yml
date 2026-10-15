@@ -1,0 +1,72 @@
+# Polaris negative vectors: 36 SD-JWT VC presentations under OpenID4VP
+# 1.0 and HAIP 1.0 (3 the verifier must accept, 33 it must refuse, each
+# refusal with the clauses behind it), run through the verifier package
+# by verifier/polaris_vectors_test.go. The file is vectors.json from
+# polaris-id, checked out at a pinned commit; the test also checks the
+# file's SHA-256, so both pins move together (see the test's comment).
+# Nothing from polaris-id runs: only its data file is read, on a
+# disposable runner with a read-only token and no secrets.
+name: Polaris vectors
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    # The Kotlin and Swift libraries aren't the verifier this runs.
+    paths-ignore:
+      - 'mobile/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: polaris-vectors-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  vectors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: EgorKhaklin/polaris-id
+          # vectors.json version 0.3.0. Move it only after reading the
+          # change to the vectors, and set polarisVectorsCommit and
+          # polarisVectorsSHA256 in verifier/polaris_vectors_test.go to
+          # match.
+          ref: 675c59ac4c6a2679d8c624eb782583159bc6d2ee
+          path: polaris-id
+          sparse-checkout: lab/interop/negative-vectors/vectors.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: go.mod
+
+      # -v shows each vector's verdict. A skipped run (the file not found
+      # by the test) must not pass for a run, so the step also requires
+      # the test's own PASS line.
+      - name: Run the vectors
+        env:
+          POLARIS_VECTORS: ${{ github.workspace }}/polaris-id/lab/interop/negative-vectors/vectors.json
+        run: |
+          set -o pipefail
+          go test -race -count=1 -v -run '^TestPolarisNegativeVectors$' ./verifier/ 2>&1 | tee "$RUNNER_TEMP/polaris-vectors.log"
+          grep -q -e '^--- PASS: TestPolarisNegativeVectors ' "$RUNNER_TEMP/polaris-vectors.log"
+
+      - name: Upload the log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: polaris-vectors
+          path: ${{ runner.temp }}/polaris-vectors.log
+          retention-days: 14
