@@ -401,10 +401,7 @@ func (r moduleRunner) authorizeAndGetProtectedResource(ctx context.Context, modu
 		return nil, fmt.Errorf("build client: %w", err)
 	}
 
-	beginReq := client.BeginAuthorizationRequest{Scope: []string{run.scope}}
-	if err := extension.Set(&beginReq.Extensions, oid4vci.ResourceExtension, module.URL+"/"); err != nil {
-		return nil, fmt.Errorf("set resource extension: %w", err)
-	}
+	beginReq := client.BeginAuthorizationRequest{Scope: []string{run.scope}, Resource: []string{module.URL + "/"}}
 	if offer != nil && offer.Grants != nil && offer.Grants.AuthorizationCode != nil {
 		if issuerState := offer.Grants.AuthorizationCode.IssuerState; issuerState != "" {
 			if err := extension.Set(&beginReq.Extensions, oid4vci.IssuerStateExtension, issuerState); err != nil {
