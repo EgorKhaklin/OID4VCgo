@@ -191,9 +191,9 @@ type VerifiedCredential struct {
 	// header. For an mdoc it's the path MdocIssuerKeys (an
 	// MdocIssuerChainResolver) verified, without the trust anchor: the
 	// IssuerAuth x5chain is unprotected, so the holder could edit it; a
-	// resolver that verifies no chain gives none. The issuer is that leaf's subject: an SD-JWT VC's
-	// "iss" claim, when the issuer key comes from x5c, is whatever the
-	// issuer wrote, not checked against it (SD-JWT VC §3.5).
+	// resolver that verifies no chain gives none. The issuer is that
+	// leaf's subject: X5CIssuerKeyResolver refuses an SD-JWT VC whose
+	// "iss" doesn't name it (certchain's CheckIssuerName rule).
 	IssuerChain [][]byte
 }
 

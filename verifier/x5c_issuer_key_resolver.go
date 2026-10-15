@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
+	"errors"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
@@ -22,6 +23,12 @@ import (
 // both on the verifying side, not just the issuing side
 // credential/sdjwtvc.IssueOptions.IssuerCertificate satisfies on the
 // issuing side.
+//
+// The issuer is the leaf's subject (SD-JWT VC, the x5c header): an
+// iss must name it, as a "dns:" URI whose DNS name is one of its
+// dNSName subject alternative names, or otherwise exactly one of its
+// uniformResourceIdentifier names. Without an iss, the leaf is the
+// issuer.
 //
 // A self-signed leaf is always rejected, even if that exact
 // certificate also happens to be present in Roots — see
@@ -42,7 +49,7 @@ type X5CIssuerKeyResolver struct {
 }
 
 // ResolveIssuerKey implements SDJWTVCIssuerKeyResolver.
-func (r X5CIssuerKeyResolver) ResolveIssuerKey(_ context.Context, header, _ map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
+func (r X5CIssuerKeyResolver) ResolveIssuerKey(_ context.Context, header, payload map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
 	ders, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
 		return nil, "", err
@@ -50,6 +57,18 @@ func (r X5CIssuerKeyResolver) ResolveIssuerKey(_ context.Context, header, _ map[
 	leaf, err := certchain.VerifyLeafWithPolicy(ders, r.Roots, r.LeafPolicy)
 	if err != nil {
 		return nil, "", err
+	}
+	// The issuer is the leaf's subject (SD-JWT VC, the x5c header): an
+	// iss must name it, or any issuer under Roots could sign in another
+	// issuer's name.
+	if issRaw, present := payload["iss"]; present {
+		iss, ok := issRaw.(string)
+		if !ok {
+			return nil, "", errors.New("iss is not a string")
+		}
+		if err := certchain.CheckIssuerName(leaf, iss); err != nil {
+			return nil, "", err
+		}
 	}
 	alg, err := sdjwtvcAlgForKey(leaf.PublicKey)
 	if err != nil {

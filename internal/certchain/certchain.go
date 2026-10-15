@@ -16,6 +16,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -186,4 +189,25 @@ func CheckPresentedChain(leaf *x509.Certificate, intermediates []*x509.Certifica
 		child = parent
 	}
 	return nil
+}
+
+// CheckIssuerName checks that iss, an SD-JWT VC's issuer claim, names
+// the end-entity certificate leaf its key came from (SD-JWT VC, the
+// x5c header): a "dns:" URI's DNS name must be one of leaf's dNSName
+// subject alternative names, and any other iss one of its
+// uniformResourceIdentifier names, compared exactly. A certificate a
+// trusted root issued to another issuer can then sign nothing in this
+// issuer's name, nor can one that shares only its host.
+func CheckIssuerName(leaf *x509.Certificate, iss string) error {
+	if strings.HasPrefix(iss, "dns:") {
+		name := strings.TrimPrefix(strings.TrimPrefix(iss, "dns:"), "//")
+		if name != "" && slices.ContainsFunc(leaf.DNSNames, func(d string) bool { return strings.EqualFold(d, name) }) {
+			return nil
+		}
+		return fmt.Errorf("certchain: iss %q isn't a DNS name of the signing certificate", iss)
+	}
+	if iss != "" && slices.ContainsFunc(leaf.URIs, func(u *url.URL) bool { return u.String() == iss }) {
+		return nil
+	}
+	return fmt.Errorf("certchain: iss %q isn't a URI of the signing certificate", iss)
 }
