@@ -82,7 +82,7 @@ func parseCredentialResult(statusCode int, body []byte) (CredentialResult, error
 			Interval:       time.Duration(wire.Interval) * time.Second,
 		}, nil
 	default:
-		return CredentialResult{}, parseError(statusCode, body)
+		return CredentialResult{}, parseError(EndpointCredential, statusCode, body)
 	}
 }
 

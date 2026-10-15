@@ -179,7 +179,7 @@ func (w *Wallet) postToken(
 				continue
 			}
 		}
-		return nil, parseError(res.status, res.body)
+		return nil, parseError(EndpointToken, res.status, res.body)
 	}
 }
 
@@ -293,7 +293,7 @@ func dpopNonceChallenge(statusCode int, header http.Header, body []byte) string 
 	if statusCode != http.StatusBadRequest {
 		return ""
 	}
-	if parseError(statusCode, body).Code != "use_dpop_nonce" {
+	if parseError(EndpointToken, statusCode, body).Code != "use_dpop_nonce" {
 		return ""
 	}
 	return header.Get("DPoP-Nonce")

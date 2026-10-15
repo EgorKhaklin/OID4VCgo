@@ -18,13 +18,44 @@ import "fmt"
 // doc comment) — this exists purely for the caller's own
 // dispatch/logging, not to build a wire body.
 type Error struct {
+	reason      Reason
 	description string
 	cause       error
 }
 
-func newError(description string, cause error) *Error {
-	return &Error{description: description, cause: cause}
+// Reason is why a response or presentation failed verification, for a
+// caller to branch on without matching error text.
+type Reason string
+
+const (
+	// ReasonMalformed: a presentation that doesn't decode or parse, or a
+	// VP Token with no presentation, or more than a query takes.
+	ReasonMalformed Reason = "malformed"
+	// ReasonStateMismatch: a response, or error response, whose state
+	// isn't the request's: not an answer to it.
+	ReasonStateMismatch Reason = "state_mismatch"
+	// ReasonNotAnswered: what was presented doesn't answer the query, or
+	// a credential's claims don't satisfy its Credential Query.
+	ReasonNotAnswered Reason = "not_answered"
+	// ReasonUntrustedIssuer: the issuer's key couldn't be resolved to a
+	// trusted one, its certificate chain or document signer checks
+	// failed, or it isn't one of the query's trusted_authorities.
+	ReasonUntrustedIssuer Reason = "untrusted_issuer"
+	// ReasonInvalidCredential: the credential's own signature or
+	// validity (expiry, digests, status claim shape) failed.
+	ReasonInvalidCredential Reason = "invalid_credential" //nolint:gosec // a failure reason, not a credential
+	// ReasonHolderBinding: the holder binding failed: the Key Binding
+	// JWT or mdoc device authentication, its key, audience, nonce or
+	// age.
+	ReasonHolderBinding Reason = "holder_binding"
+)
+
+func newError(reason Reason, description string, cause error) *Error {
+	return &Error{reason: reason, description: description, cause: cause}
 }
+
+// Reason is why verification failed.
+func (e *Error) Reason() Reason { return e.reason }
 
 // Error implements the error interface.
 func (e *Error) Error() string {

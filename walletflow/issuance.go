@@ -430,8 +430,8 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 // where the Authorization Server takes one (HAIP 1.0 §4.4.1), and
 // otherwise with none, where the server allows that (OpenID4VCI 1.0
 // §12.3). The access token is bound to this issuance's DPoP key, unless
-// the server issues a Bearer one. A wrong PIN fails with the issuer's
-// error and can be retried, up to the issuer's limit.
+// the server issues a Bearer one. A refused PIN fails with
+// ErrTxCodeRefused and can be retried, up to the issuer's limit.
 func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -466,6 +466,10 @@ func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) e
 	}
 	req.DPoPKey = s.dpopKey
 	token, err := s.w.core.RequestPreAuthorizedCodeToken(ctx, tokenEndpoint, req)
+	var refused *wallet.Error
+	if errors.As(err, &refused) && txCode != "" && refused.Endpoint == wallet.EndpointToken && refused.Code == "invalid_grant" {
+		return fmt.Errorf("walletflow: token: %w: %w", ErrTxCodeRefused, err)
+	}
 	if err != nil {
 		return fmt.Errorf("walletflow: token: %w", err)
 	}

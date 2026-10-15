@@ -45,6 +45,14 @@ var (
 	// Nothing is sent. Check Linkable again — it now says true — and let
 	// the holder decide, or refresh the credential first.
 	ErrLinkable = errors.New("walletflow: a copy another verifier has seen would now be presented")
+	// ErrTxCodeRefused is wrapped by Issuance.RedeemPreAuthorizedCode
+	// when the token endpoint refuses a PIN-protected code with
+	// invalid_grant. OpenID4VCI §6.3 answers a wrong PIN and an expired
+	// or already used code alike, so it means either: ask the holder for
+	// the PIN again, which the same Issuance accepts until the issuer's
+	// attempt limit ends the code, and offer to start over from a new
+	// offer if it keeps failing.
+	ErrTxCodeRefused = errors.New("walletflow: the issuer refused the PIN, or the code has expired or been used")
 	// ErrCredentialChanged is wrapped by Presentation.Respond (and the
 	// mdoc presentations' Respond) when a selected credential was
 	// replaced — refreshed, say — after the presentation started, so

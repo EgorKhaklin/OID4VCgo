@@ -3,6 +3,7 @@ package sdjwtvc
 import (
 	"crypto"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -241,7 +242,12 @@ func verifyKeyBindingIfRequired(pres Presentation, opts VerifyOptions, hashAlg H
 		MaxAge:           opts.MaxKeyBindingAge,
 		Now:              opts.Now,
 	}); err != nil {
-		return fmt.Errorf("sdjwtvc: %w", err)
+		return fmt.Errorf("sdjwtvc: %w: %w", ErrKeyBinding, err)
 	}
 	return nil
 }
+
+// ErrKeyBinding is wrapped by Verify when the Key Binding JWT fails its
+// checks (RFC 9901 §7.3): the presentation's holder binding, not the
+// credential itself.
+var ErrKeyBinding = errors.New("key binding JWT")
