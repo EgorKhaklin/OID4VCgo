@@ -81,6 +81,12 @@ func checkX5C(token string, roots *x509.CertPool, ref StatusListRef, opts Verify
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
+	if opts.Issuer != "" {
+		// The status of this issuer's tokens is its own to sign.
+		if err := certchain.CheckIssuerName(leaf, opts.Issuer); err != nil {
+			return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer isn't the referenced token's issuer: %w", err)
+		}
+	}
 	var alg jose.Alg
 	switch leaf.PublicKey.(type) {
 	case *ecdsa.PublicKey:

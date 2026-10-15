@@ -139,6 +139,11 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 		Roots:   w.cfg.IssuerRoots,
 		Options: statuslist.VerifyOptions{Now: w.deps.Clock},
 	}
+	if iss, ok := c.Claims["iss"].(string); ok && !c.StatusListCWT {
+		// Its status is its issuer's to sign, not another issuer's
+		// under IssuerRoots.
+		checker.Options.Issuer = iss
+	}
 	status, _, err := checker.Check(ctx, *c.StatusList, c.StatusListCWT)
 	if err != nil {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
