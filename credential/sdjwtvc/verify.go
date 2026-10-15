@@ -133,6 +133,11 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opt
 		hashAlg = HashAlg(declared)
 	}
 
+	if raw, present := decoded["aka_vcts"]; present {
+		if err := checkAkaVCTsClaim(decoded["vct"], raw); err != nil {
+			return nil, nil, err
+		}
+	}
 	if err := checkNoRegisteredClaimDisclosed(decoded, hashAlg, pres.Disclosures); err != nil {
 		return nil, nil, err
 	}
@@ -157,6 +162,7 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opt
 // unchanged in draft-13): each must be in the Issuer-signed JWT itself.
 var nonDisclosableClaims = map[string]bool{
 	"iss": true, "nbf": true, "exp": true, "cnf": true, "vct": true, "vct#integrity": true, "status": true,
+	"aka_vcts": true, // draft-19 §2.2.2.3
 }
 
 // checkNoRegisteredClaimDisclosed refuses an SD-JWT VC whose top-level

@@ -48,8 +48,13 @@ const KeyBindingTyp = "kb+jwt"
 // needs to be a NumericDate must already be an int64 when passed in.
 type Claims struct {
 	VCT string // REQUIRED
-	Iss string
-	Nbf *int64
+	// AkaVCTs are additional types the credential is also of (SD-JWT VC
+	// draft-19 §2.2.2.2): typically the general type VCT is derived
+	// from, so a request for that type matches it. Each must be a
+	// collision-resistant name, none VCT itself. Always plaintext.
+	AkaVCTs []string
+	Iss     string
+	Nbf     *int64
 
 	// Exp is RFC 9901 §11.2.3's own RECOMMENDED (not required)
 	// validity bound. If set, use RoundedExp rather than a raw
@@ -137,7 +142,7 @@ type IssueOptions struct {
 }
 
 var reservedTopLevelClaims = map[string]bool{
-	"vct": true, "iss": true, "nbf": true, "exp": true,
+	"vct": true, "aka_vcts": true, "iss": true, "nbf": true, "exp": true,
 	"vct#integrity": true, "status": true, "cnf": true,
 	"_sd": true, "_sd_alg": true, "...": true,
 }
@@ -148,6 +153,9 @@ var reservedTopLevelClaims = map[string]bool{
 // linter's own cognitive complexity ceiling.
 func applyPlaintextClaims(sealed map[string]any, claims Claims) {
 	sealed["vct"] = claims.VCT
+	if len(claims.AkaVCTs) > 0 {
+		sealed["aka_vcts"] = append([]string(nil), claims.AkaVCTs...)
+	}
 	if claims.Iss != "" {
 		sealed["iss"] = claims.Iss
 	}
@@ -251,6 +259,11 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueO
 // checkIssueInputs checks Issue's claims and options: a vct, a decoy
 // count in range, and an IssuerCertificate, if given, for signer's key.
 func checkIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) error {
+	if claims.AkaVCTs != nil {
+		if err := checkAkaVCTs(claims.VCT, claims.AkaVCTs); err != nil {
+			return err
+		}
+	}
 	if claims.VCT == "" {
 		return fmt.Errorf("sdjwtvc: Claims.VCT is required")
 	}

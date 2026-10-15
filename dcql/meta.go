@@ -3,6 +3,7 @@ package dcql
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 )
 
 // The Credential Format Identifiers whose meta this package knows.
@@ -125,18 +126,9 @@ func (c CredentialQuery) SelectedSDJWTVCClaimPaths(claims map[string]any) ([]Pat
 	if err != nil {
 		return nil, fmt.Errorf("meta: %w", err)
 	}
-	if len(meta.VCTValues) > 0 {
+	if len(meta.VCTValues) > 0 && !slices.ContainsFunc(credentialTypes(claims), func(t string) bool { return slices.Contains(meta.VCTValues, t) }) {
 		vct, _ := claims["vct"].(string)
-		found := false
-		for _, want := range meta.VCTValues {
-			if vct == want {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf("credential's own vct %q is not among the requested vct_values %v", vct, meta.VCTValues)
-		}
+		return nil, fmt.Errorf("credential's own vct %q, and its aka_vcts, are not among the requested vct_values %v", vct, meta.VCTValues)
 	}
 	return c.selectedClaimPaths(func(p Path) ([]any, error) {
 		return p.Select(claims)
@@ -271,4 +263,26 @@ func presentAt(cl ClaimsQuery, present func(Path) ([]any, error)) error {
 		return fmt.Errorf("claim at path %v has none of the requested values", cl.Path)
 	}
 	return nil
+}
+
+// credentialTypes are the types an SD-JWT VC is of: its vct, and each of
+// its aka_vcts (SD-JWT VC draft-19 §2.2.2.2: "Holders and Verifiers can
+// treat the SD-JWT VC as a credential of any of these types"), which is
+// how a credential of a derived type answers a request for the general
+// type it lists (OpenID4VP 1.0 §B.3.5). Matching a type isn't trusting
+// the issuer for it: an Issuer's aka_vcts is no evidence it's authorized
+// to issue that type (draft-19 §7.7).
+func credentialTypes(claims map[string]any) []string {
+	var types []string
+	if vct, ok := claims["vct"].(string); ok && vct != "" {
+		types = append(types, vct)
+	}
+	if aka, ok := claims["aka_vcts"].([]any); ok {
+		for _, t := range aka {
+			if s, ok := t.(string); ok && s != "" {
+				types = append(types, s)
+			}
+		}
+	}
+	return types
 }
