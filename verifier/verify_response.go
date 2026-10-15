@@ -291,6 +291,10 @@ type DiscardedPresentation struct {
 // id, and every one of them is verified and returned; when false (the
 // default), more than one is a hard error.
 func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest) (VerifyResponseResult, error) {
+	if req.Now != nil {
+		// Certificates are valid, or not, at the verification's instant.
+		ctx = WithVerificationTime(ctx, req.Now())
+	}
 	if err := req.Query.Validate(); err != nil {
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: query: %w", err)
 	}

@@ -146,6 +146,10 @@ func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: decode IssuerAuth: %w", err)
 	}
+	if p.Now != nil {
+		// Certificates are valid, or not, at the verification's instant.
+		ctx = verifier.WithVerificationTime(ctx, p.Now())
+	}
 	issuerPub, issuerAlg, err := p.IssuerKeys.ResolveMdocIssuerKey(ctx, unprotected.X5Chain, doc.DocType)
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: resolve the issuer key: %w", err)
