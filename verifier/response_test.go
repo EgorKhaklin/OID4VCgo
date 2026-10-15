@@ -142,3 +142,59 @@ func TestParseDirectPostJWTResponseRejectsCompressedResponse(t *testing.T) {
 		t.Fatalf("ParseDirectPostJWTResponse(zip:DEF) error = %v, want a refused compressed response", err)
 	}
 }
+
+// A response that won't parse is the Wallet's: a *verifier.Error,
+// ReasonMalformed. A missing decryption key is the caller's: a plain
+// error.
+func TestParseDirectPostJWTResponseMalformed(t *testing.T) {
+	cfg, deps := validConfig(t)
+	v, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: testQuery(t)})
+	if err != nil {
+		t.Fatalf("BuildAuthorizationRequest: %v", err)
+	}
+	encrypt := func(body []byte) string {
+		t.Helper()
+		s, err := jwe.Encrypt(&built.ResponseDecryptionKey.PublicKey, jwe.A128GCM, body, jwe.EncryptOptions{KeyID: "k"})
+		if err != nil {
+			t.Fatalf("jwe.Encrypt: %v", err)
+		}
+		return s
+	}
+	good := encrypt([]byte(`{"vp_token":{"q":["x"]}}`))
+
+	if _, err := v.ParseDirectPostJWTResponse(good, nil); err == nil || errors.As(err, new(*verifier.Error)) {
+		t.Errorf("no decryption key: %v, want a plain error", err)
+	}
+	for name, response := range map[string]string{
+		"not JSON":        encrypt([]byte("not json")),
+		"no vp_token":     encrypt([]byte(`{"state":"s"}`)),
+		"empty vp_token":  encrypt([]byte(`{"vp_token":{}}`)),
+		"not a JWE":       "a.b.c",
+		"wrong recipient": good[:len(good)-4] + "AAAA",
+	} {
+		_, err := v.ParseDirectPostJWTResponse(response, built.ResponseDecryptionKey)
+		var verr *verifier.Error
+		if !errors.As(err, &verr) || verr.Reason() != verifier.ReasonMalformed {
+			t.Errorf("%s: %v, want ReasonMalformed", name, err)
+		}
+	}
+
+	if _, err := verifier.ResponseKeyID(encrypt([]byte(`{}`))); err != nil {
+		t.Errorf("ResponseKeyID with a kid: %v", err)
+	}
+	noKID, err := jwe.Encrypt(&built.ResponseDecryptionKey.PublicKey, jwe.A128GCM, []byte(`{}`), jwe.EncryptOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, response := range map[string]string{"no kid": noKID, "not a JWE": "a.b.c"} {
+		_, err := verifier.ResponseKeyID(response)
+		var verr *verifier.Error
+		if !errors.As(err, &verr) || verr.Reason() != verifier.ReasonMalformed {
+			t.Errorf("ResponseKeyID, %s: %v, want ReasonMalformed", name, err)
+		}
+	}
+}
