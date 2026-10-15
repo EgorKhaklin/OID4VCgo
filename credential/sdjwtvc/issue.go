@@ -14,14 +14,10 @@ import (
 )
 
 // TypHeader is the JOSE "typ" header value for the Issuer-signed JWT
-// component of an SD-JWT VC (draft-13 §3.2.1). A Verifier/Holder
-// SHOULD also accept LegacyTypHeader during a transitional period.
+// component of an SD-JWT VC, and the only one Verify accepts (draft-19
+// §2.2.1: "The typ value MUST use dc+sd-jwt"). Draft-13 §3.2.1's
+// transitional vc+sd-jwt was removed in draft-19.
 const TypHeader = "dc+sd-jwt"
-
-// LegacyTypHeader is the "typ" value this draft used from its inception
-// in July 2023 until November 2024 (draft-13 §3.2.1) — accepted here
-// for interop with issuers/wallets that haven't migrated yet.
-const LegacyTypHeader = "vc+sd-jwt"
 
 // MediaType is the SD-JWT VC media type (draft-13 §3.1).
 const MediaType = "application/dc+sd-jwt"
