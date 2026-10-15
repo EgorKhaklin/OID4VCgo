@@ -1,8 +1,13 @@
 package statuslist
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
 	"errors"
+	"math/big"
+	"net/url"
 	"testing"
 	"time"
 
@@ -115,5 +120,70 @@ func TestX5C_Rejects(t *testing.T) {
 	}
 	if _, _, err := CheckCWTX5Chain([]byte("not cbor"), roots, ref, VerifyOptions{}); err == nil {
 		t.Error("CheckCWTX5Chain accepted a malformed token")
+	}
+}
+
+// issuerSigner is a certificate under ca naming issuer, and its key.
+func issuerSigner(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, issuer string) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), NotBefore: time.Now().Add(-time.Hour),
+		NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, URIs: []*url.URL{u}}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert, key
+}
+
+// With VerifyOptions.Issuer set, a Status List Token signed by another
+// issuer's certificate under the same roots is refused, as is one whose
+// own iss is another issuer's: an issuer's status is its own to sign.
+func TestX5C_SignerIsTheIssuer(t *testing.T) {
+	ca, caKey := testcert.CA(t, "shared root")
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	const issuerA, issuerB = "https://issuer-a.example", "https://issuer-b.example"
+	sl, err := New(Bits1, []uint8{0}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := StatusListRef{Idx: 0, URI: x5cTestURI}
+	token := func(issuer string, iss string) string {
+		t.Helper()
+		cert, key := issuerSigner(t, ca, caKey, issuer)
+		claims := TokenClaims{Sub: x5cTestURI, Iat: time.Now().Unix(), StatusList: sl}
+		if iss != "" {
+			claims.Additional = map[string]any{"iss": iss}
+		}
+		jwt, err := IssueTokenX5C(key, jose.ES256, claims, []*x509.Certificate{cert})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return jwt
+	}
+	opts := VerifyOptions{Issuer: issuerA}
+	if _, _, err := CheckX5C(token(issuerA, issuerA), roots, ref, opts); err != nil {
+		t.Errorf("issuer A's own list: %v", err)
+	}
+	if _, _, err := CheckX5C(token(issuerB, ""), roots, ref, opts); err == nil {
+		t.Error("accepted issuer A's status signed by issuer B's certificate")
+	}
+	if _, _, err := CheckX5C(token(issuerA, issuerB), roots, ref, opts); err == nil {
+		t.Error("accepted a list whose iss is another issuer's")
+	}
+	if _, _, err := CheckX5C(token(issuerB, ""), roots, ref, VerifyOptions{}); err != nil {
+		t.Errorf("without Issuer, the signer isn't bound: %v", err)
 	}
 }

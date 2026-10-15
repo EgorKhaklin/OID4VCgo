@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -56,12 +57,25 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 // when a reference is malformed or uses a mechanism this package can't
 // check. A credential with no status reference passes: it has no
 // status to check.
+//
+// An SD-JWT VC's Status List Token must be signed by its issuer: a
+// certificate naming the credential's iss, or without one the URI its
+// own certificate names (statuslist.VerifyOptions.Issuer), so another
+// issuer's certificate under the same roots can't decide its status. A
+// deployment whose status lists come from a separate Status Issuer
+// writes its own Accept, calling checker.RequireValid with a
+// LeafPolicy that recognizes that issuer's certificates.
 func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id string, result VerifyResponseResult) error {
 	return func(ctx context.Context, _ string, result VerifyResponseResult) error {
 		for _, vc := range result.Credentials {
 			ref, cwt, ok, err := vc.StatusListRef()
 			if err == nil && ok {
-				err = checker.RequireValid(ctx, ref, cwt)
+				c := checker
+				if !cwt {
+					// Its status list is its issuer's to sign.
+					c.Options.Issuer = vc.issuerName()
+				}
+				err = c.RequireValid(ctx, ref, cwt)
 			}
 			if err != nil {
 				return fmt.Errorf("verifier: credential status: %w", err)
@@ -69,4 +83,21 @@ func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id
 		}
 		return nil
 	}
+}
+
+// issuerName is an SD-JWT VC's issuer, for its status list: its iss,
+// or without one the URI its x5c leaf names, which is then the issuer.
+// "" when it has neither, and its status list isn't bound to it.
+func (vc VerifiedCredential) issuerName() string {
+	if iss, ok := vc.Claims["iss"].(string); ok && iss != "" {
+		return iss
+	}
+	if len(vc.IssuerChain) == 0 {
+		return ""
+	}
+	leaf, err := x509.ParseCertificate(vc.IssuerChain[0])
+	if err != nil || len(leaf.URIs) == 0 {
+		return ""
+	}
+	return leaf.URIs[0].String()
 }

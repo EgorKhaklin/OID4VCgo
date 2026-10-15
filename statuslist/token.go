@@ -96,6 +96,17 @@ type VerifyOptions struct {
 	// tie, or the signer's role (an extended key usage, a certificate
 	// policy), where the roots are shared.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+
+	// Issuer, if set, is the Referenced Token's issuer: its iss, or
+	// the URI its signing certificate names. CheckX5C then refuses a
+	// Status List Token whose signer certificate doesn't name it (the
+	// rule certchain.CheckIssuerName applies), so another issuer's
+	// certificate under the same Roots can't sign this issuer's
+	// status, and one whose own iss claim is another issuer's. For the
+	// CWT form (an mdoc's), leave it empty: an mdoc issuer has no such
+	// name, and its status lists are bound by Roots, which the MSO's
+	// status reference can name.
+	Issuer string
 }
 
 // maxTokenBytes is this package's own ceiling on the compact JWS
@@ -123,6 +134,7 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 	}
 
 	var decoded struct {
+		Iss        string     `json:"iss"`
 		Sub        string     `json:"sub"`
 		Iat        int64      `json:"iat"`
 		Exp        *int64     `json:"exp"`
@@ -134,6 +146,9 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 	}
 	if decoded.Sub == "" {
 		return TokenClaims{}, fmt.Errorf("statuslist: token is missing the required sub claim")
+	}
+	if decoded.Iss != "" && opts.Issuer != "" && decoded.Iss != opts.Issuer {
+		return TokenClaims{}, fmt.Errorf("statuslist: token iss %q isn't the referenced token's issuer %q", decoded.Iss, opts.Issuer)
 	}
 	if !decoded.StatusList.Bits.valid() {
 		return TokenClaims{}, fmt.Errorf("statuslist: token's status_list.bits is invalid")
