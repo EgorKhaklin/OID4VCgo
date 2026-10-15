@@ -3,6 +3,7 @@ package verifier
 import (
 	"crypto/ecdsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
@@ -80,16 +81,20 @@ func (v *Verifier) ParseDirectPostJWTResponse(responseJWE string, decryptionKey 
 	// never offers compression, and anyone who sees the Request Object
 	// can encrypt to its response key, so inflating one would let an
 	// unauthenticated sender make it allocate far more than it sent.
+	if decryptionKey == nil {
+		return ParsedResponse{}, errors.New("verifier: parse direct_post.jwt response: a decryption key is required")
+	}
+	// From here on, a failure is the response's: a *Error, ReasonMalformed.
 	header, err := jwe.DecodeHeader(responseJWE)
 	if err != nil {
-		return ParsedResponse{}, fmt.Errorf("verifier: parse direct_post.jwt response: decode header: %w", err)
+		return ParsedResponse{}, newError(ReasonMalformed, "parse direct_post.jwt response: decode header", err)
 	}
 	if _, compressed := header["zip"]; compressed {
-		return ParsedResponse{}, fmt.Errorf("verifier: parse direct_post.jwt response: a compressed (zip) response is not accepted")
+		return ParsedResponse{}, newError(ReasonMalformed, "parse direct_post.jwt response: a compressed (zip) response is not accepted", nil)
 	}
 	plaintext, err := jwe.Decrypt(decryptionKey, responseJWE)
 	if err != nil {
-		return ParsedResponse{}, fmt.Errorf("verifier: parse direct_post.jwt response: decrypt: %w", err)
+		return ParsedResponse{}, newError(ReasonMalformed, "parse direct_post.jwt response: decrypt", err)
 	}
 
 	var wire struct {
@@ -99,13 +104,13 @@ func (v *Verifier) ParseDirectPostJWTResponse(responseJWE string, decryptionKey 
 		ErrorDescription string              `json:"error_description"`
 	}
 	if err := json.Unmarshal(plaintext, &wire); err != nil {
-		return ParsedResponse{}, fmt.Errorf("verifier: parse direct_post.jwt response: unmarshal: %w", err)
+		return ParsedResponse{}, newError(ReasonMalformed, "parse direct_post.jwt response: unmarshal", err)
 	}
 	if wire.Error != "" {
 		return ParsedResponse{}, &ResponseError{Code: wire.Error, Description: wire.ErrorDescription, State: wire.State}
 	}
 	if len(wire.VPToken) == 0 {
-		return ParsedResponse{}, fmt.Errorf("verifier: parse direct_post.jwt response: vp_token is missing or empty")
+		return ParsedResponse{}, newError(ReasonMalformed, "parse direct_post.jwt response: vp_token is missing or empty", nil)
 	}
 	return ParsedResponse{VPToken: wire.VPToken, State: wire.State}, nil
 }
