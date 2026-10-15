@@ -40,6 +40,11 @@ type VerifyParams struct {
 	// MaxClockSkew is how far Now may be from the issuer's clock (see
 	// mdoc.VerifyOptions.MaxClockSkew).
 	MaxClockSkew time.Duration
+	// IssuerAuthorized, if set, decides whether the verified document's
+	// issuer may issue its doctype, as
+	// verifier.VerifyResponseRequest.IssuerAuthorized does; an error
+	// refuses the response.
+	IssuerAuthorized func(ctx context.Context, a verifier.IssuerAuthorization) error
 }
 
 // Verified is a verified document.
@@ -180,6 +185,13 @@ func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document
 	}
 	if err := checkRequested(mso.NameSpaces, p.Pending.Elements); err != nil {
 		return Verified{}, err
+	}
+	if p.IssuerAuthorized != nil {
+		if err := p.IssuerAuthorized(ctx, verifier.IssuerAuthorization{
+			Format: mdoc.CredentialFormat, Type: mso.DocType, RequestedTypes: []string{p.Pending.DocType}, IssuerChain: issuerChain,
+		}); err != nil {
+			return Verified{}, fmt.Errorf("mdocdcapi: issuer authorization: %w", err)
+		}
 	}
 	return Verified{
 		DocType: mso.DocType, NameSpaces: mso.NameSpaces, Missing: missing(mso.NameSpaces, p.Pending.Elements), ValidityInfo: mso.ValidityInfo,
