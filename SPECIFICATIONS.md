@@ -97,6 +97,18 @@ instead of `lang`, `mandatory` claims, `vct` required) and a Status List
 Token CWT that may be untagged; the credential formats and verification
 rules are otherwise unchanged.
 
+One later SD-JWT VC addition is implemented ahead of HAIP: draft-19
+§2.2.2.2's `aka_vcts`, the other types a credential is of. It's
+optional, and draft-13 permits a claim it doesn't define. An Issuer can
+set it (`sdjwtvc.Claims.AkaVCTs`). It's always plaintext, and `Verify`
+refuses one that's disclosable, empty, or contains the credential's own
+`vct`. DCQL `vct_values` matching, in both the wallet and the verifier,
+accepts a credential whose `vct` or any `aka_vcts` value is requested;
+that is the derived-type answer OpenID4VP 1.0 §B.3.5 allows. A type
+matched this way is still no evidence that the Issuer may issue it
+(draft-19 §7.7): trusting the Issuer for the type stays the verifier's
+own check.
+
 ## Query language (OID4VP)
 
 OID4VP 1.0 Final uses **DCQL** (Digital Credentials Query Language, §6) as

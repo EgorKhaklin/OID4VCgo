@@ -185,3 +185,27 @@ func TestSatisfiedByMdocClaimsRejectsNonMdocPath(t *testing.T) {
 		t.Errorf("SatisfiedByMdocClaims = nil, want error")
 	}
 }
+
+// A credential matches vct_values by its vct or any of its aka_vcts
+// (SD-JWT VC draft-19 §2.2.2.2; OpenID4VP 1.0 §B.3.5): a derived type
+// answers a request for the general type it lists.
+func TestSatisfiedBySDJWTVCClaims_AkaVCTs(t *testing.T) {
+	cq := dcql.CredentialQuery{
+		ID: "pid", Format: "dc+sd-jwt",
+		Meta:   mustSDJWTVCMeta(t, "urn:example:eudi:pid"),
+		Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("given_name")}}},
+	}
+	for name, tc := range map[string]struct {
+		claims map[string]any
+		match  bool
+	}{
+		"general type in aka_vcts": {map[string]any{"vct": "urn:example:eudi:pid:aendgard:1", "aka_vcts": []any{"urn:example:other", "urn:example:eudi:pid"}, "given_name": "Alice"}, true},
+		"neither vct nor aka_vcts": {map[string]any{"vct": "urn:example:eudi:pid:aendgard:1", "aka_vcts": []any{"urn:example:other"}, "given_name": "Alice"}, false},
+		"aka_vcts not an array":    {map[string]any{"vct": "urn:example:eudi:pid:aendgard:1", "aka_vcts": "urn:example:eudi:pid", "given_name": "Alice"}, false},
+		"aka_vcts but no claim":    {map[string]any{"vct": "urn:example:eudi:pid:aendgard:1", "aka_vcts": []any{"urn:example:eudi:pid"}}, false},
+	} {
+		if err := cq.SatisfiedBySDJWTVCClaims(tc.claims); (err == nil) != tc.match {
+			t.Errorf("%s: SatisfiedBySDJWTVCClaims = %v, want match %v", name, err, tc.match)
+		}
+	}
+}
