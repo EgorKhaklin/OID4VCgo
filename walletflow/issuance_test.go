@@ -223,8 +223,10 @@ func TestIssuance_PreAuthorizedCodeWithPIN(t *testing.T) {
 	if _, err := s.BeginAuthorization(ctx); !errors.Is(err, walletflow.ErrWrongStep) {
 		t.Fatalf("BeginAuthorization on a pre-authorized offer = %v, want ErrWrongStep", err)
 	}
-	if err := s.RedeemPreAuthorizedCode(ctx, "000000"); err == nil {
-		t.Fatal("a wrong PIN was accepted")
+	err = s.RedeemPreAuthorizedCode(ctx, "000000")
+	var refused *wallet.Error
+	if !errors.Is(err, walletflow.ErrTxCodeRefused) || !errors.As(err, &refused) || refused.Endpoint != wallet.EndpointToken || refused.Code != "invalid_grant" {
+		t.Fatalf("a wrong PIN: %v, want ErrTxCodeRefused wrapping the token endpoint's invalid_grant", err)
 	}
 	if err := s.RedeemPreAuthorizedCode(ctx, "493536"); err != nil {
 		t.Fatalf("the right PIN after a wrong one: %v", err)
