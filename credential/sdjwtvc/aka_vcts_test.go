@@ -1,8 +1,6 @@
 package sdjwtvc
 
 import (
-	"crypto/ecdsa"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -49,22 +47,6 @@ func TestAkaVCTs_IssueRefusesInvalid(t *testing.T) {
 			t.Errorf("%s: Issue accepted it", name)
 		}
 	}
-}
-
-// signRawSDJWT signs payload as an Issuer-signed JWT with no
-// disclosures, for payloads Issue won't produce.
-func signRawSDJWT(t *testing.T, payload map[string]any) (string, *ecdsa.PublicKey) {
-	t.Helper()
-	key := testKey(t)
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	jwt, err := jose.Sign(jose.ES256, key, issuerJWTHeader(IssueOptions{}), raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return jwt + "~", &key.PublicKey
 }
 
 // Verify refuses an Issuer-signed aka_vcts draft-19 §2.2.2.2 forbids.
