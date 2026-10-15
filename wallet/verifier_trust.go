@@ -58,6 +58,9 @@ func (v X5CVerifierRoots) VerifyVerifierChain(chain [][]byte) (*x509.Certificate
 	if v.Roots == nil {
 		return nil, fmt.Errorf("wallet: X5CVerifierRoots.Roots is required")
 	}
+	if err := certchain.CheckNoAnchor(chain); err != nil {
+		return nil, fmt.Errorf("wallet: verifier certificate chain: %w", err)
+	}
 	leaf, err := certchain.VerifyLeafWithPolicy(chain, v.Roots, func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
 		if err := verifierLeafProfile(leaf); err != nil {
 			return err
