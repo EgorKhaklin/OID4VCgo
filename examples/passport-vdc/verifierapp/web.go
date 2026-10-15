@@ -141,6 +141,7 @@ document.getElementById("dcapi").addEventListener("click", async function () {
 		var offered = await r.json();
 		var credential = await navigator.credentials.get({mediation: "required", digital: {requests: offered.requests}});
 		var data = typeof credential.data === "string" ? JSON.parse(credential.data) : credential.data;
+		if (data.error === "access_denied") throw new DOMException("declined", "AbortError");
 		if (data.error) throw new Error("the wallet answered " + data.error);
 		status.textContent = "Verifying…";
 		var v = await fetch(base + "/dcapi/response", {
@@ -150,7 +151,12 @@ document.getElementById("dcapi").addEventListener("click", async function () {
 		if (!v.ok) throw new Error(await v.text());
 		location.reload();
 	} catch (e) {
-		status.textContent = "Not verified: " + e.message;
+		// The holder declining: iOS's wallet cancels the request (an
+		// AbortError, or NotAllowedError in some browsers), an OpenID4VP
+		// wallet answers access_denied.
+		status.textContent = (e.name === "AbortError" || e.name === "NotAllowedError")
+			? "You declined, or the request was cancelled. Nothing was shared."
+			: "Not verified: " + e.message;
 		refresh = setTimeout(function () { location.reload(); }, 15000);
 	}
 });
