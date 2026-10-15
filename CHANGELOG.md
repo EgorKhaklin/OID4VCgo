@@ -1,5 +1,73 @@
 # Changelog
 
+## [0.42.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.41.1...v0.42.0) (2026-10-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **wallet:** under AssuranceProduction, wallet.New (and so walletflow.New) refuses a Dependencies.HTTP other than nil or fapihttp.NewClient's client with its transport intact and no loopback exception.
+* **deps:** under production assurance, FAPIgo now refuses a client.Dependencies.HTTP that isn't fapihttp.NewClient's client with its transport intact (no Proxy, custom dialer, clone, wrapper such as an OpenTelemetry RoundTripper, or TLS verification change after construction), a JWKS key source fetched over any other client, and, with OpenID Federation, such a FederationHTTP. A walletflow wallet given Dependencies.HTTP, and an issuer or verifier deployment wiring fapigo/client, fapigo/server or keys.NewJWKSIssuerKeySource, must build that client with fapihttp.NewClient and set mutual TLS, a private CA (TransportConfig.RootCAs) or pinning in its TransportConfig. See FAPIgo's UPGRADING.md, v0.56.0.
+* **issuer:** CredentialHandler, DeferredCredentialHandler and NotificationEndpointHandler refuse a URL other than the one Config.Endpoints publishes for them. Leave URL nil, or set it to that.
+* **verifier:** Transactions.Begin refuses a query its TransactionsConfig.Verify can't verify an answer to (see above), where it used to create a request every answer to which would fail.
+* **verifier:** for an mdoc, IssuerChain is the verified path, which can differ from the presented x5chain, and is nil when MdocIssuerKeys/IssuerKeys isn't an MdocIssuerChainResolver; a trusted_authorities query then fails for that credential.
+* **walletflow:** Presentation.Decline's Presented.DCAPIResponse for a DC API request is {"error": "access_denied"} rather than {"response": <JWE>}. A Verifier page reading the decline should check data.error before data.response.
+* **issuer:** under AssuranceProduction, CreateCredentialOffer refuses an offer with a pre-authorized code grant. Use CreatePreAuthorizedOffer instead.
+* **issuer:** issuer.New refuses a credential configuration whose jwt proof type sets KeyAttestationsRequired; put the requirement on the attestation proof type instead. A Credential Request with more than one key attestation is refused with invalid_proof.
+* **issuer:** a PreAuthorizedCodeStore must return ErrTxCodeRequired when the record has a TxCode and wantTxCode is empty (without counting an attempt), and ErrTxCodeUnexpected when the record has none and wantTxCode isn't empty (without consuming the code); issuertest.TestPreAuthorizedCodeStoreContract checks both. Token requests with a DPoP proof that doesn't verify get invalid_dpop_proof rather than invalid_request.
+* **dcql:** dcql.Query.Validate, and so verifier.New, BuildAuthorizationRequest and the wallet's request parsing, refuse an empty claims, claim_sets or values array, a values element that isn't a string, integer or boolean, and an mso_mdoc claims path that isn't two strings. Leave an empty array out instead.
+* under AssuranceProduction, issuer.New refuses a self-signed SDJWTSigner.IssuerCertificate or MdocSigner.X5Chain leaf, and verifier.New a self-signed ClientCertificate; use certificates issued by a CA the other side trusts. issuer.New also refuses a signer whose certificate's key isn't its own, at any assurance, and SignMetadataJWS refuses a self-signed certificate.
+* **mdoc:** verifier.VerifyResponse, mdocdcapi.VerifyResponse and the proximity reader refuse a Photo ID (org.iso.23220.1) or EU PID (eu.europa.ec.eudi.pid.1) whose disclosed issuing_country isn't the document signer certificate's countryName, or whose issuing_jurisdiction isn't its stateOrProvinceName when it has one. Issuers set issuing_country to their own country.
+* **verifier:** verifier.New refuses an EncValuesSupported value other than A128GCM, A192GCM or A256GCM, and, under AssuranceProduction, a list without both A128GCM and A256GCM. haip.RecommendedVerifierConfig already lists both.
+* **issuer:** issuer.New refuses a Config with ResponseEncryption and no RequestEncryption. Configure RequestEncryption too (it can stay optional, Required false), or drop ResponseEncryption.
+* under AssuranceProduction, issuer.New refuses a Dependencies.Random other than crypto/rand.Reader, any http URL in its Config, and an AttestationVerifier without AttestationStatus unless Config.NoAttestationStatusCheck is set; verifier.NewTransactions refuses a config with neither Accept nor NoStatusCheck. Use crypto/rand.Reader and https URLs; set AttestationStatus (an issuer.AttestationStatusChecker) and Accept (e.g. a status list check), or the explicit opt-outs.
+
+### Features
+
+* **issuer:** CreatePreAuthorizedOffer builds a pre-authorized offer in one step ([cf738d4](https://github.com/IDFoundry/OID4VCgo/commit/cf738d4bc4b7feb87b0337b20c622568c96bc5e4))
+* **proximity:** WithIssuerRootsByDocType for the reader ([29ff39f](https://github.com/IDFoundry/OID4VCgo/commit/29ff39f7546d1be131e6db18e42fdbc16066af66))
+* **registration:** register claims for a given type of credential ([9aef1a9](https://github.com/IDFoundry/OID4VCgo/commit/9aef1a91e41c9389803d9088e3a004efa481ab8f))
+* send intermediate certificates in x5c, and refuse self-signed signers in production ([6184dd7](https://github.com/IDFoundry/OID4VCgo/commit/6184dd770873369f9c6e635336d7c28d52737e60))
+* **verifier:** hold each mdoc document type to its own issuer roots ([96c037e](https://github.com/IDFoundry/OID4VCgo/commit/96c037e21c6e3fc4126f3cb942d2c9e80690313e))
+* **verifier:** RequireValidStatus, an Accept that refuses non-VALID credentials ([90c4df0](https://github.com/IDFoundry/OID4VCgo/commit/90c4df0b531cd341d307d3b9e2f76d7010ee7d27))
+* **wallet:** name the Credential Issuer as the authorization request's resource ([7619685](https://github.com/IDFoundry/OID4VCgo/commit/7619685af5b41c39042e0ea501769d85b3166d7e))
+* **wallet:** present SD-JWT VC claims addressed into arrays ([b9f23fc](https://github.com/IDFoundry/OID4VCgo/commit/b9f23fc871af69ce945298c2c8f7dd499ae40b8d))
+* **wallet:** show the holder which mdoc elements a verifier will keep ([86e31a7](https://github.com/IDFoundry/OID4VCgo/commit/86e31a7a0e59c1884c14e55f8837e67fc5f19436))
+* **wallet:** verify signed Credential Issuer Metadata ([8375145](https://github.com/IDFoundry/OID4VCgo/commit/83751450529f6d5fcded81d73492664e6cc0d4f6))
+
+
+### Bug Fixes
+
+* count a tx_code description's characters, not its bytes ([2fa02e7](https://github.com/IDFoundry/OID4VCgo/commit/2fa02e7f4136389822c9b20df13fdf795574cacc))
+* **dcql:** bound a query's size ([97acfa7](https://github.com/IDFoundry/OID4VCgo/commit/97acfa7f223ff448ae4d96525025f3e0ddfeb5dd))
+* **dcql:** convert an mdoc's CBOR value to JSON before matching values ([2837c4a](https://github.com/IDFoundry/OID4VCgo/commit/2837c4a8c15d72c73c929e878afe56d2b23b8ec9))
+* **dcql:** refuse claims queries OpenID4VP rules out ([b6dacd8](https://github.com/IDFoundry/OID4VCgo/commit/b6dacd8897d8c1e3a420833ae74353b10f53351c))
+* **deps:** pin FAPIgo v0.56.0 ([9a8046e](https://github.com/IDFoundry/OID4VCgo/commit/9a8046ecfc83b1c30d29c5c74a58bb400b645d8b))
+* **issuer:** build production pre-authorized offers only with CreatePreAuthorizedOffer ([26b61cb](https://github.com/IDFoundry/OID4VCgo/commit/26b61cb76f86fb99ed58b46979548578471a0a69))
+* **issuer:** default handler URLs to the published endpoints, and refuse others ([f81fe00](https://github.com/IDFoundry/OID4VCgo/commit/f81fe00a1a795bc3637a0d908fa6551481f6aa39))
+* **issuer:** keep error_description to the characters it allows ([92461d0](https://github.com/IDFoundry/OID4VCgo/commit/92461d016a3117d97a5f685194f217a3b856057b))
+* **issuer:** refuse proof configurations and requests Appendix F rules out ([6ec13cc](https://github.com/IDFoundry/OID4VCgo/commit/6ec13cc6b1173ad95def95b942bcdf7bac2c0467))
+* **issuer:** refuse response encryption without request encryption ([69a87bd](https://github.com/IDFoundry/OID4VCgo/commit/69a87bd5b5cf4e1b410da464580e8b43d46af75f))
+* **issuer:** report tx_code and DPoP errors at the token endpoint as OID4VCI says ([3ce3595](https://github.com/IDFoundry/OID4VCgo/commit/3ce35951b4ce9e50d609e8dae74b3626743768ba))
+* **mdoc:** bound the CBOR an untrusted mdoc decodes to ([8d7c1cf](https://github.com/IDFoundry/OID4VCgo/commit/8d7c1cfe2c219dc043965225206558f10f8ac404))
+* **mdoc:** hold a photo ID's and a PID's issuing_country to the document signer ([e40d4b6](https://github.com/IDFoundry/OID4VCgo/commit/e40d4b63ac575e05134e1b201b2ada4d5d80762e))
+* **mdoc:** refuse an empty document signer path instead of panicking ([c131fb0](https://github.com/IDFoundry/OID4VCgo/commit/c131fb0908de902aea8660ac1f3da50abbcf6ab4))
+* read a parameterised application/jwt Content-Type as encrypted ([3dc28c8](https://github.com/IDFoundry/OID4VCgo/commit/3dc28c838e5b5c4f242fa62e802a64819e5c1085))
+* refuse production configurations that would weaken issuance or verification ([ba1dadb](https://github.com/IDFoundry/OID4VCgo/commit/ba1dadbe11424e267dd683eacec4bddbea0f9289))
+* **statuslist:** read one status in constant memory, not the whole list ([7fbe695](https://github.com/IDFoundry/OID4VCgo/commit/7fbe69555b77d4c9c20fb821f99c858afec7e406))
+* **statuslist:** return INVALID with every error, and add RequireValid ([df1495e](https://github.com/IDFoundry/OID4VCgo/commit/df1495e5724924ea77269f7335024e7c96871a11))
+* **verifier:** advertise only enc values it can decrypt, and HAIP's pair in production ([069c88b](https://github.com/IDFoundry/OID4VCgo/commit/069c88b68deeee31b17ab482e71aba260187f53c))
+* **verifier:** discard a presentation that fails, not the whole response ([145d928](https://github.com/IDFoundry/OID4VCgo/commit/145d92888ba794a3832abc411b7afebde0ea5271))
+* **verifier:** hand out only the verified mdoc issuer chain ([03fa2f4](https://github.com/IDFoundry/OID4VCgo/commit/03fa2f42c3b3b019c196f24c06759348955caab6))
+* **verifier:** refuse requests Transactions can't verify, and answer its own faults with 500 ([6fab9e3](https://github.com/IDFoundry/OID4VCgo/commit/6fab9e3eb6b48fd0b606c3fa00be26d4e93be5b7))
+* **wallet:** default to fapihttp's hardened client, and follow no redirect ([f437ddd](https://github.com/IDFoundry/OID4VCgo/commit/f437ddd885bfade5b0523033c75ef7869dff849a))
+* **wallet:** encrypt a presentation to an ECDH-ES key with the strongest enc ([b3bdb56](https://github.com/IDFoundry/OID4VCgo/commit/b3bdb561295ccebab912793ccaf4d3bdf6740603))
+* **walletflow:** decline a DC API request with Appendix A.4's error object ([cc3424f](https://github.com/IDFoundry/OID4VCgo/commit/cc3424f44782303b5b0e7f20cf16374771cfcbb5))
+* **walletflow:** don't present a credential refreshed since the holder was shown it ([f6d7acf](https://github.com/IDFoundry/OID4VCgo/commit/f6d7acf77a938a8ebe6eced3d07c14a142072e79))
+* **wallet:** honour require_cryptographic_holder_binding when presenting ([5f79e00](https://github.com/IDFoundry/OID4VCgo/commit/5f79e00984c6f9cc106c78842f89bda9111a228d))
+* **wallet:** inflate a compressed Credential Response to at most 16 MiB ([0ef30c6](https://github.com/IDFoundry/OID4VCgo/commit/0ef30c61b4dfd989bb8408619b2a0d9bc3308bdd))
+* **wallet:** issue in plaintext when optional encryption can't be used ([f0c42c2](https://github.com/IDFoundry/OID4VCgo/commit/f0c42c2e2968d209bd41960fc2b212234c87991a))
+* **wallet:** take only fapihttp's hardened HTTP client in production ([33468fc](https://github.com/IDFoundry/OID4VCgo/commit/33468fc417b4af8853dc3e46468e9834ad37da0a))
+
 ## [0.41.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.41.0...v0.41.1) (2026-10-14)
 
 
