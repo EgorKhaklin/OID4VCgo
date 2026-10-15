@@ -70,6 +70,9 @@ targets:
       path: DocumentProvider/Info.plist
       properties:
         CFBundleDisplayName: OID4VC Demo
+        # An app extension's version must match its containing app's.
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
         EXAppExtensionAttributes:
           EXExtensionPointIdentifier: com.apple.identity-document-services.document-provider-ui
         NSFaceIDUsageDescription: Confirms it's you before your ID's key signs what you share.
