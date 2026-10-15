@@ -314,3 +314,38 @@ func TestRequestPreAuthorizedCodeToken_PropagatesTransportError(t *testing.T) {
 		t.Fatalf("RequestPreAuthorizedCodeToken = nil error, want error")
 	}
 }
+
+// The token request names the resources the token is for (RFC 8707),
+// and refuses ones that aren't absolute URIs without a fragment, or
+// repeat, before anything is sent.
+func TestRequestPreAuthorizedCodeToken_Resource(t *testing.T) {
+	var sentForm url.Values
+	w := newTestWalletWithHTTP(t, func(req *http.Request) (*http.Response, error) {
+		if err := req.ParseForm(); err != nil {
+			t.Fatalf("ParseForm: %v", err)
+		}
+		sentForm = req.Form
+		return jsonResponse([]byte(`{"access_token":"tok-1","token_type":"DPoP"}`)), nil
+	})
+	request := func(resource ...string) error {
+		_, err := w.RequestPreAuthorizedCodeToken(context.Background(), testTokenEndpoint(t), wallet.PreAuthorizedCodeTokenRequest{
+			PreAuthorizedCode: "abc123", DPoPKey: testP256Key(t), Resource: resource,
+		})
+		return err
+	}
+	if err := request("https://issuer.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if got := sentForm["resource"]; len(got) != 1 || got[0] != "https://issuer.example.com" {
+		t.Errorf("resource = %v, want the Credential Issuer", got)
+	}
+	sentForm = nil
+	for _, bad := range [][]string{{"issuer.example.com"}, {"https://issuer.example.com#x"}, {""}, {"https://a.example", "https://a.example"}} {
+		if err := request(bad...); err == nil {
+			t.Errorf("resource %q accepted", bad)
+		}
+	}
+	if sentForm != nil {
+		t.Error("a request with an invalid resource was sent")
+	}
+}

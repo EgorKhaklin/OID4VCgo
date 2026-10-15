@@ -23,6 +23,11 @@ type RefreshTokenRequest struct {
 	// token is bound to it too. nil for a refresh token obtained with a
 	// Bearer access token: the request then carries no DPoP proof.
 	DPoPKey crypto.Signer
+
+	// Resource, OPTIONAL, names the resource servers the refreshed access
+	// token is for (RFC 8707 §2.2), as PreAuthorizedCodeTokenRequest's
+	// Resource does.
+	Resource []string
 }
 
 // RequestRefreshToken refreshes a token a public client obtained — an
@@ -42,6 +47,12 @@ func (w *Wallet) RequestRefreshToken(ctx context.Context, endpoint fapi.URL, req
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", req.RefreshToken.Reveal())
+	if err := checkResources(req.Resource); err != nil {
+		return PreAuthorizedCodeTokenResult{}, fmt.Errorf("wallet: refresh token request: %w", err)
+	}
+	for _, r := range req.Resource {
+		form.Add("resource", r)
+	}
 	body, err := w.postToken(ctx, endpoint, []byte(form.Encode()), req.DPoPKey, nil, "request refresh token")
 	if err != nil {
 		return PreAuthorizedCodeTokenResult{}, err

@@ -451,7 +451,9 @@ func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) e
 	if err != nil {
 		return fmt.Errorf("walletflow: token endpoint: %w", err)
 	}
-	req := wallet.PreAuthorizedCodeTokenRequest{PreAuthorizedCode: plan.PreAuthorizedCode, TxCode: txCode}
+	// The token is for this Credential Issuer (RFC 8707), as in the
+	// authorization code flow.
+	req := wallet.PreAuthorizedCodeTokenRequest{PreAuthorizedCode: plan.PreAuthorizedCode, TxCode: txCode, Resource: []string{s.offer.CredentialIssuer}}
 	if s.auth == clientAuthAttestation {
 		if s.client == nil {
 			if err := s.newClient(ctx, plan.AuthorizationServer, false); err != nil {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -64,6 +65,14 @@ type PreAuthorizedCodeTokenRequest struct {
 	// is one, configured for storage.ClientAuthMethodAttestation, so the
 	// PoP is built exactly as for its own PAR and token requests.
 	ClientAttestation ClientAttestationSource
+
+	// Resource, OPTIONAL, names the resource servers the access token is
+	// for (RFC 8707 §2): the Credential Issuer, so an Authorization
+	// Server serving more than one can restrict the token to it, as the
+	// authorization code flow does (OpenID4VCI §5.1.2). Each must be an
+	// absolute URI without a fragment. A server that doesn't support
+	// resource indicators ignores it.
+	Resource []string
 }
 
 // ClientAttestationSource supplies the OAuth-Client-Attestation and a
@@ -184,6 +193,9 @@ func (w *Wallet) postToken(
 }
 
 func (w *Wallet) checkPreAuthorizedCodeTokenRequest(req PreAuthorizedCodeTokenRequest) error {
+	if err := checkResources(req.Resource); err != nil {
+		return fmt.Errorf("wallet: pre-authorized code token request: %w", err)
+	}
 	switch {
 	case req.PreAuthorizedCode == "":
 		return fmt.Errorf("wallet: request pre-authorized code token: pre-authorized_code is required")
@@ -202,6 +214,9 @@ func preAuthorizedCodeTokenForm(req PreAuthorizedCodeTokenRequest) []byte {
 	form.Set("pre-authorized_code", req.PreAuthorizedCode)
 	if req.TxCode != "" {
 		form.Set("tx_code", req.TxCode)
+	}
+	for _, r := range req.Resource {
+		form.Add("resource", r)
 	}
 	return []byte(form.Encode())
 }
@@ -297,4 +312,23 @@ func dpopNonceChallenge(statusCode int, header http.Header, body []byte) string 
 		return ""
 	}
 	return header.Get("DPoP-Nonce")
+}
+
+// checkResources checks RFC 8707 §2's resource values: each an absolute
+// URI without a fragment, none empty or repeated.
+func checkResources(resources []string) error {
+	seen := make(map[string]bool, len(resources))
+	for _, r := range resources {
+		u, err := url.Parse(r)
+		switch {
+		case r == "" || err != nil || !u.IsAbs():
+			return fmt.Errorf("resource %q must be an absolute URI", r)
+		case u.Fragment != "" || strings.Contains(r, "#"):
+			return fmt.Errorf("resource %q must not have a fragment", r)
+		case seen[r]:
+			return fmt.Errorf("resource %q is repeated", r)
+		}
+		seen[r] = true
+	}
+	return nil
 }
