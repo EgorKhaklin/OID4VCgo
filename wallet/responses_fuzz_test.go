@@ -112,6 +112,6 @@ func FuzzParseError(f *testing.F) {
 	f.Add(http.StatusBadRequest, []byte(``))
 
 	f.Fuzz(func(t *testing.T, statusCode int, body []byte) {
-		_ = parseError(statusCode, body)
+		_ = parseError(EndpointCredential, statusCode, body)
 	})
 }
