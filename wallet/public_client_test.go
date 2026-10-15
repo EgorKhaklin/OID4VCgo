@@ -39,7 +39,7 @@ func TestRequestRefreshToken(t *testing.T) {
 		return jsonResponse([]byte(`{"access_token":"at-2","token_type":"DPoP","expires_in":300,"refresh_token":"rt-2"}`)), nil
 	})
 	got, err := w.RequestRefreshToken(context.Background(), testTokenEndpoint(t), wallet.RefreshTokenRequest{
-		RefreshToken: fapi.NewSecret("rt-1"), DPoPKey: key,
+		RefreshToken: fapi.NewSecret("rt-1"), DPoPKey: key, Resource: []string{"https://issuer.example.com"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestRequestRefreshToken(t *testing.T) {
 	if got.AccessToken.Reveal() != "at-2" || got.RefreshToken.Reveal() != "rt-2" || !got.HasExpiresIn {
 		t.Errorf("result = %+v", got)
 	}
-	if len(forms) != 2 || forms[1].Get("grant_type") != "refresh_token" || forms[1].Get("refresh_token") != "rt-1" || forms[1].Get("client_id") != "" {
+	if len(forms) != 2 || forms[1].Get("grant_type") != "refresh_token" || forms[1].Get("refresh_token") != "rt-1" || forms[1].Get("client_id") != "" || forms[1].Get("resource") != "https://issuer.example.com" {
 		t.Errorf("forms = %v", forms)
 	}
 	if _, claims := jwtParts(t, proofs[1]); claims["nonce"] != "n-1" {

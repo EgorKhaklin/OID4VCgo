@@ -425,7 +425,7 @@ func (s *Issuance) refreshAsPublicClient(ctx context.Context, g RefreshGrant, as
 	if err != nil {
 		return refreshResult{}, fmt.Errorf("walletflow: token endpoint: %w", err)
 	}
-	req := wallet.RefreshTokenRequest{RefreshToken: g.RefreshToken}
+	req := wallet.RefreshTokenRequest{RefreshToken: g.RefreshToken, Resource: []string{g.CredentialIssuer}}
 	if s.dpopKey != nil {
 		// A grant stored before DPoPKeyID was kept for Bearer grants
 		// has no key: a nil Key in the interface would send a proof.
