@@ -48,10 +48,9 @@ func namedSigner(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, ur
 }
 
 // A separate Status Issuer signing issuer A's status lists: the default
-// RequireValidStatus refuses its list, as it refuses another issuer's,
-// and an Accept naming the Status Issuer through LeafPolicy, as
-// RequireValidStatus's doc describes, accepts it while still refusing
-// anyone else's.
+// RequireValidStatus refuses its list, as it refuses another issuer's;
+// RequireValidStatusFrom accepts it for issuer A, the issuer it signs
+// for, and still refuses it for issuer B, and anyone else's list.
 func TestRequireValidStatus_DelegatedStatusIssuer(t *testing.T) {
 	ca, caKey := testcert.CA(t, "shared root")
 	roots := x509.NewCertPool()
@@ -92,49 +91,43 @@ func TestRequireValidStatus_DelegatedStatusIssuer(t *testing.T) {
 	}))
 	defer srv.Close()
 	base = srv.URL
-	credential := func(path string) verifier.VerifyResponseResult {
+	credential := func(iss, path string) verifier.VerifyResponseResult {
 		return verifier.VerifyResponseResult{Credentials: []verifier.VerifiedCredential{{Claims: map[string]any{
-			"iss": issuerA, "status": map[string]any{"status_list": map[string]any{"idx": float64(0), "uri": base + path}},
+			"iss": iss, "status": map[string]any{"status_list": map[string]any{"idx": float64(0), "uri": base + path}},
 		}}}}
 	}
 	checker := statuslist.Checker{Fetcher: statuslist.Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots}
 	ctx := context.Background()
 
 	strict := verifier.RequireValidStatus(checker)
-	if err := strict(ctx, "id", credential("/a")); err != nil {
+	if err := strict(ctx, "id", credential(issuerA, "/a")); err != nil {
 		t.Errorf("issuer A's own list: %v", err)
 	}
 	for _, path := range []string{"/status", "/b"} {
-		if err := strict(ctx, "id", credential(path)); err == nil || !strings.Contains(err.Error(), "issuer") {
+		if err := strict(ctx, "id", credential(issuerA, path)); err == nil || !strings.Contains(err.Error(), "issuer") {
 			t.Errorf("RequireValidStatus with the list at %s: %v, want refused as not the issuer's", path, err)
 		}
 	}
 
-	// The route RequireValidStatus's doc gives a deployment with a
-	// separate Status Issuer.
-	delegated := checker
-	delegated.Options.LeafPolicy = func(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
-		if slices.ContainsFunc(leaf.URIs, func(u *url.URL) bool { return u.String() == statusIssuer }) {
+	// The Status Issuer signs for issuer A only.
+	delegated := verifier.RequireValidStatusFrom(checker, func(issuer string, leaf *x509.Certificate, _ [][]*x509.Certificate) error {
+		if issuer == issuerA && slices.ContainsFunc(leaf.URIs, func(u *url.URL) bool { return u.String() == statusIssuer }) {
 			return nil
 		}
-		return errors.New("not the Status Issuer")
-	}
-	accept := func(ctx context.Context, _ string, result verifier.VerifyResponseResult) error {
-		for _, vc := range result.Credentials {
-			ref, cwt, ok, err := vc.StatusListRef()
-			if err == nil && ok {
-				err = delegated.RequireValid(ctx, ref, cwt)
-			}
-			if err != nil {
-				return err
-			}
+		return errors.New("not a Status Issuer for this issuer")
+	})
+	for name, tc := range map[string]struct {
+		iss, path string
+		ok        bool
+	}{
+		"A's credential, A's own list":        {issuerA, "/a", true},
+		"A's credential, its Status Issuer's": {issuerA, "/status", true},
+		"A's credential, B's list":            {issuerA, "/b", false},
+		"B's credential, its own list":        {issuerB, "/b", true},
+		"B's credential, A's Status Issuer's": {issuerB, "/status", false},
+	} {
+		if err := delegated(ctx, "id", credential(tc.iss, tc.path)); (err == nil) != tc.ok {
+			t.Errorf("RequireValidStatusFrom, %s: %v, want ok = %v", name, err, tc.ok)
 		}
-		return nil
-	}
-	if err := accept(ctx, "id", credential("/status")); err != nil {
-		t.Errorf("the Status Issuer's list, through the delegated Accept: %v", err)
-	}
-	if err := accept(ctx, "id", credential("/b")); err == nil {
-		t.Error("the delegated Accept took issuer B's list")
 	}
 }

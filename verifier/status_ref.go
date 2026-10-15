@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
@@ -61,19 +62,39 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 // An SD-JWT VC's Status List Token must be signed by its issuer: a
 // certificate naming the credential's iss, or without one the URI its
 // own certificate names (statuslist.VerifyOptions.Issuer), so another
-// issuer's certificate under the same roots can't decide its status. A
-// deployment whose status lists come from a separate Status Issuer
-// writes its own Accept, calling checker.RequireValid with a
-// LeafPolicy that recognizes that issuer's certificates.
+// issuer's certificate under the same roots can't decide its status.
+// Where status lists come from a separate Status Issuer, use
+// RequireValidStatusFrom.
 func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id string, result VerifyResponseResult) error {
+	return RequireValidStatusFrom(checker, nil)
+}
+
+// StatusIssuerPolicy decides whether leaf, the chain-verified
+// certificate that signed a Status List Token, belongs to a Status
+// Issuer trusted to sign issuer's status lists: nil to accept it, an
+// error to refuse. issuer is the credential's (its iss, or the URI its
+// own certificate names), so a Status Issuer can be accepted for some
+// issuers and not others.
+type StatusIssuerPolicy func(issuer string, leaf *x509.Certificate, chains [][]*x509.Certificate) error
+
+// RequireValidStatusFrom is RequireValidStatus for deployments whose
+// status lists may be signed by a separate Status Issuer on the
+// credential issuer's behalf (draft-ietf-oauth-status-list): an SD-JWT
+// VC's Status List Token is accepted when its signer is the
+// credential's issuer, as RequireValidStatus requires, or a Status
+// Issuer statusIssuers accepts for that issuer. Anyone else under the
+// roots is refused. checker.Options.LeafPolicy, if set, still applies
+// to every signer. A nil statusIssuers is RequireValidStatus.
+func RequireValidStatusFrom(checker statuslist.Checker, statusIssuers StatusIssuerPolicy) func(ctx context.Context, id string, result VerifyResponseResult) error {
 	return func(ctx context.Context, _ string, result VerifyResponseResult) error {
 		for _, vc := range result.Credentials {
 			ref, cwt, ok, err := vc.StatusListRef()
 			if err == nil && ok {
 				c := checker
 				if !cwt {
-					// Its status list is its issuer's to sign.
-					c.Options.Issuer = vc.issuerName()
+					// Its status list is its issuer's, or its Status
+					// Issuer's, to sign.
+					c.Options = statusOptionsFor(checker.Options, vc.issuerName(), statusIssuers)
 				}
 				err = c.RequireValid(ctx, ref, cwt)
 			}
@@ -83,6 +104,34 @@ func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id
 		}
 		return nil
 	}
+}
+
+// statusOptionsFor is opts for checking issuer's status list: signed by
+// issuer, or with statusIssuers, by issuer or a Status Issuer it
+// accepts for issuer.
+func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, statusIssuers StatusIssuerPolicy) statuslist.VerifyOptions {
+	if statusIssuers == nil || issuer == "" {
+		opts.Issuer = issuer
+		return opts
+	}
+	base := opts.LeafPolicy
+	opts.LeafPolicy = func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+		if base != nil {
+			if err := base(leaf, chains); err != nil {
+				return err
+			}
+		}
+		if certchain.CheckIssuerName(leaf, issuer) == nil {
+			return nil
+		}
+		if err := statusIssuers(issuer, leaf, chains); err != nil {
+			return fmt.Errorf("neither the credential's issuer %q nor a Status Issuer for it: %w", issuer, err)
+		}
+		return nil
+	}
+	// A Status Issuer's token may carry its own iss.
+	opts.Issuer = ""
+	return opts
 }
 
 // issuerName is an SD-JWT VC's issuer, for its status list: its iss,
