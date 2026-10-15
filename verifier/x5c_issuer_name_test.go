@@ -1,0 +1,81 @@
+package verifier_test
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
+	"math/big"
+	"net/url"
+	"testing"
+	"time"
+
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
+	"github.com/idfoundry/oid4vcgo/verifier"
+)
+
+// issuerLeaf is a leaf under ca naming uris and dnsNames.
+func issuerLeaf(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, uris []string, dnsNames []string) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, DNSNames: dnsNames,
+	}
+	for _, u := range uris {
+		parsed, err := url.Parse(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpl.URIs = append(tmpl.URIs, parsed)
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return leaf
+}
+
+// The issuer is the x5c leaf's subject: an iss must name that leaf, so
+// another issuer's certificate under the same trusted root can't sign
+// in this issuer's name (SD-JWT VC, the x5c header).
+func TestX5CIssuerKeyResolver_BindsIssToLeaf(t *testing.T) {
+	ca, caKey := testcert.CA(t, "shared root")
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	r := verifier.X5CIssuerKeyResolver{Roots: roots}
+	const trusted = "https://issuer-a.example"
+	for name, tc := range map[string]struct {
+		uris, dnsNames []string
+		iss            any
+		ok             bool
+	}{
+		"the leaf names iss":                 {uris: []string{trusted}, iss: trusted, ok: true},
+		"no iss: the leaf is the issuer":     {uris: []string{"https://issuer-b.example"}, iss: nil, ok: true},
+		"a dns: iss and its dNSName":         {dnsNames: []string{"issuer-a.example"}, iss: "dns:issuer-a.example", ok: true},
+		"another issuer's URL":               {uris: []string{"https://issuer-b.example"}, iss: trusted},
+		"only a DNS host that isn't iss's":   {dnsNames: []string{"issuer-b.example"}, iss: trusted},
+		"another URL, and a host both share": {uris: []string{"https://example.com/b"}, dnsNames: []string{"example.com"}, iss: "https://example.com/a"},
+		"iss isn't a string":                 {uris: []string{trusted}, iss: 42},
+	} {
+		leaf := issuerLeaf(t, ca, caKey, tc.uris, tc.dnsNames)
+		header := map[string]any{"x5c": []any{base64.StdEncoding.EncodeToString(leaf.Raw)}}
+		payload := map[string]any{}
+		if tc.iss != nil {
+			payload["iss"] = tc.iss
+		}
+		_, _, err := r.ResolveIssuerKey(context.Background(), header, payload)
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: %v, want ok = %v", name, err, tc.ok)
+		}
+	}
+}

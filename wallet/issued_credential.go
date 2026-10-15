@@ -147,6 +147,18 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("verify: %w", err)
 	}
+	// The issuer is the leaf's subject (SD-JWT VC, the x5c header): an
+	// iss must name it, or any issuer under IssuerRoots could issue in
+	// another's name.
+	if issRaw, present := payload["iss"]; present {
+		iss, ok := issRaw.(string)
+		if !ok {
+			return VerifiedIssuedCredential{}, errors.New("iss is not a string")
+		}
+		if err := certchain.CheckIssuerName(leaf, iss); err != nil {
+			return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
+		}
+	}
 	if vct, _ := payload["vct"].(string); vct != p.Configuration.VCT {
 		return VerifiedIssuedCredential{}, fmt.Errorf("vct is %q, want %q", vct, p.Configuration.VCT)
 	}
