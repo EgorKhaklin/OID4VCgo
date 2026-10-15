@@ -39,6 +39,12 @@ var IssuerStateExtension = extension.Definition[string]{
 // has a Wallet send so an Authorization Server serving more than one
 // Credential Issuer can tell them apart, and restrict the token to the
 // one it's for.
+//
+// Deprecated: set fapigo/client's BeginAuthorizationRequest.Resource
+// instead, as wallet.BuildAuthorizationRequest does: an extension
+// reaches only the pushed request, not the code exchange or a refresh,
+// which RFC 8707 §2.2 has name it again, and fapigo/client refuses a
+// request that sets both.
 var ResourceExtension = extension.Definition[string]{
 	Name:           "resource",
 	Cardinality:    extension.Single,

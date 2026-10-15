@@ -91,7 +91,10 @@ func TestBuildAuthorizationRequest_AttachesResource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := extension.Get(req.Extensions, oid4vci.ResourceExtension); !ok || got != "https://issuer.example.com" {
-		t.Errorf("resource = %q, %v; want the Credential Issuer", got, ok)
+	if len(req.Resource) != 1 || req.Resource[0] != "https://issuer.example.com" {
+		t.Errorf("Resource = %v, want the Credential Issuer", req.Resource)
+	}
+	if _, ok := extension.Get(req.Extensions, oid4vci.ResourceExtension); ok { //nolint:staticcheck // checks the deprecated form isn't also set
+		t.Error("resource is also set as an extension, which fapigo/client refuses alongside Resource")
 	}
 }

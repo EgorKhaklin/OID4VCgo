@@ -47,10 +47,9 @@ func BuildAuthorizationRequest(offer oid4vci.CredentialOffer, scopes []string) (
 	req := client.BeginAuthorizationRequest{Scope: scopes}
 	if offer.CredentialIssuer != "" {
 		// OpenID4VCI §5.1.2, RFC 8707: the token is for this Credential
-		// Issuer.
-		if err := extension.Set(&req.Extensions, oid4vci.ResourceExtension, offer.CredentialIssuer); err != nil {
-			return client.BeginAuthorizationRequest{}, fmt.Errorf("wallet: build authorization request: attach resource: %w", err)
-		}
+		// Issuer. fapigo/client sends it on the pushed request, again on
+		// the code exchange, and keeps it for refreshes.
+		req.Resource = []string{offer.CredentialIssuer}
 	}
 
 	if offer.Grants == nil || offer.Grants.AuthorizationCode == nil || offer.Grants.AuthorizationCode.IssuerState == "" {
