@@ -317,7 +317,7 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 		answered[id] = true
 	}
 	if err := req.Query.CheckAnswered(answered); err != nil {
-		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", newError("the vp_token doesn't answer the query as it asks", err))
+		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", newError(ReasonNotAnswered, "the vp_token doesn't answer the query as it asks", err))
 	}
 	result := VerifyResponseResult{}
 	verifiedIDs := make(map[string]bool, len(answered))
@@ -345,7 +345,7 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 		// doesn't, the first failure is why.
 		if err := req.Query.CheckAnswered(verifiedIDs); err != nil {
 			if firstFailure == nil {
-				firstFailure = fmt.Errorf("verifier: verify response: %w", newError("what verified doesn't answer the query as it asks", err))
+				firstFailure = fmt.Errorf("verifier: verify response: %w", newError(ReasonNotAnswered, "what verified doesn't answer the query as it asks", err))
 			}
 			return VerifyResponseResult{}, firstFailure
 		}
@@ -407,10 +407,10 @@ func isUnverifiedAKIChecker(checker dcql.TrustedAuthoritiesChecker) bool {
 func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, req VerifyResponseRequest) ([]VerifiedCredential, []DiscardedPresentation, error) {
 	presentations := req.Response.VPToken[cq.ID]
 	if len(presentations) == 0 {
-		return nil, nil, newError("no presentation returned", nil)
+		return nil, nil, newError(ReasonMalformed, "no presentation returned", nil)
 	}
 	if len(presentations) > 1 && !cq.Multiple {
-		return nil, nil, newError("multiple presentations were returned but multiple is not requested", nil)
+		return nil, nil, newError(ReasonMalformed, "multiple presentations were returned but multiple is not requested", nil)
 	}
 	var discarded []DiscardedPresentation
 	var firstErr error
@@ -467,20 +467,20 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	}
 	pres, err := sdjwtvc.Parse(compact)
 	if err != nil {
-		return nil, nil, newError("parse presentation", err)
+		return nil, nil, newError(ReasonMalformed, "parse presentation", err)
 	}
 	header, rawPayload, err := jose.DecodeUnverified(pres.IssuerJWT)
 	if err != nil {
-		return nil, nil, newError("decode issuer jwt", err)
+		return nil, nil, newError(ReasonMalformed, "decode issuer jwt", err)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(rawPayload, &payload); err != nil {
-		return nil, nil, newError("unmarshal issuer jwt payload", err)
+		return nil, nil, newError(ReasonMalformed, "unmarshal issuer jwt payload", err)
 	}
 
 	issuerPub, issuerAlg, err := req.IssuerKeys.ResolveIssuerKey(ctx, header, payload)
 	if err != nil {
-		return nil, nil, newError("resolve issuer key", err)
+		return nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
 	}
 
 	requireHolderBinding := cq.RequiresCryptographicHolderBinding()
@@ -491,7 +491,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		keyBindingRequirement = sdjwtvc.KeyBindingRequired
 		holderPub, holderAlg, err = holderPublicKeyFromCNF(payload["cnf"])
 		if err != nil {
-			return nil, nil, newError("resolve holder binding key", err)
+			return nil, nil, newError(ReasonHolderBinding, "resolve holder binding key", err)
 		}
 	}
 
@@ -506,11 +506,15 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		MaxClockSkew:      req.MaxClockSkew,
 	})
 	if err != nil {
-		return nil, nil, newError("verify", err)
+		reason := ReasonInvalidCredential
+		if errors.Is(err, sdjwtvc.ErrKeyBinding) {
+			reason = ReasonHolderBinding
+		}
+		return nil, nil, newError(reason, "verify", err)
 	}
 
 	if err := cq.SatisfiedBySDJWTVCClaims(claims); err != nil {
-		return nil, nil, newError("satisfied by sdjwtvc claims", err)
+		return nil, nil, newError(ReasonNotAnswered, "satisfied by sdjwtvc claims", err)
 	}
 
 	// The header's chain only where it's the key that verified the
@@ -519,7 +523,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	chain := keyBoundChain(headerChain, issuerPub)
 	if len(cq.TrustedAuthorities) > 0 {
 		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, chain); err != nil {
-			return nil, nil, newError(errCategoryTrustedAuthorities, err)
+			return nil, nil, newError(ReasonUntrustedIssuer, errCategoryTrustedAuthorities, err)
 		}
 	}
 	return claims, chain, nil
@@ -556,29 +560,29 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 
 	raw, err := base64.RawURLEncoding.DecodeString(presented)
 	if err != nil {
-		return nil, nil, nil, newError("decode device response", err)
+		return nil, nil, nil, newError(ReasonMalformed, "decode device response", err)
 	}
 	doc, err := oid4vpmdoc.UnmarshalDeviceResponse(raw)
 	if err != nil {
-		return nil, nil, nil, newError("unmarshal device response", err)
+		return nil, nil, nil, newError(ReasonMalformed, "unmarshal device response", err)
 	}
 
 	_, unprotected, _, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
 	if err != nil {
-		return nil, nil, nil, newError("decode issuer auth", err)
+		return nil, nil, nil, newError(ReasonMalformed, "decode issuer auth", err)
 	}
 	issuerPub, issuerAlg, err := req.MdocIssuerKeys.ResolveMdocIssuerKey(ctx, unprotected.X5Chain, doc.DocType)
 	if err != nil {
-		return nil, nil, nil, newError("resolve issuer key", err)
+		return nil, nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
 	}
 
 	verified, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuerPub, issuerAlg, mdoc.VerifyOptions{Now: req.Now, MaxClockSkew: req.MaxClockSkew})
 	if err != nil {
-		return nil, nil, nil, newError("verify issuer signed", err)
+		return nil, nil, nil, newError(ReasonInvalidCredential, "verify issuer signed", err)
 	}
 	chain, err := CheckMdocIssuer(ctx, req.MdocIssuerKeys, unprotected.X5Chain, doc.DocType, issuerPub, verified)
 	if err != nil {
-		return nil, nil, nil, newError("check document signer", err)
+		return nil, nil, nil, newError(ReasonUntrustedIssuer, "check document signer", err)
 	}
 
 	thumbprintBytes, err := jwk.Thumbprint(&req.ResponseEncryptionKey.PublicKey)
@@ -591,27 +595,27 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	}
 
 	if doc.DeviceSigned.AuthType != mdoc.DeviceAuthSignature {
-		return nil, nil, nil, newError(fmt.Sprintf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType), nil)
+		return nil, nil, nil, newError(ReasonHolderBinding, fmt.Sprintf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType), nil)
 	}
 	deviceAlg, err := mdocAlgForKey(verified.DeviceKey)
 	if err != nil {
-		return nil, nil, nil, newError("device key", err)
+		return nil, nil, nil, newError(ReasonHolderBinding, "device key", err)
 	}
 	if err := mdoc.VerifyDeviceSignature(doc.DeviceSigned, verified.DeviceKey, deviceAlg, sessionTranscriptBytes, doc.DocType); err != nil {
-		return nil, nil, nil, newError("verify device signature", err)
+		return nil, nil, nil, newError(ReasonHolderBinding, "verify device signature", err)
 	}
 
 	if err := mdoc.CheckKeyAuthorizations(doc.DeviceSigned.NameSpaces, verified.KeyAuthorizations); err != nil {
-		return nil, nil, nil, newError("check key authorizations", err)
+		return nil, nil, nil, newError(ReasonHolderBinding, "check key authorizations", err)
 	}
 
 	if err := cq.SatisfiedByMdocClaims(verified.DocType, verified.NameSpaces); err != nil {
-		return nil, nil, nil, newError("satisfied by mdoc claims", err)
+		return nil, nil, nil, newError(ReasonNotAnswered, "satisfied by mdoc claims", err)
 	}
 
 	if len(cq.TrustedAuthorities) > 0 {
 		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, chain); err != nil {
-			return nil, nil, nil, newError(errCategoryTrustedAuthorities, err)
+			return nil, nil, nil, newError(ReasonUntrustedIssuer, errCategoryTrustedAuthorities, err)
 		}
 	}
 

@@ -438,14 +438,14 @@ func (t *Transactions) verify(ctx context.Context, tx Transaction, responseJWE s
 		// An error response is this request's only if it echoes the
 		// request's state.
 		if subtle.ConstantTimeCompare([]byte(walletErr.State), []byte(tx.State)) != 1 {
-			return VerifyResponseResult{}, newError("the error response's state doesn't match the request", nil)
+			return VerifyResponseResult{}, newError(ReasonStateMismatch, "the error response's state doesn't match the request", nil)
 		}
 		return VerifyResponseResult{}, err
 	case err != nil:
 		return VerifyResponseResult{}, err
 	}
 	if subtle.ConstantTimeCompare([]byte(parsed.State), []byte(tx.State)) != 1 {
-		return VerifyResponseResult{}, newError("the response's state doesn't match the request", nil)
+		return VerifyResponseResult{}, newError(ReasonStateMismatch, "the response's state doesn't match the request", nil)
 	}
 	req := t.cfg.Verify
 	req.Query, req.Response, req.ExpectedNonce, req.ResponseEncryptionKey = tx.Query, parsed, tx.Nonce, tx.ResponseDecryptionKey
