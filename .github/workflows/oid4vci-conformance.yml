@@ -87,6 +87,22 @@ jobs:
         working-directory: /tmp/conformance-suite
         run: docker compose -f docker-compose-prebuilt.yml up -d
 
+      # The suite tracks master and :latest (see the header), so record
+      # what this run tested: a failure can then be told apart as ours
+      # or the suite's, by comparing with an earlier run's file.
+      - name: Record the suite's version
+        working-directory: /tmp/conformance-suite
+        run: |
+          {
+            echo "suite commit: $(git rev-parse HEAD) ($(git log -1 --format=%cI))"
+            for c in $(docker compose -f docker-compose-prebuilt.yml ps -q); do
+              image=$(docker inspect --format '{{.Config.Image}}' "$c")
+              digest=$(docker image inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}' "$image")
+              echo "$(docker inspect --format '{{.Name}}' "$c" | tr -d /): $image $digest"
+            done
+          } | tee "${{ runner.temp }}/suite-version.txt"
+          { echo '### OIDF suite version'; echo '```'; cat "${{ runner.temp }}/suite-version.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
       # run-oid4vci.sh itself waits for the suite to become reachable,
       # runs both OID4VCI roles (each role's own script brings up/
       # rebuilds its own container in place, generating fresh key
@@ -124,6 +140,7 @@ jobs:
           path: |
             ${{ runner.temp }}/conformance-results
             ${{ runner.temp }}/conformance-run.log
+            ${{ runner.temp }}/suite-version.txt
           retention-days: 14
 
       - name: Tear down containers
