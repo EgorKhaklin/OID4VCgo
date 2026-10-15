@@ -36,9 +36,11 @@ func (w *Wallet) FetchCredentialIssuerMetadata(ctx context.Context, issuerURL st
 	if err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: %w", err)
 	}
-	res, err := w.metadataFetcher.Fetch(ctx, fapihttp.FetchRequest{
-		URL: target, ExpectedContentType: "application/json", AlternateContentTypes: []string{"application/jwt"},
-	})
+	req := fapihttp.FetchRequest{URL: target, ExpectedContentType: "application/json", AlternateContentTypes: []string{"application/jwt"}}
+	if w.cfg.IssuerMetadataRoots != nil {
+		req.Accept = acceptSignedMetadata
+	}
+	res, err := w.fetcher.Fetch(ctx, req)
 	if err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: %w", err)
 	}

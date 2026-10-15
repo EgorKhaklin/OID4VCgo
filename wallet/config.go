@@ -124,9 +124,6 @@ type Wallet struct {
 	cfg     Config
 	deps    Dependencies
 	fetcher *fapihttp.Client
-	// metadataFetcher fetches Credential Issuer Metadata: fetcher, or
-	// with IssuerMetadataRoots one that also asks for signed metadata.
-	metadataFetcher *fapihttp.Client
 }
 
 // New validates cfg and deps and returns a ready-to-use Wallet.
@@ -169,13 +166,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("wallet: config: fetch: %w", err)
 	}
-	w := &Wallet{cfg: cfg, deps: deps, fetcher: fetcher, metadataFetcher: fetcher}
-	if cfg.IssuerMetadataRoots != nil {
-		if w.metadataFetcher, err = newSignedMetadataFetcher(deps.HTTP, cfg.Fetch); err != nil {
-			return nil, fmt.Errorf("wallet: config: fetch: %w", err)
-		}
-	}
-	return w, nil
+	return &Wallet{cfg: cfg, deps: deps, fetcher: fetcher}, nil
 }
 
 // defaultHTTPTimeout bounds each request of the HTTP client New builds

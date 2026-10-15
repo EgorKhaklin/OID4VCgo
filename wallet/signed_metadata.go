@@ -5,10 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"time"
-
-	"github.com/idfoundry/fapigo/fapihttp"
 
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -22,39 +19,9 @@ const signedMetadataTyp = "openidvci-issuer-metadata+jwt"
 // be ahead of the Wallet's clock.
 const maxSignedMetadataClockSkew = time.Minute
 
-// newSignedMetadataFetcher is the Wallet's fetcher with an Accept header
-// asking for signed metadata ahead of plain JSON (OpenID4VCI §12.2.2):
-// the same hardened transport and limits, one header more.
-func newSignedMetadataFetcher(client fapihttp.HTTPClient, cfg fapihttp.Config) (*fapihttp.Client, error) {
-	if hc, ok := client.(*http.Client); ok {
-		accepting := *hc
-		base := hc.Transport
-		if base == nil {
-			base = http.DefaultTransport
-		}
-		accepting.Transport = acceptSignedMetadata{base}
-		return fapihttp.New(&accepting, cfg)
-	}
-	return fapihttp.New(acceptSignedMetadataClient{client}, cfg)
-}
-
-const acceptSignedMetadataHeader = "application/jwt, application/json;q=0.5"
-
-type acceptSignedMetadata struct{ base http.RoundTripper }
-
-func (a acceptSignedMetadata) RoundTrip(req *http.Request) (*http.Response, error) {
-	req = req.Clone(req.Context())
-	req.Header.Set("Accept", acceptSignedMetadataHeader)
-	return a.base.RoundTrip(req)
-}
-
-type acceptSignedMetadataClient struct{ base fapihttp.HTTPClient }
-
-func (a acceptSignedMetadataClient) Do(req *http.Request) (*http.Response, error) {
-	req = req.Clone(req.Context())
-	req.Header.Set("Accept", acceptSignedMetadataHeader)
-	return a.base.Do(req)
-}
+// acceptSignedMetadata asks for signed metadata ahead of plain JSON
+// (OpenID4VCI §12.2.2).
+const acceptSignedMetadata = "application/jwt, application/json;q=0.5"
 
 // metadataJSON returns a fetched metadata body as JSON: a signed
 // response's verified claims, or a plain JSON body, refused when
