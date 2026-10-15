@@ -80,6 +80,10 @@ type config struct {
 	// which a certificate in the verified chain must have
 	// (walletflow.TLSPins). A mismatch fails the request as tls_pin.
 	TLSPins map[string][]string `json:"tls_pins,omitempty"`
+	// StatusIssuers are the Status Issuers that may sign a credential
+	// issuer's status lists on its behalf: issuer → Status Issuer
+	// identifiers (walletflow.Config.StatusIssuers).
+	StatusIssuers map[string][]string `json:"status_issuers,omitempty"`
 	// Locales are the holder's preferred languages (BCP 47, most
 	// preferred first), for issuers' display metadata.
 	Locales []string `json:"locales,omitempty"`
@@ -225,6 +229,7 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 	if wcfg.IssuerRoots, err = optionalCertPool("issuer_roots", cfg.IssuerRoots); err != nil {
 		return walletflow.Config{}, err
 	}
+	wcfg.StatusIssuers = cfg.StatusIssuers
 	verifierRoots, err := optionalCertPool("verifier_roots", cfg.VerifierRoots)
 	if err != nil {
 		return walletflow.Config{}, err

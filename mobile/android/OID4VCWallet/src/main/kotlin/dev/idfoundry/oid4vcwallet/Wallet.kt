@@ -151,6 +151,14 @@ public data class WalletConfiguration(
      * anchor with another role's roots.
      */
     @SerialName("registrar_require_eku") val registrarRequireEKU: String = "",
+    /**
+     * The Status Issuers that may sign a credential issuer's status lists
+     * on its behalf: credential issuer (an SD-JWT VC's `iss`) → Status
+     * Issuer identifiers, each recognized by a certificate under
+     * [issuerRoots] naming it. Without it, [Wallet.checkStatus] accepts
+     * only a status list the issuer signed itself.
+     */
+    @SerialName("status_issuers") val statusIssuers: Map<String, List<String>> = emptyMap(),
 ) {
     /** How an in-person response authenticates the mdoc (ISO/IEC 18013-5 §9.1.3). */
     @Serializable
