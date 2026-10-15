@@ -37,6 +37,16 @@ type Config struct {
 	// them, or it's refused. REQUIRED for StartIssuance.
 	IssuerRoots *x509.CertPool
 
+	// StatusIssuers are the Status Issuers that may sign a credential
+	// issuer's status lists on its behalf (draft-ietf-oauth-status-list):
+	// credential issuer (an SD-JWT VC's iss) → the identifiers of its
+	// Status Issuers, each recognized by a certificate under IssuerRoots
+	// naming it (a uniformResourceIdentifier, or for a "dns:" one a
+	// dNSName). CheckStatus otherwise accepts only a status list the
+	// credential's issuer signed itself, so another issuer under the
+	// same roots can't decide its status.
+	StatusIssuers map[string][]string
+
 	// IssuanceProfile is the profile issuance follows. The zero value,
 	// ProfileOpenID4VCI, follows the issuer's and Authorization Server's
 	// metadata; ProfileHAIP also refuses issuers outside HAIP 1.0.

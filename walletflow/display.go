@@ -2,7 +2,9 @@ package walletflow
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"net/url"
 	"strings"
 	"time"
@@ -140,9 +142,9 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 		Options: statuslist.VerifyOptions{Now: w.deps.Clock},
 	}
 	if iss, ok := c.Claims["iss"].(string); ok && !c.StatusListCWT {
-		// Its status is its issuer's to sign, not another issuer's
-		// under IssuerRoots.
-		checker.Options.Issuer = iss
+		// Its status is its issuer's to sign, or one of its Status
+		// Issuers', not another issuer's under IssuerRoots.
+		checker.Options = statusOptionsFor(checker.Options, iss, w.cfg.StatusIssuers[iss])
 	}
 	status, _, err := checker.Check(ctx, *c.StatusList, c.StatusListCWT)
 	if err != nil {
@@ -177,4 +179,28 @@ func statusValue(s statuslist.StatusType) string {
 		return StatusSuspended
 	}
 	return fmt.Sprintf("0x%02x", uint8(s))
+}
+
+// statusOptionsFor is opts for checking issuer's status list: signed by
+// issuer, or by one of statusIssuers, each matched by the name its
+// certificate carries (certchain.CheckIssuerName).
+func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, statusIssuers []string) statuslist.VerifyOptions {
+	if len(statusIssuers) == 0 {
+		opts.Issuer = issuer
+		return opts
+	}
+	opts.LeafPolicy = func(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
+		if certchain.CheckIssuerName(leaf, issuer) == nil {
+			return nil
+		}
+		for _, s := range statusIssuers {
+			if certchain.CheckIssuerName(leaf, s) == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("the status list's signer is neither %q nor one of its Status Issuers", issuer)
+	}
+	// A Status Issuer's token may carry its own iss.
+	opts.Issuer = ""
+	return opts
 }

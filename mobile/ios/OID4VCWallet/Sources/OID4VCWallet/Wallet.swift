@@ -79,6 +79,12 @@ public struct WalletConfiguration: Codable, Sendable {
     /// Verifiers, status lists), not the app's own, such as to its
     /// Wallet Provider: pin that client yourself.
     public var tlsPins: [String: [String]]
+    /// The Status Issuers that may sign a credential issuer's status lists
+    /// on its behalf: credential issuer (an SD-JWT VC's `iss`) → Status
+    /// Issuer identifiers, each recognized by a certificate under
+    /// `issuerRoots` naming it. Without it, `checkStatus` accepts only a
+    /// status list the issuer signed itself.
+    public var statusIssuers: [String: [String]]
     /// The profile issuance follows.
     public var issuanceProfile: IssuanceProfile
     /// How an in-person response authenticates the mdoc. `.macPreferred`
@@ -132,7 +138,8 @@ public struct WalletConfiguration: Codable, Sendable {
                 development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
                 copyPolicy: CopyPolicy = .perPresentation, issuanceProfile: IssuanceProfile = .openID4VCI,
                 tlsPins: [String: [String]] = [:], proximityDeviceAuth: ProximityDeviceAuth = .signature,
-                verifierRequireEKU: String = "", registrarRequireEKU: String = "") {
+                verifierRequireEKU: String = "", registrarRequireEKU: String = "",
+                statusIssuers: [String: [String]] = [:]) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -151,6 +158,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.proximityDeviceAuth = proximityDeviceAuth
         self.verifierRequireEKU = verifierRequireEKU
         self.registrarRequireEKU = registrarRequireEKU
+        self.statusIssuers = statusIssuers
     }
 
     enum CodingKeys: String, CodingKey {
@@ -161,6 +169,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy", issuanceProfile = "issuance_profile"
         case tlsPins = "tls_pins", proximityDeviceAuth = "proximity_device_auth"
         case verifierRequireEKU = "verifier_require_eku", registrarRequireEKU = "registrar_require_eku"
+        case statusIssuers = "status_issuers"
     }
 
     public init(from decoder: Decoder) throws {
@@ -182,7 +191,8 @@ public struct WalletConfiguration: Codable, Sendable {
                   tlsPins: try c.decodeIfPresent([String: [String]].self, forKey: .tlsPins) ?? [:],
                   proximityDeviceAuth: try c.decodeIfPresent(ProximityDeviceAuth.self, forKey: .proximityDeviceAuth) ?? .signature,
                   verifierRequireEKU: try c.decodeIfPresent(String.self, forKey: .verifierRequireEKU) ?? "",
-                  registrarRequireEKU: try c.decodeIfPresent(String.self, forKey: .registrarRequireEKU) ?? "")
+                  registrarRequireEKU: try c.decodeIfPresent(String.self, forKey: .registrarRequireEKU) ?? "",
+                  statusIssuers: try c.decodeIfPresent([String: [String]].self, forKey: .statusIssuers) ?? [:])
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
