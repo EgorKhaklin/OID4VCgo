@@ -132,6 +132,9 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
+	if err := certchain.CheckNoAnchor(chain); err != nil {
+		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
+	}
 	leaf, err := certchain.VerifyLeaf(chain, p.IssuerRoots)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)

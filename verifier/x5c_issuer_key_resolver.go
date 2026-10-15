@@ -49,12 +49,15 @@ type X5CIssuerKeyResolver struct {
 }
 
 // ResolveIssuerKey implements SDJWTVCIssuerKeyResolver.
-func (r X5CIssuerKeyResolver) ResolveIssuerKey(_ context.Context, header, payload map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
+func (r X5CIssuerKeyResolver) ResolveIssuerKey(ctx context.Context, header, payload map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
 	ders, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
 		return nil, "", err
 	}
-	leaf, err := certchain.VerifyLeafWithPolicy(ders, r.Roots, r.LeafPolicy)
+	if err := certchain.CheckNoAnchor(ders); err != nil {
+		return nil, "", err
+	}
+	leaf, err := certchain.VerifyLeafWithPolicyAt(ders, r.Roots, r.LeafPolicy, verificationTime(ctx))
 	if err != nil {
 		return nil, "", err
 	}

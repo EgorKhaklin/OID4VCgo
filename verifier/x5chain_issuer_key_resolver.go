@@ -44,12 +44,12 @@ type X5ChainIssuerKeyResolver struct {
 }
 
 // ResolveMdocIssuerKey implements MdocIssuerKeyResolver.
-func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerKey(_ context.Context, x5chain [][]byte, docType string) (crypto.PublicKey, oid4vci.COSEAlg, error) {
+func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerKey(ctx context.Context, x5chain [][]byte, docType string) (crypto.PublicKey, oid4vci.COSEAlg, error) {
 	roots, err := r.rootsFor(docType)
 	if err != nil {
 		return nil, 0, err
 	}
-	leaf, err := certchain.VerifyLeafWithPolicy(x5chain, roots, r.LeafPolicy)
+	leaf, err := certchain.VerifyLeafWithPolicyAt(x5chain, roots, r.LeafPolicy, verificationTime(ctx))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -69,12 +69,12 @@ func (r X5ChainIssuerKeyResolver) Capabilities() KeySourceCapabilities {
 
 // ResolveMdocIssuerChains implements MdocIssuerChainResolver: the
 // certificate paths x5chain verifies on, under Roots and LeafPolicy.
-func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerChains(_ context.Context, x5chain [][]byte, docType string) ([][]*x509.Certificate, error) {
+func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerChains(ctx context.Context, x5chain [][]byte, docType string) ([][]*x509.Certificate, error) {
 	roots, err := r.rootsFor(docType)
 	if err != nil {
 		return nil, err
 	}
-	leaf, chains, err := certchain.VerifyChains(x5chain, roots)
+	leaf, chains, err := certchain.VerifyChainsAt(x5chain, roots, verificationTime(ctx))
 	if err != nil {
 		return nil, err
 	}
