@@ -89,8 +89,12 @@ func VerifyMACMax(key []byte, mac0, detachedPayload, externalAAD []byte, maxByte
 	if len(mac0) > maxBytes {
 		return Headers{}, Headers{}, fmt.Errorf("cose: COSE_Mac0 is %d bytes, exceeds the %d byte limit", len(mac0), maxBytes)
 	}
+	body, err := untag(mac0, mac0TagByte, "COSE_Mac0")
+	if err != nil {
+		return Headers{}, Headers{}, err
+	}
 	var raw rawMac0
-	if unmarshalErr := decMode.Unmarshal(mac0, &raw); unmarshalErr != nil {
+	if unmarshalErr := decMode.Unmarshal(body, &raw); unmarshalErr != nil {
 		return Headers{}, Headers{}, fmt.Errorf("cose: unmarshal COSE_Mac0: %w", unmarshalErr)
 	}
 	if raw.Payload != nil {

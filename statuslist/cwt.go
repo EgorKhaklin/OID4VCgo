@@ -115,25 +115,20 @@ func issueTokenCWT(signer crypto.Signer, alg cose.Alg, claims TokenClaims, prote
 	return sign1, nil
 }
 
-// coseSign1TagByte is the initial byte of a COSE_Sign1_Tagged (CBOR tag
-// 18, major type 6: 0xc0|18).
-const coseSign1TagByte = 0xd2
-
 // VerifyTokenCWT verifies a Status List Token in CWT format's signature
 // and typ header, and rejects an expired token — the CWT counterpart to
 // VerifyToken. It does not check sub against a specific Referenced
 // Token — that's Check's job.
 func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opts VerifyOptions) (TokenClaims, error) {
-	// Tagged (#6.18, the single byte 0xd2) or untagged COSE_Sign1:
-	// draft-14's own example is untagged, draft-12's was tagged, and the
-	// normative text requires neither.
+	// COSE_Sign1, tagged (#6.18) or untagged; nothing else in front of
+	// it, so a CWT tag (61) is refused. Draft-14 §5.2, which HAIP pins,
+	// requires neither form, and its own example is untagged; draft-21
+	// §5.2 requires COSE_Sign1_Tagged and forbids the CWT tag. Issuing
+	// tagged meets both; verifying accepts what draft-14 allows, short
+	// of the CWT tag, which no draft-14 example uses.
 	// As large as a JWT Status List Token may be: a CWT list grows with
 	// the credentials it covers just the same.
-	verify := cose.VerifyMax
-	if len(token) > 0 && token[0] == coseSign1TagByte {
-		verify = cose.VerifyTaggedMax
-	}
-	protected, _, raw, err := verify(alg, pub, token, nil, maxTokenBytes)
+	protected, _, raw, err := cose.VerifyMax(alg, pub, token, nil, maxTokenBytes)
 	if err != nil {
 		return TokenClaims{}, fmt.Errorf("statuslist: verify CWT signature: %w", err)
 	}
