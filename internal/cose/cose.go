@@ -401,11 +401,40 @@ func decodeRaw(sign1 []byte, maxBytes int) (rawSign1, error) {
 	if len(sign1) > maxBytes {
 		return rawSign1{}, fmt.Errorf("cose: COSE_Sign1 is %d bytes, exceeds the %d byte limit", len(sign1), maxBytes)
 	}
+	body, err := untag(sign1, sign1TagByte, "COSE_Sign1")
+	if err != nil {
+		return rawSign1{}, err
+	}
 	var raw rawSign1
-	if err := decMode.Unmarshal(sign1, &raw); err != nil {
+	if err := decMode.Unmarshal(body, &raw); err != nil {
 		return rawSign1{}, fmt.Errorf("cose: unmarshal COSE_Sign1: %w", err)
 	}
 	return raw, nil
+}
+
+// sign1TagByte and mac0TagByte are COSE_Sign1_Tagged's and
+// COSE_Mac0_Tagged's tags (RFC 9052 §2: #6.18, #6.17) in their one-byte
+// encoding.
+const (
+	sign1TagByte = 0xc0 | sign1Tag
+	mac0TagByte  = 0xc0 | 17
+)
+
+// untag returns b's COSE array, with the structure's own tag (tagByte)
+// stripped if it carries it. The structure may arrive with or without
+// its tag (RFC 9052 §2 leaves that to the application, and issuers
+// differ), but anything else in front of the array — another
+// structure's tag, a CWT tag (61), the tag twice — is refused, not
+// silently skipped: it says the bytes are something other than what
+// they're being verified as.
+func untag(b []byte, tagByte byte, name string) ([]byte, error) {
+	if len(b) > 0 && b[0] == tagByte {
+		b = b[1:]
+	}
+	if len(b) == 0 || b[0]>>5 != 4 { // CBOR major type 4: array
+		return nil, fmt.Errorf("cose: %s is not a CBOR array, untagged or tagged %d", name, tagByte&0x1f)
+	}
+	return b, nil
 }
 
 // sign1Tag is COSE_Sign1_Tagged's own tag number (RFC 9052 §4.2:
@@ -473,6 +502,9 @@ func stripSign1Tag(sign1 []byte, maxBytes int) ([]byte, error) {
 	}
 	if raw.Number != sign1Tag {
 		return nil, fmt.Errorf("cose: expected CBOR tag %d, got %d", sign1Tag, raw.Number)
+	}
+	if len(raw.Content) == 0 || raw.Content[0]>>5 != 4 {
+		return nil, errors.New("cose: COSE_Sign1_Tagged doesn't hold a COSE_Sign1 array")
 	}
 	return raw.Content, nil
 }

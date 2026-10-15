@@ -103,11 +103,7 @@ func CheckCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts
 
 // checkCWTX5Chain is CheckCWTX5Chain, before failClosed.
 func checkCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
-	decode := cose.DecodeUnverifiedMax
-	if len(token) > 0 && token[0] == coseSign1TagByte {
-		decode = cose.DecodeUnverifiedTaggedMax
-	}
-	protected, unprotected, _, err := decode(token, maxTokenBytes)
+	protected, unprotected, _, err := cose.DecodeUnverifiedMax(token, maxTokenBytes)
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: decode token: %w", err)
 	}
