@@ -122,7 +122,11 @@ var proofNegativeVectors = []proofVector{
 		proofs: func(t *testing.T, _ credentialEndpointFixture, n string) map[string][]string {
 			key := newP256(t)
 			return jwtProofs(proofWith(t, key, nil, n, func(h map[string]any) {
-				h["jwk"].(map[string]any)["d"] = base64.RawURLEncoding.EncodeToString(key.D.FillBytes(make([]byte, 32)))
+				d, err := key.Bytes()
+				if err != nil {
+					t.Fatal(err)
+				}
+				h["jwk"].(map[string]any)["d"] = base64.RawURLEncoding.EncodeToString(d)
 			}, nil))
 		}},
 	{id: "proof-aud-another-issuer", clause: "Appendix F.1 (aud)", code: issuer.ErrorInvalidProof,
