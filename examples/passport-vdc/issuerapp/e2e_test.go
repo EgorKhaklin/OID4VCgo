@@ -304,6 +304,13 @@ func TestVCTMetadata_IsValidTypeMetadata(t *testing.T) {
 	if err := doc.Validate(); err != nil || doc.VCT != env.IssuerURL+issuerapp.VCTPath || len(doc.Claims) == 0 {
 		t.Fatalf("type metadata = %+v, %v", doc, err)
 	}
+	// SD-JWT VC draft-19 §7.2: never sniffed, never active content.
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := resp.Header.Get("Content-Security-Policy"); got != "default-src 'none'" {
+		t.Errorf("Content-Security-Policy = %q, want default-src 'none'", got)
+	}
 }
 
 // recordingTransport records the Content-Type of every request to, and
