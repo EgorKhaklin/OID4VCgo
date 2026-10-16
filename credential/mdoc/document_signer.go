@@ -61,26 +61,32 @@ func CheckDocumentSigner(verified VerifiedMSO, chains [][]*x509.Certificate) ([]
 	}
 	var lastErr error
 	for _, chain := range chains {
-		// A custom resolver's paths: an empty one, or a nil certificate,
-		// verifies nothing.
-		if len(chain) == 0 || slices.Contains(chain, nil) {
-			lastErr = errors.New("mdoc: an empty document signer certificate path")
-			continue
+		if lastErr = checkSignerNamesItsIACA(chain); lastErr == nil {
+			return chain, nil
 		}
-		leaf, iaca := chain[0], chain[len(chain)-1]
-		// Annex B makes countryName mandatory in both certificates: two
-		// without one don't match.
-		if len(iaca.Subject.Country) == 0 || !slices.Equal(iaca.Subject.Country, leaf.Subject.Country) {
-			lastErr = fmt.Errorf("mdoc: document signer countryName %v differs from its IACA's %v", leaf.Subject.Country, iaca.Subject.Country)
-			continue
-		}
-		if len(iaca.Subject.Province) > 0 && len(leaf.Subject.Province) > 0 && !slices.Equal(iaca.Subject.Province, leaf.Subject.Province) {
-			lastErr = fmt.Errorf("mdoc: document signer stateOrProvinceName %v differs from its IACA's %v", leaf.Subject.Province, iaca.Subject.Province)
-			continue
-		}
-		return chain, nil
 	}
 	return nil, lastErr
+}
+
+// checkSignerNamesItsIACA checks a verified path's document signer
+// names the country, and any state or province, of the IACA at its
+// root.
+func checkSignerNamesItsIACA(chain []*x509.Certificate) error {
+	// A custom resolver's paths: an empty one, or a nil certificate,
+	// verifies nothing.
+	if len(chain) == 0 || slices.Contains(chain, nil) {
+		return errors.New("mdoc: an empty document signer certificate path")
+	}
+	leaf, iaca := chain[0], chain[len(chain)-1]
+	// Annex B makes countryName mandatory in both certificates: two
+	// without one don't match.
+	if len(iaca.Subject.Country) == 0 || !slices.Equal(iaca.Subject.Country, leaf.Subject.Country) {
+		return fmt.Errorf("mdoc: document signer countryName %v differs from its IACA's %v", leaf.Subject.Country, iaca.Subject.Country)
+	}
+	if len(iaca.Subject.Province) > 0 && len(leaf.Subject.Province) > 0 && !slices.Equal(iaca.Subject.Province, leaf.Subject.Province) {
+		return fmt.Errorf("mdoc: document signer stateOrProvinceName %v differs from its IACA's %v", leaf.Subject.Province, iaca.Subject.Province)
+	}
+	return nil
 }
 
 // checkIssuingAuthority checks namespace ns's issuing_country and

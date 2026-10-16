@@ -143,6 +143,21 @@ func checkKeySourceAssurance(name string, source any) error {
 	return nil
 }
 
+// checkProductionAttestationNonce refuses an attestation-type proof
+// without a Nonce Endpoint: without a c_nonce, such a proof has no
+// freshness, nor any binding to this issuer.
+func checkProductionAttestationNonce(cfg Config) error {
+	if !cfg.Endpoints.Nonce.IsZero() {
+		return nil
+	}
+	for id, cc := range cfg.CredentialConfigurationsSupported {
+		if _, ok := cc.ProofTypesSupported[oid4vci.ProofTypeAttestation]; ok {
+			return fmt.Errorf("credential_configurations_supported[%q]: the %q proof type requires endpoints.nonce under AssuranceProduction (without a c_nonce an attestation-type proof has no freshness or binding to this issuer)", id, oid4vci.ProofTypeAttestation)
+		}
+	}
+	return nil
+}
+
 // checkProductionAssurance runs checkStoreAssurance/checkKeySourceAssurance
 // against every store or key source New's own existing
 // conditional-required checks have already confirmed is actually
@@ -159,12 +174,8 @@ func checkProductionAssurance(cfg Config, deps Dependencies) error {
 	if err := checkProductionHTTPS(cfg); err != nil {
 		return err
 	}
-	if cfg.Endpoints.Nonce.IsZero() {
-		for id, cc := range cfg.CredentialConfigurationsSupported {
-			if _, ok := cc.ProofTypesSupported[oid4vci.ProofTypeAttestation]; ok {
-				return fmt.Errorf("credential_configurations_supported[%q]: the %q proof type requires endpoints.nonce under AssuranceProduction (without a c_nonce an attestation-type proof has no freshness or binding to this issuer)", id, oid4vci.ProofTypeAttestation)
-			}
-		}
+	if err := checkProductionAttestationNonce(cfg); err != nil {
+		return err
 	}
 	if deps.PreAuthorizedCodes != nil && cfg.PreAuthorizedCodeClientAuthentication == nil {
 		return fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (issuer.AnonymousPreAuthorizedCode{} accepts the redemption without client authentication, which HAIP 1.0 §4.4.1 doesn't allow)")

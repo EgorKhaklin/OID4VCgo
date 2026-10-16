@@ -111,37 +111,56 @@ func selectClaims(tree map[string]any, path []any) ([]bool, error) {
 }
 
 // stepInto is what step selects in v: none when v hasn't it.
-func stepInto(v any, step any) ([]any, error) {
+func stepInto(v, step any) ([]any, error) {
 	rv := reflect.ValueOf(v)
 	switch {
 	case step == nil:
-		if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
-			return nil, nil
-		}
-		out := make([]any, rv.Len())
-		for i := range out {
-			out[i] = rv.Index(i).Interface()
-		}
-		return out, nil
+		return everyElement(rv), nil
 	case isString(step):
-		if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
-			return nil, nil
-		}
-		child := rv.MapIndex(reflect.ValueOf(step.(string)).Convert(rv.Type().Key()))
-		if !child.IsValid() {
-			return nil, nil
-		}
-		return []any{child.Interface()}, nil
-	default:
-		idx, ok := pathIndex(step)
-		if !ok {
-			return nil, errors.New("a path element is neither a string, null nor a non-negative integer")
-		}
-		if (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) || idx >= rv.Len() {
-			return nil, nil
-		}
-		return []any{rv.Index(idx).Interface()}, nil
+		return member(rv, step.(string)), nil
 	}
+	idx, ok := pathIndex(step)
+	if !ok {
+		return nil, errors.New("a path element is neither a string, null nor a non-negative integer")
+	}
+	return element(rv, idx), nil
+}
+
+func isArray(rv reflect.Value) bool {
+	return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
+}
+
+// everyElement is every element of rv, none when it isn't an array.
+func everyElement(rv reflect.Value) []any {
+	if !isArray(rv) {
+		return nil
+	}
+	out := make([]any, rv.Len())
+	for i := range out {
+		out[i] = rv.Index(i).Interface()
+	}
+	return out
+}
+
+// member is rv's property name, none when rv isn't an object or hasn't
+// it.
+func member(rv reflect.Value, name string) []any {
+	if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
+		return nil
+	}
+	child := rv.MapIndex(reflect.ValueOf(name).Convert(rv.Type().Key()))
+	if !child.IsValid() {
+		return nil
+	}
+	return []any{child.Interface()}
+}
+
+// element is rv's element idx, none when rv isn't an array that long.
+func element(rv reflect.Value, idx int) []any {
+	if !isArray(rv) || idx >= rv.Len() {
+		return nil
+	}
+	return []any{rv.Index(idx).Interface()}
 }
 
 func isString(v any) bool {

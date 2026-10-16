@@ -127,34 +127,56 @@ func selectElements(node any, byDigest map[string]Disclosure, index int, rest []
 	if !ok {
 		return fmt.Errorf("sdjwtvc: select disclosures: path element %v: not an array", indexComponent(index))
 	}
-	position := 0
-	for _, el := range arr {
-		value, digest := el, ""
-		if ref, isRef := disclosureRefDigest(el); isRef {
-			d, found := byDigest[ref]
-			if !found {
-				continue // a decoy, which the holder's credential doesn't have
-			}
-			value, digest = d.Value, ref
+	elements := resolveElements(arr, byDigest)
+	if index != -1 {
+		if index >= len(elements) {
+			return nil
 		}
-		if index == -1 || position == index {
-			if index == -1 && !walkable(value, rest) {
-				position++
-				continue
-			}
-			if digest != "" {
-				selected[digest] = byDigest[digest]
-			}
-			if err := selectPath(value, byDigest, rest, selected); err != nil {
-				return err
-			}
-			if index != -1 {
-				return nil
-			}
+		return selectElement(elements[index], byDigest, rest, selected)
+	}
+	for _, el := range elements {
+		if !walkable(el.value, rest) {
+			continue
 		}
-		position++
+		if err := selectElement(el, byDigest, rest, selected); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// arrayElement is an array element as the holder's credential has it:
+// its value, and the digest of the Disclosure it came from, if any.
+type arrayElement struct {
+	value  any
+	digest string
+}
+
+// resolveElements is arr with each disclosure reference resolved, and
+// a decoy, which the holder's credential has no Disclosure for, left
+// out: indices count the elements the credential has.
+func resolveElements(arr []any, byDigest map[string]Disclosure) []arrayElement {
+	out := make([]arrayElement, 0, len(arr))
+	for _, el := range arr {
+		ref, isRef := disclosureRefDigest(el)
+		if !isRef {
+			out = append(out, arrayElement{value: el})
+			continue
+		}
+		if d, found := byDigest[ref]; found {
+			out = append(out, arrayElement{value: d.Value, digest: ref})
+		}
+	}
+	return out
+}
+
+// selectElement selects el, its Disclosure when it came from one, and
+// what rest selects inside it.
+func selectElement(el arrayElement, byDigest map[string]Disclosure, rest []any, selected map[string]Disclosure) error {
+	if el.digest != "" {
+		selected[el.digest] = byDigest[el.digest]
+	}
+	return selectPath(el.value, byDigest, rest, selected)
 }
 
 // walkable reports whether value has the type rest's first component

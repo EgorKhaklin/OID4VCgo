@@ -160,7 +160,7 @@ func TestX5C_SignerIsTheIssuer(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := StatusListRef{Idx: 0, URI: x5cTestURI}
-	token := func(issuer string, iss string) string {
+	token := func(issuer, iss string) string {
 		t.Helper()
 		cert, key := issuerSigner(t, ca, caKey, issuer)
 		claims := TokenClaims{Sub: x5cTestURI, Iat: time.Now().Unix(), StatusList: sl}
