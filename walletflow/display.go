@@ -2,7 +2,11 @@ package walletflow
 
 import (
 	"context"
+	"crypto"
+	"crypto/x509"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"net/url"
 	"strings"
 	"time"
@@ -140,9 +144,9 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 		Options: statuslist.VerifyOptions{Now: w.deps.Clock},
 	}
 	if iss, ok := c.Claims["iss"].(string); ok && !c.StatusListCWT {
-		// Its status is its issuer's to sign, not another issuer's
-		// under IssuerRoots.
-		checker.Options.Issuer = iss
+		// Its status is its issuer's to sign, or one of its Status
+		// Issuers', not another issuer's under IssuerRoots.
+		checker.Options = statusOptionsFor(checker.Options, iss, signerKey(c.Credential), w.cfg.StatusIssuers[iss])
 	}
 	status, _, err := checker.Check(ctx, *c.StatusList, c.StatusListCWT)
 	if err != nil {
@@ -177,4 +181,48 @@ func statusValue(s statuslist.StatusType) string {
 		return StatusSuspended
 	}
 	return fmt.Sprintf("0x%02x", uint8(s))
+}
+
+// statusOptionsFor is opts for checking issuer's status list: signed
+// with issuerKey, the key that signed the credential, or by a
+// certificate naming issuer, or one naming one of statusIssuers
+// (certchain.CheckIssuerName).
+func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, issuerKey crypto.PublicKey, statusIssuers []string) statuslist.VerifyOptions {
+	if len(statusIssuers) == 0 {
+		opts.Issuer, opts.IssuerKey = issuer, issuerKey
+		return opts
+	}
+	opts.LeafPolicy = func(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
+		if certchain.SameKey(leaf.PublicKey, issuerKey) || certchain.CheckIssuerName(leaf, issuer) == nil {
+			return nil
+		}
+		for _, s := range statusIssuers {
+			if certchain.CheckIssuerName(leaf, s) == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("the status list's signer is neither %q nor one of its Status Issuers", issuer)
+	}
+	// A Status Issuer's token may carry its own iss.
+	opts.Issuer = ""
+	return opts
+}
+
+// signerKey is the key in an SD-JWT VC's x5c leaf, verified when the
+// credential was received; nil when it has none.
+func signerKey(credential string) crypto.PublicKey {
+	issuerJWT, _, _ := strings.Cut(credential, "~")
+	header, _, err := jose.DecodeUnverified(issuerJWT)
+	if err != nil {
+		return nil
+	}
+	ders, err := certchain.X5CDERsFromHeader(header)
+	if err != nil || len(ders) == 0 {
+		return nil
+	}
+	leaf, err := x509.ParseCertificate(ders[0])
+	if err != nil {
+		return nil
+	}
+	return leaf.PublicKey
 }

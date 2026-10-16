@@ -136,27 +136,39 @@ func decompress(b []byte) ([]byte, error) {
 }
 
 // decompressedByte is the byte at offset idx of b's decompressed form,
-// read in constant memory: the bytes before it are discarded as they
-// inflate. ok is false when the stream ends before it. The stream's
-// checksum is never reached, so it isn't checked: the Status List
-// Token's signature already covers the compressed bytes.
+// read in constant memory: the rest of the stream is inflated and
+// discarded. ok is false when the stream ends before idx. The whole
+// stream is read, to its checksum, even past idx: a truncated or
+// corrupt list isn't a valid one (draft-14 §8.3 step 5), and its
+// signature doesn't make it one, since the Issuer signed the bytes it
+// sent. Like decompress, it refuses a list that inflates past
+// maxDecompressedSize.
 func decompressedByte(b []byte, idx int) (value byte, ok bool, err error) {
 	r, err := zlib.NewReader(bytes.NewReader(b))
 	if err != nil {
 		return 0, false, fmt.Errorf("statuslist: create zlib reader: %w", err)
 	}
-	if _, err := io.CopyN(io.Discard, r, int64(idx)); err != nil {
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+	bounded := io.LimitReader(r, maxDecompressedSize+1)
+	if _, err := io.CopyN(io.Discard, bounded, int64(idx)); err != nil {
+		if errors.Is(err, io.EOF) {
+			// The stream ended, and was complete: idx is past its end.
 			return 0, false, nil
 		}
 		return 0, false, fmt.Errorf("statuslist: decompress: %w", err)
 	}
 	var one [1]byte
-	if _, err := io.ReadFull(r, one[:]); err != nil {
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+	if _, err := io.ReadFull(bounded, one[:]); err != nil {
+		if errors.Is(err, io.EOF) {
 			return 0, false, nil
 		}
 		return 0, false, fmt.Errorf("statuslist: decompress: %w", err)
+	}
+	rest, err := io.Copy(io.Discard, bounded)
+	if err != nil {
+		return 0, false, fmt.Errorf("statuslist: decompress: %w", err)
+	}
+	if int64(idx)+1+rest > maxDecompressedSize {
+		return 0, false, fmt.Errorf("statuslist: decompress: decompressed size exceeds %d bytes", maxDecompressedSize)
 	}
 	return one[0], true, nil
 }

@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"fmt"
 
@@ -59,10 +60,11 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 // check. A credential with no status reference passes: it has no
 // status to check.
 //
-// An SD-JWT VC's Status List Token must be signed by its issuer: a
-// certificate naming the credential's iss, or without one the URI its
-// own certificate names (statuslist.VerifyOptions.Issuer), so another
-// issuer's certificate under the same roots can't decide its status.
+// An SD-JWT VC's Status List Token must be signed by its issuer, so
+// another issuer's certificate under the same roots can't decide its
+// status: with the key that signed the credential, or by a certificate
+// naming the credential's iss, or without one the URI its own
+// certificate names (statuslist.VerifyOptions.Issuer).
 // Where status lists come from a separate Status Issuer, use
 // RequireValidStatusFrom.
 func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id string, result VerifyResponseResult) error {
@@ -94,7 +96,7 @@ func RequireValidStatusFrom(checker statuslist.Checker, statusIssuers StatusIssu
 				if !cwt {
 					// Its status list is its issuer's, or its Status
 					// Issuer's, to sign.
-					c.Options = statusOptionsFor(checker.Options, vc.issuerName(), statusIssuers)
+					c.Options = statusOptionsFor(checker.Options, vc.issuerName(), vc.issuerKey(), statusIssuers)
 				}
 				err = c.RequireValid(ctx, ref, cwt)
 			}
@@ -109,9 +111,9 @@ func RequireValidStatusFrom(checker statuslist.Checker, statusIssuers StatusIssu
 // statusOptionsFor is opts for checking issuer's status list: signed by
 // issuer, or with statusIssuers, by issuer or a Status Issuer it
 // accepts for issuer.
-func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, statusIssuers StatusIssuerPolicy) statuslist.VerifyOptions {
+func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, issuerKey crypto.PublicKey, statusIssuers StatusIssuerPolicy) statuslist.VerifyOptions {
 	if statusIssuers == nil || issuer == "" {
-		opts.Issuer = issuer
+		opts.Issuer, opts.IssuerKey = issuer, issuerKey
 		return opts
 	}
 	base := opts.LeafPolicy
@@ -121,7 +123,7 @@ func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, statusIssuer
 				return err
 			}
 		}
-		if certchain.CheckIssuerName(leaf, issuer) == nil {
+		if certchain.SameKey(leaf.PublicKey, issuerKey) || certchain.CheckIssuerName(leaf, issuer) == nil {
 			return nil
 		}
 		if err := statusIssuers(issuer, leaf, chains); err != nil {
@@ -149,4 +151,17 @@ func (vc VerifiedCredential) issuerName() string {
 		return ""
 	}
 	return leaf.URIs[0].String()
+}
+
+// issuerKey is the public key that signed vc, from the issuer chain it
+// was verified with; nil without one.
+func (vc VerifiedCredential) issuerKey() crypto.PublicKey {
+	if len(vc.IssuerChain) == 0 {
+		return nil
+	}
+	leaf, err := x509.ParseCertificate(vc.IssuerChain[0])
+	if err != nil {
+		return nil
+	}
+	return leaf.PublicKey
 }

@@ -131,6 +131,16 @@ type VerifyResponseRequest struct {
 	// Credential Query declares TrustedAuthorities.
 	TrustedAuthorities dcql.TrustedAuthoritiesChecker
 
+	// IssuerAuthorized, if set, is asked for each presentation that
+	// otherwise verified whether its issuer may issue a credential of
+	// the type it's accepted as (see IssuerAuthorization), and an error
+	// discards that presentation as ReasonUntrustedIssuer. Without it,
+	// any issuer the key resolvers trust is accepted for any type the
+	// query asks for, which is enough only where every trusted issuer
+	// may issue every requested type. SD-JWT VC draft-19 §7.7 requires
+	// the check, through this or the trust configuration itself.
+	IssuerAuthorized func(ctx context.Context, a IssuerAuthorization) error
+
 	// ResponseEncryptionKey is the same ephemeral private key a prior
 	// BuildAuthorizationRequest/BuildDCAPIAuthorizationRequest call
 	// returned as ResponseDecryptionKey. REQUIRED if Query requests
@@ -192,8 +202,11 @@ type VerifiedCredential struct {
 	// MdocIssuerChainResolver) verified, without the trust anchor: the
 	// IssuerAuth x5chain is unprotected, so the holder could edit it; a
 	// resolver that verifies no chain gives none. The issuer is that
-	// leaf's subject: X5CIssuerKeyResolver refuses an SD-JWT VC whose
-	// "iss" doesn't name it (certchain's CheckIssuerName rule).
+	// leaf's subject. An SD-JWT VC's "iss" in Claims is the issuer's
+	// claim, not checked against the leaf unless
+	// X5CIssuerKeyResolver.RequireIssuerName is set (SD-JWT VC §2.5
+	// doesn't require them to correspond): don't rely on it as
+	// authenticated otherwise.
 	IssuerChain [][]byte
 }
 
@@ -291,6 +304,10 @@ type DiscardedPresentation struct {
 // id, and every one of them is verified and returned; when false (the
 // default), more than one is a hard error.
 func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest) (VerifyResponseResult, error) {
+	if req.Now != nil {
+		// Certificates are valid, or not, at the verification's instant.
+		ctx = WithVerificationTime(ctx, req.Now())
+	}
 	if err := req.Query.Validate(); err != nil {
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: query: %w", err)
 	}
@@ -428,6 +445,9 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 			claims, status, chain, err = v.verifyMdocPresentation(ctx, cq, presented, req)
 		default:
 			return nil, nil, fmt.Errorf("format %q is not yet supported", cq.Format)
+		}
+		if err == nil {
+			err = authorizeIssuer(ctx, req, cq, claims, chain)
 		}
 		var failed *Error
 		if errors.As(err, &failed) {

@@ -1,8 +1,6 @@
 package verifier
 
 import (
-	"fmt"
-
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
 
@@ -20,11 +18,11 @@ import (
 func ResponseKeyID(responseJWE string) (string, error) {
 	header, err := jwe.DecodeHeader(responseJWE)
 	if err != nil {
-		return "", fmt.Errorf("verifier: response key id: %w", err)
+		return "", newError(ReasonMalformed, "response key id", err)
 	}
 	kid, _ := header["kid"].(string)
 	if kid == "" {
-		return "", fmt.Errorf("verifier: response key id: the JWE header has no kid")
+		return "", newError(ReasonMalformed, "response key id: the JWE header has no kid", nil)
 	}
 	return kid, nil
 }

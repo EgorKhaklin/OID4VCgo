@@ -92,7 +92,7 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opt
 	if err != nil {
 		return nil, nil, fmt.Errorf("sdjwtvc: verify issuer JWT: %w", err)
 	}
-	if typ, _ := header["typ"].(string); typ != TypHeader && typ != LegacyTypHeader {
+	if typ, _ := header["typ"].(string); typ != TypHeader {
 		return nil, nil, fmt.Errorf("sdjwtvc: issuer JWT typ is %q, want %q", typ, TypHeader)
 	}
 
@@ -133,7 +133,15 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opt
 		hashAlg = HashAlg(declared)
 	}
 
+	if raw, present := decoded["aka_vcts"]; present {
+		if err := checkAkaVCTsClaim(decoded["vct"], raw); err != nil {
+			return nil, nil, err
+		}
+	}
 	if err := checkNoRegisteredClaimDisclosed(decoded, hashAlg, pres.Disclosures); err != nil {
+		return nil, nil, err
+	}
+	if err := checkNoRegisteredSubClaimDisclosable(decoded); err != nil {
 		return nil, nil, err
 	}
 	resolved, err := ResolveDisclosures(decoded, hashAlg, pres.Disclosures)
@@ -157,6 +165,7 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opt
 // unchanged in draft-13): each must be in the Issuer-signed JWT itself.
 var nonDisclosableClaims = map[string]bool{
 	"iss": true, "nbf": true, "exp": true, "cnf": true, "vct": true, "vct#integrity": true, "status": true,
+	"aka_vcts": true, // draft-19 §2.2.2.3
 }
 
 // checkNoRegisteredClaimDisclosed refuses an SD-JWT VC whose top-level
@@ -191,30 +200,38 @@ func checkNoRegisteredClaimDisclosed(decoded map[string]any, alg HashAlg, disclo
 }
 
 func checkIssuerJWTValidityWindow(decoded map[string]any, now func() time.Time, skew time.Duration) error {
-	if expRaw, ok := decoded["exp"]; ok {
+	return checkValidityWindow(decoded, now, skew, "", "credential")
+}
+
+// checkValidityWindow checks claims' optional exp and nbf: each, if
+// present, a NumericDate (RFC 7519 §2, §4.1.4, §4.1.5), and now within
+// them, give or take skew. prefix names the JWT in a claim error ("" or
+// "key binding JWT "); subject names it in a validity error.
+func checkValidityWindow(claims map[string]any, now func() time.Time, skew time.Duration, prefix, subject string) error {
+	if expRaw, ok := claims["exp"]; ok {
 		exp, ok := expRaw.(float64)
 		if !ok {
-			return fmt.Errorf("sdjwtvc: exp claim is not a number")
+			return fmt.Errorf("sdjwtvc: %sexp claim is not a number", prefix)
 		}
 		expires, err := jwtdate.FromFloat(exp)
 		if err != nil {
-			return fmt.Errorf("sdjwtvc: exp claim: %w", err)
+			return fmt.Errorf("sdjwtvc: %sexp claim: %w", prefix, err)
 		}
 		if !now().Add(-skew).Before(expires) {
-			return fmt.Errorf("sdjwtvc: credential has expired")
+			return fmt.Errorf("sdjwtvc: %s has expired", subject)
 		}
 	}
-	if nbfRaw, ok := decoded["nbf"]; ok {
+	if nbfRaw, ok := claims["nbf"]; ok {
 		nbf, ok := nbfRaw.(float64)
 		if !ok {
-			return fmt.Errorf("sdjwtvc: nbf claim is not a number")
+			return fmt.Errorf("sdjwtvc: %snbf claim is not a number", prefix)
 		}
 		notBefore, err := jwtdate.FromFloat(nbf)
 		if err != nil {
-			return fmt.Errorf("sdjwtvc: nbf claim: %w", err)
+			return fmt.Errorf("sdjwtvc: %snbf claim: %w", prefix, err)
 		}
 		if now().Add(skew).Before(notBefore) {
-			return fmt.Errorf("sdjwtvc: credential is not yet valid")
+			return fmt.Errorf("sdjwtvc: %s is not yet valid", subject)
 		}
 	}
 	return nil
@@ -240,6 +257,7 @@ func verifyKeyBindingIfRequired(pres Presentation, opts VerifyOptions, hashAlg H
 		ExpectedNonce:    opts.ExpectedNonce,
 		ExpectedSDHash:   sdHash,
 		MaxAge:           opts.MaxKeyBindingAge,
+		MaxClockSkew:     opts.MaxClockSkew,
 		Now:              opts.Now,
 	}); err != nil {
 		return fmt.Errorf("sdjwtvc: %w: %w", ErrKeyBinding, err)
@@ -251,3 +269,45 @@ func verifyKeyBindingIfRequired(pres Presentation, opts VerifyOptions, hashAlg H
 // checks (RFC 9901 §7.3): the presentation's holder binding, not the
 // credential itself.
 var ErrKeyBinding = errors.New("key binding JWT")
+
+// checkNoRegisteredSubClaimDisclosable refuses an SD-JWT VC that makes
+// a sub-claim of one of nonDisclosableClaims selectively disclosable:
+// draft-19 §2.2.2.3 forbids them "including any of their sub-claims".
+// It looks at the Issuer-signed structure, so a sub-claim the Holder
+// withheld is refused too, not just one it disclosed: a status whose
+// status_list could be withheld, or a cnf whose key could, isn't the
+// claim the Issuer is required to sign.
+func checkNoRegisteredSubClaimDisclosable(decoded map[string]any) error {
+	for name := range nonDisclosableClaims {
+		if v, ok := decoded[name]; ok && hasDisclosureDigest(v) {
+			return fmt.Errorf("sdjwtvc: registered claim %q must not have selectively disclosable sub-claims", name)
+		}
+	}
+	return nil
+}
+
+// hasDisclosureDigest reports whether v holds an _sd array or an array
+// element digest ({"...": digest}) at any depth.
+func hasDisclosureDigest(v any) bool {
+	switch v := v.(type) {
+	case map[string]any:
+		if _, ok := v["_sd"]; ok {
+			return true
+		}
+		if _, ok := v["..."]; ok && len(v) == 1 {
+			return true
+		}
+		for _, child := range v {
+			if hasDisclosureDigest(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if hasDisclosureDigest(child) {
+				return true
+			}
+		}
+	}
+	return false
+}

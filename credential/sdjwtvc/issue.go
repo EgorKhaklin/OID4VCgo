@@ -14,14 +14,10 @@ import (
 )
 
 // TypHeader is the JOSE "typ" header value for the Issuer-signed JWT
-// component of an SD-JWT VC (draft-13 §3.2.1). A Verifier/Holder
-// SHOULD also accept LegacyTypHeader during a transitional period.
+// component of an SD-JWT VC, and the only one Verify accepts (draft-19
+// §2.2.1: "The typ value MUST use dc+sd-jwt"). Draft-13 §3.2.1's
+// transitional vc+sd-jwt was removed in draft-19.
 const TypHeader = "dc+sd-jwt"
-
-// LegacyTypHeader is the "typ" value this draft used from its inception
-// in July 2023 until November 2024 (draft-13 §3.2.1) — accepted here
-// for interop with issuers/wallets that haven't migrated yet.
-const LegacyTypHeader = "vc+sd-jwt"
 
 // MediaType is the SD-JWT VC media type (draft-13 §3.1).
 const MediaType = "application/dc+sd-jwt"
@@ -48,8 +44,13 @@ const KeyBindingTyp = "kb+jwt"
 // needs to be a NumericDate must already be an int64 when passed in.
 type Claims struct {
 	VCT string // REQUIRED
-	Iss string
-	Nbf *int64
+	// AkaVCTs are additional types the credential is also of (SD-JWT VC
+	// draft-19 §2.2.2.2): typically the general type VCT is derived
+	// from, so a request for that type matches it. Each must be a
+	// collision-resistant name, none VCT itself. Always plaintext.
+	AkaVCTs []string
+	Iss     string
+	Nbf     *int64
 
 	// Exp is RFC 9901 §11.2.3's own RECOMMENDED (not required)
 	// validity bound. If set, use RoundedExp rather than a raw
@@ -137,7 +138,7 @@ type IssueOptions struct {
 }
 
 var reservedTopLevelClaims = map[string]bool{
-	"vct": true, "iss": true, "nbf": true, "exp": true,
+	"vct": true, "aka_vcts": true, "iss": true, "nbf": true, "exp": true,
 	"vct#integrity": true, "status": true, "cnf": true,
 	"_sd": true, "_sd_alg": true, "...": true,
 }
@@ -148,6 +149,9 @@ var reservedTopLevelClaims = map[string]bool{
 // linter's own cognitive complexity ceiling.
 func applyPlaintextClaims(sealed map[string]any, claims Claims) {
 	sealed["vct"] = claims.VCT
+	if len(claims.AkaVCTs) > 0 {
+		sealed["aka_vcts"] = append([]string(nil), claims.AkaVCTs...)
+	}
 	if claims.Iss != "" {
 		sealed["iss"] = claims.Iss
 	}
@@ -251,6 +255,14 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueO
 // checkIssueInputs checks Issue's claims and options: a vct, a decoy
 // count in range, and an IssuerCertificate, if given, for signer's key.
 func checkIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) error {
+	if claims.AkaVCTs != nil {
+		if err := checkAkaVCTs(claims.VCT, claims.AkaVCTs); err != nil {
+			return err
+		}
+	}
+	if hasSDMarker(claims.Status) || hasSDMarker(claims.CNF) {
+		return fmt.Errorf("sdjwtvc: Claims.Status and Claims.CNF can't have selectively disclosable sub-claims (SD-JWT VC draft-19 §2.2.2.3)")
+	}
 	if claims.VCT == "" {
 		return fmt.Errorf("sdjwtvc: Claims.VCT is required")
 	}

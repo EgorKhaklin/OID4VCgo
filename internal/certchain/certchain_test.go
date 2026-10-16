@@ -121,3 +121,22 @@ func TestCheckPresentedChain(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckNoAnchor(t *testing.T) {
+	root, rootKey := testcert.CA(t, "root")
+	mid, midKey := testcert.Intermediate(t, "intermediate", root, rootKey)
+	leaf, _ := testcert.Leaf(t, "leaf", mid, midKey)
+	for name, tc := range map[string]struct {
+		chain [][]byte
+		ok    bool
+	}{
+		"leaf alone":            {[][]byte{leaf.Raw}, true},
+		"leaf and intermediate": {[][]byte{leaf.Raw, mid.Raw}, true},
+		"the anchor included":   {[][]byte{leaf.Raw, mid.Raw, root.Raw}, false},
+		"empty":                 {nil, true},
+	} {
+		if err := CheckNoAnchor(tc.chain); (err == nil) != tc.ok {
+			t.Errorf("%s: %v, want ok = %v", name, err, tc.ok)
+		}
+	}
+}

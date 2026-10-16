@@ -81,10 +81,10 @@ func checkX5C(token string, roots *x509.CertPool, ref StatusListRef, opts Verify
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
-	if opts.Issuer != "" {
+	if opts.Issuer != "" && !certchain.SameKey(leaf.PublicKey, opts.IssuerKey) {
 		// The status of this issuer's tokens is its own to sign.
 		if err := certchain.CheckIssuerName(leaf, opts.Issuer); err != nil {
-			return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer isn't the referenced token's issuer: %w", err)
+			return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer isn't the referenced token's issuer: neither its key nor a name its certificate carries: %w", err)
 		}
 	}
 	var alg jose.Alg
@@ -109,11 +109,7 @@ func CheckCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts
 
 // checkCWTX5Chain is CheckCWTX5Chain, before failClosed.
 func checkCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
-	decode := cose.DecodeUnverifiedMax
-	if len(token) > 0 && token[0] == coseSign1TagByte {
-		decode = cose.DecodeUnverifiedTaggedMax
-	}
-	protected, unprotected, _, err := decode(token, maxTokenBytes)
+	protected, unprotected, _, err := cose.DecodeUnverifiedMax(token, maxTokenBytes)
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: decode token: %w", err)
 	}

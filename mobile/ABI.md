@@ -198,7 +198,8 @@ library's an `IOException`.
  "require_signed_dcapi_requests": false,
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci",
- "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "proximity_device_auth": "signature"}
+ "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "proximity_device_auth": "signature",
+ "status_issuers": {"https://issuer.example": ["https://status.example"]}}
 ```
 
 `issuer_roots` is needed to receive credentials, and `verifier_roots` to
@@ -244,6 +245,13 @@ over the Digital Credentials API (`StartDCAPIPresentation`) with
 support unsigned requests. The Kotlin library sets it
 (`requireSignedDCAPIRequests`); the Swift package doesn't, since Safari
 asks only with `org-iso-mdoc`.
+`status_issuers` names, for each credential issuer (an SD-JWT VC's
+`iss`), the Status Issuers that may sign its status lists on its behalf,
+each recognized by a certificate under `issuer_roots` naming it (a URI,
+or a DNS name for a `dns:` identifier). Without it, `CheckStatus`
+accepts only a status list the credential's issuer signed itself, so
+another issuer under the same roots can't decide its status. Added
+within ABI version 12.
 `development`
 relaxes what production requires, for a wallet talking to services on a
 development machine. Never ship an app with it set. It lets issuers,

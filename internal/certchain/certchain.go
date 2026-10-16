@@ -12,6 +12,7 @@ package certchain
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -62,7 +63,13 @@ func VerifyLeaf(ders [][]byte, roots *x509.CertPool) (*x509.Certificate, error) 
 // (extended key usage, certificate policy, issuer) chain validation
 // alone doesn't make, since it accepts any key usage.
 func VerifyLeafWithPolicy(ders [][]byte, roots *x509.CertPool, policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) (*x509.Certificate, error) {
-	leaf, chains, err := VerifyChains(ders, roots)
+	return VerifyLeafWithPolicyAt(ders, roots, policy, time.Time{})
+}
+
+// VerifyLeafWithPolicyAt is VerifyLeafWithPolicy, checking every
+// certificate's validity period at now, the current time when zero.
+func VerifyLeafWithPolicyAt(ders [][]byte, roots *x509.CertPool, policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error, now time.Time) (*x509.Certificate, error) {
+	leaf, chains, err := VerifyChainsAt(ders, roots, now)
 	if err != nil {
 		return nil, err
 	}
@@ -210,4 +217,32 @@ func CheckIssuerName(leaf *x509.Certificate, iss string) error {
 		return nil
 	}
 	return fmt.Errorf("certchain: iss %q isn't a URI of the signing certificate", iss)
+}
+
+// CheckNoAnchor refuses a presented chain that includes a self-signed
+// certificate after the leaf: a trust anchor, which HAIP 1.0 (§4.1, §5,
+// §6.1.1) has the sender leave out of x5c, since the receiver's own
+// roots decide on it. It's for JOSE x5c chains: an mdoc's x5chain and a
+// reader's certificate chain often include the root.
+func CheckNoAnchor(ders [][]byte) error {
+	for i, der := range ders[min(1, len(ders)):] {
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			return fmt.Errorf("certchain: parse certificate chain entry %d: %w", i+1, err)
+		}
+		if IsSelfSigned(cert) {
+			return fmt.Errorf("certchain: certificate chain entry %d is self-signed: the trust anchor must not be included", i+1)
+		}
+	}
+	return nil
+}
+
+// SameKey reports whether a and b are the same public key; false when
+// either is nil.
+func SameKey(a, b crypto.PublicKey) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	eq, ok := a.(interface{ Equal(crypto.PublicKey) bool })
+	return ok && eq.Equal(b)
 }

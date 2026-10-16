@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.44.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.43.0...v0.44.0) (2026-10-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sdjwtvc:** sdjwtvc.Verify refuses an Issuer-signed JWT whose typ is vc+sd-jwt, and sdjwtvc.LegacyTypHeader is removed. Issuers still using vc+sd-jwt must move to dc+sd-jwt (sdjwtvc.TypHeader).
+* **sdjwtvc:** sdjwtvc.Verify, and with it the verifier and wallet, refuses an SD-JWT VC that makes a sub-claim of cnf, status or another registered claim selectively disclosable, and sdjwtvc.Issue refuses SD markers in Claims.Status and Claims.CNF.
+* **verifier:** a SD-JWT VC, Request Object or signed metadata whose x5c includes a self-signed certificate after the leaf is refused; send the chain without the trust anchor. With VerifyResponseRequest.Now (or mdocdcapi's Now) set, issuer certificates are checked at that instant, not the current time.
+* **verifier:** RequireValidStatus and walletflow's CheckStatus refuse an SD-JWT VC's Status List Token that another issuer signed: its signer must sign with the key that signed the credential, or have a certificate naming the credential's iss. A deployment whose status lists come from a separate Status Issuer names it with verifier.RequireValidStatusFrom (a StatusIssuerPolicy) or walletflow.Config.StatusIssuers (status_issuers in the mobile libraries).
+
+### Features
+
+* **sdjwtvc:** aka_vcts, and match vct_values by a credential's other types ([56748de](https://github.com/IDFoundry/OID4VCgo/commit/56748de0231f28ff93cd7dc441c67013138dadaf))
+* **verifier:** IssuerAuthorized, an explicit per-type issuer authorization check ([841b673](https://github.com/IDFoundry/OID4VCgo/commit/841b673fd290a55938008c96be010b86e1acb019))
+* **verifier:** RequireValidStatusFrom accepts a separate Status Issuer ([a860065](https://github.com/IDFoundry/OID4VCgo/commit/a86006503de1df9f55277b03b0be3656b97e1544))
+* **walletflow:** Config.StatusIssuers for issuers whose status lists a Status Issuer signs ([321a7a8](https://github.com/IDFoundry/OID4VCgo/commit/321a7a8c32463d7ac707b8ccae488449d4b8f085))
+* **wallet:** name the Credential Issuer as the resource of pre-authorized code tokens ([166e39c](https://github.com/IDFoundry/OID4VCgo/commit/166e39c78398c52481df5de3ef71f45a4242a925))
+
+
+### Bug Fixes
+
+* refuse a COSE structure behind a CBOR tag other than its own ([bb2b8a1](https://github.com/IDFoundry/OID4VCgo/commit/bb2b8a1d007e2885818de55492def23871e43d99))
+* **sdjwtvc:** accept only the dc+sd-jwt typ ([e6d055b](https://github.com/IDFoundry/OID4VCgo/commit/e6d055b5550a1ff4bdfcc97356b9e47f57c81bea))
+* **sdjwtvc:** check a Key Binding JWT's exp and nbf ([ea51c0e](https://github.com/IDFoundry/OID4VCgo/commit/ea51c0ef984dbf2cd0d191b4a72d52c8001ecc4d))
+* **sdjwtvc:** refuse selectively disclosable sub-claims of registered claims ([ec1e0df](https://github.com/IDFoundry/OID4VCgo/commit/ec1e0dfaad9a4f37c77889c3bf68eae6760c46b9))
+* **statuslist:** refuse a truncated or corrupt status list ([de244fe](https://github.com/IDFoundry/OID4VCgo/commit/de244fe96cb54f137c24ff4cc7c9b9ab5d4062e1))
+* **verifier:** accept a status list signed with the credential's own key, whatever names its certificate carries ([58e24ff](https://github.com/IDFoundry/OID4VCgo/commit/58e24ffa6f2d8fd838ccafd3bd39a69a22d3ebeb))
+* **verifier:** refuse a status list another issuer signed ([e51915c](https://github.com/IDFoundry/OID4VCgo/commit/e51915c5ad582db6ddce2a842e931590bfeaa77a))
+* **verifier:** refuse a trust anchor sent in x5c, and check certificates at the verification time ([8df41e8](https://github.com/IDFoundry/OID4VCgo/commit/8df41e8d14932b2a3c3ff2b290e8e5061eec068b))
+* **verifier:** RequireIssuerName, an opt-in check that an SD-JWT VC's iss names its x5c certificate, in the verifier's X5CIssuerKeyResolver and the wallet's VerifyIssuedCredentialParams ([4ec198d](https://github.com/IDFoundry/OID4VCgo/commit/4ec198d4faa9f99ebb0096c3da39dba787d32fe8))
+* **verifier:** report a malformed direct_post.jwt response as a verifier.Error ([59b75c6](https://github.com/IDFoundry/OID4VCgo/commit/59b75c61a4e77d0d3bef2f20d158f03d0e4cffde))
+
 ## [0.43.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.42.0...v0.43.0) (2026-10-15)
 
 
