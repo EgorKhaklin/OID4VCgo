@@ -12,6 +12,7 @@ package certchain
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -234,4 +235,14 @@ func CheckNoAnchor(ders [][]byte) error {
 		}
 	}
 	return nil
+}
+
+// SameKey reports whether a and b are the same public key; false when
+// either is nil.
+func SameKey(a, b crypto.PublicKey) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	eq, ok := a.(interface{ Equal(crypto.PublicKey) bool })
+	return ok && eq.Equal(b)
 }

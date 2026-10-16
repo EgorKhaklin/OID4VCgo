@@ -76,3 +76,19 @@ func TestCheckStatus(t *testing.T) {
 		}
 	}
 }
+
+// A credential whose iss its certificate doesn't name, as the EU
+// reference PID's doesn't, is received, and its status list, signed
+// with the same key, is its issuer's: CheckStatus reads it.
+func TestCheckStatus_IssNotNamedByTheCertificate(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{SDJWTIss: "https://backend.issuer.example"})
+	held := receive(t, f, f.w, walletflowtest.SDJWTConfigurationID)
+	c := held[0]
+	if c.Claims["iss"] != "https://backend.issuer.example" {
+		t.Fatalf("iss = %v", c.Claims["iss"])
+	}
+	checked, err := f.w.CheckStatus(context.Background(), c.ID)
+	if err != nil || checked.Status.Value != walletflow.StatusValid {
+		t.Fatalf("CheckStatus = %+v, %v", checked.Status, err)
+	}
+}

@@ -202,8 +202,11 @@ type VerifiedCredential struct {
 	// MdocIssuerChainResolver) verified, without the trust anchor: the
 	// IssuerAuth x5chain is unprotected, so the holder could edit it; a
 	// resolver that verifies no chain gives none. The issuer is that
-	// leaf's subject: X5CIssuerKeyResolver refuses an SD-JWT VC whose
-	// "iss" doesn't name it (certchain's CheckIssuerName rule).
+	// leaf's subject. An SD-JWT VC's "iss" in Claims is the issuer's
+	// claim, not checked against the leaf unless
+	// X5CIssuerKeyResolver.RequireIssuerName is set (SD-JWT VC §2.5
+	// doesn't require them to correspond): don't rely on it as
+	// authenticated otherwise.
 	IssuerChain [][]byte
 }
 

@@ -24,11 +24,13 @@ import (
 // credential/sdjwtvc.IssueOptions.IssuerCertificate satisfies on the
 // issuing side.
 //
-// The issuer is the leaf's subject (SD-JWT VC, the x5c header): an
-// iss must name it, as a "dns:" URI whose DNS name is one of its
-// dNSName subject alternative names, or otherwise exactly one of its
-// uniformResourceIdentifier names. Without an iss, the leaf is the
-// issuer.
+// The issuer is the leaf's subject (SD-JWT VC, the x5c header). An iss
+// alongside x5c needn't correspond to a name in the leaf (SD-JWT VC
+// §2.5, as the editors' copy now says outright), and issuers such as
+// the EU reference PID issuer send a leaf with no subject alternative
+// name at all, so by default iss is carried but not checked against
+// it: a credential's iss is then only as trustworthy as every issuer
+// under Roots. RequireIssuerName checks it.
 //
 // A self-signed leaf is always rejected, even if that exact
 // certificate also happens to be present in Roots — see
@@ -46,6 +48,14 @@ type X5CIssuerKeyResolver struct {
 	// distinguishes them (an extended key usage, a certificate policy)
 	// where the anchors are shared.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// RequireIssuerName refuses a credential whose iss the leaf doesn't
+	// name: a "dns:" iss must be one of its dNSName subject alternative
+	// names, any other exactly one of its uniformResourceIdentifier
+	// names. It's a relying party's policy, not a requirement of SD-JWT
+	// VC: use it where one root certifies several issuers, so none can
+	// sign in another's name. VerifyResponseRequest.IssuerAuthorized can
+	// apply a check of its own instead.
+	RequireIssuerName bool
 }
 
 // ResolveIssuerKey implements SDJWTVCIssuerKeyResolver.
@@ -61,10 +71,7 @@ func (r X5CIssuerKeyResolver) ResolveIssuerKey(ctx context.Context, header, payl
 	if err != nil {
 		return nil, "", err
 	}
-	// The issuer is the leaf's subject (SD-JWT VC, the x5c header): an
-	// iss must name it, or any issuer under Roots could sign in another
-	// issuer's name.
-	if issRaw, present := payload["iss"]; present {
+	if issRaw, present := payload["iss"]; present && r.RequireIssuerName {
 		iss, ok := issRaw.(string)
 		if !ok {
 			return nil, "", errors.New("iss is not a string")

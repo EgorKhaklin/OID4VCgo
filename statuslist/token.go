@@ -99,14 +99,21 @@ type VerifyOptions struct {
 
 	// Issuer, if set, is the Referenced Token's issuer: its iss, or
 	// the URI its signing certificate names. CheckX5C then refuses a
-	// Status List Token whose signer certificate doesn't name it (the
-	// rule certchain.CheckIssuerName applies), so another issuer's
-	// certificate under the same Roots can't sign this issuer's
-	// status, and one whose own iss claim is another issuer's. For the
-	// CWT form (an mdoc's), leave it empty: an mdoc issuer has no such
-	// name, and its status lists are bound by Roots, which the MSO's
-	// status reference can name.
+	// Status List Token another issuer under the same Roots signed: its
+	// signer must hold IssuerKey, the key that signed the Referenced
+	// Token (the same-key arrangement draft-ietf-oauth-status-list §11.3
+	// recommends where the Issuer is its own Status Issuer), or have a
+	// certificate naming Issuer (the rule certchain.CheckIssuerName
+	// applies). It also refuses a token whose own iss claim is another
+	// issuer's. For the CWT form (an mdoc's), leave it empty: an mdoc
+	// issuer has no such name, and its status lists are bound by Roots,
+	// which the MSO's status reference can name.
 	Issuer string
+
+	// IssuerKey is the public key that signed the Referenced Token, used
+	// with Issuer: a Status List Token signed with the same key is the
+	// issuer's own, whatever names the certificates carry.
+	IssuerKey crypto.PublicKey
 }
 
 // maxTokenBytes is this package's own ceiling on the compact JWS

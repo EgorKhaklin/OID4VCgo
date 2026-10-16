@@ -45,14 +45,14 @@ func issuerLeaf(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, uri
 	return leaf
 }
 
-// The issuer is the x5c leaf's subject: an iss must name that leaf, so
-// another issuer's certificate under the same trusted root can't sign
-// in this issuer's name (SD-JWT VC, the x5c header).
+// With RequireIssuerName, an iss must name the x5c leaf, so another
+// issuer's certificate under the same trusted root can't sign in this
+// issuer's name.
 func TestX5CIssuerKeyResolver_BindsIssToLeaf(t *testing.T) {
 	ca, caKey := testcert.CA(t, "shared root")
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
-	r := verifier.X5CIssuerKeyResolver{Roots: roots}
+	r := verifier.X5CIssuerKeyResolver{Roots: roots, RequireIssuerName: true}
 	const trusted = "https://issuer-a.example"
 	for name, tc := range map[string]struct {
 		uris, dnsNames []string
@@ -76,6 +76,26 @@ func TestX5CIssuerKeyResolver_BindsIssToLeaf(t *testing.T) {
 		_, _, err := r.ResolveIssuerKey(context.Background(), header, payload)
 		if (err == nil) != tc.ok {
 			t.Errorf("%s: %v, want ok = %v", name, err, tc.ok)
+		}
+	}
+}
+
+// By default iss isn't checked against the leaf: SD-JWT VC §2.5 doesn't
+// require them to correspond, and the EU reference PID issuer signs
+// with an https iss from a leaf with no subject alternative name.
+func TestX5CIssuerKeyResolver_IssNotBoundByDefault(t *testing.T) {
+	ca, caKey := testcert.CA(t, "shared root")
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	r := verifier.X5CIssuerKeyResolver{Roots: roots}
+	for name, uris := range map[string][]string{
+		"a leaf with no subject alternative name": nil,
+		"a leaf naming another issuer":            {"https://issuer-b.example"},
+	} {
+		leaf := issuerLeaf(t, ca, caKey, uris, nil)
+		header := map[string]any{"x5c": []any{base64.StdEncoding.EncodeToString(leaf.Raw)}}
+		if _, _, err := r.ResolveIssuerKey(context.Background(), header, map[string]any{"iss": "https://backend.issuer.example"}); err != nil {
+			t.Errorf("%s: %v, want accepted", name, err)
 		}
 	}
 }

@@ -187,3 +187,48 @@ func TestX5C_SignerIsTheIssuer(t *testing.T) {
 		t.Errorf("without Issuer, the signer isn't bound: %v", err)
 	}
 }
+
+// A Status List Token signed with the key that signed the Referenced
+// Token is the issuer's own, whatever its certificate names (the
+// same-key arrangement of draft-ietf-oauth-status-list §11.3): the EU
+// reference PID issuer's certificates name no one. A token from
+// another key that names no one is still refused.
+func TestX5C_SignerHoldsTheIssuersKey(t *testing.T) {
+	ca, caKey := testcert.CA(t, "shared root")
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	sl, err := New(Bits1, []uint8{0}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := StatusListRef{Idx: 0, URI: x5cTestURI}
+	unnamed := func(key *ecdsa.PrivateKey) *x509.Certificate {
+		t.Helper()
+		der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()),
+			NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature}, ca, &key.PublicKey, caKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cert
+	}
+	token := func(key *ecdsa.PrivateKey) string {
+		t.Helper()
+		jwt, err := IssueTokenX5C(key, jose.ES256, TokenClaims{Sub: x5cTestURI, Iat: time.Now().Unix(), StatusList: sl}, []*x509.Certificate{unnamed(key)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return jwt
+	}
+	credentialKey, otherKey := testKey(t), testKey(t)
+	opts := VerifyOptions{Issuer: "https://backend.issuer.example", IssuerKey: &credentialKey.PublicKey}
+	if _, _, err := CheckX5C(token(credentialKey), roots, ref, opts); err != nil {
+		t.Errorf("signed with the credential's own key: %v", err)
+	}
+	if _, _, err := CheckX5C(token(otherKey), roots, ref, opts); err == nil {
+		t.Error("accepted a list signed by another key whose certificate names no one")
+	}
+}

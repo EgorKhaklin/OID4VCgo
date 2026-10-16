@@ -43,3 +43,21 @@ func TestVerifiedCredential_IssuerName(t *testing.T) {
 		}
 	}
 }
+
+// A credential's signing key, for binding its status list, is its
+// issuer chain's leaf's; without a readable chain there's none.
+func TestVerifiedCredential_IssuerKey(t *testing.T) {
+	ca, caKey := testcert.CA(t, "root")
+	leaf, _ := testcert.Leaf(t, "issuer", ca, caKey)
+	if got := (VerifiedCredential{IssuerChain: [][]byte{leaf.Raw}}).issuerKey(); got == nil || !leaf.PublicKey.(*ecdsa.PublicKey).Equal(got) {
+		t.Errorf("issuerKey = %v, want the leaf's key", got)
+	}
+	for name, vc := range map[string]VerifiedCredential{
+		"no chain":            {},
+		"a chain that's junk": {IssuerChain: [][]byte{[]byte("not a certificate")}},
+	} {
+		if got := vc.issuerKey(); got != nil {
+			t.Errorf("%s: issuerKey = %v, want nil", name, got)
+		}
+	}
+}

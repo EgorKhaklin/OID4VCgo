@@ -19,9 +19,10 @@ import (
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
-// A received SD-JWT VC's iss must name the certificate that signed it:
-// another issuer's certificate under the same trusted root can't issue
-// in this issuer's name.
+// With RequireIssuerName, a received SD-JWT VC's iss must name the
+// certificate that signed it: another issuer's certificate under the
+// same trusted root can't issue in this issuer's name. Without it, the
+// default, iss isn't checked against the certificate (SD-JWT VC §2.5).
 func TestVerifyIssuedCredential_BindsIssToLeaf(t *testing.T) {
 	ca, caKey := testcert.CA(t, "shared root")
 	roots := x509.NewCertPool()
@@ -57,10 +58,11 @@ func TestVerifyIssuedCredential_BindsIssToLeaf(t *testing.T) {
 		}
 		return credential
 	}
+	requireName := true
 	verify := func(credential string) error {
 		_, err := wallet.VerifyIssuedCredential(context.Background(), wallet.VerifyIssuedCredentialParams{
 			Configuration: oid4vci.CredentialConfigurationMetadata{Format: sdjwtvc.CredentialFormat, VCT: issuedVCT, CryptographicBindingMethodsSupported: []string{"jwk"}},
-			Credential:    credential, HolderKey: &holder.PublicKey, IssuerRoots: roots,
+			Credential:    credential, HolderKey: &holder.PublicKey, IssuerRoots: roots, RequireIssuerName: requireName,
 		})
 		return err
 	}
@@ -69,5 +71,9 @@ func TestVerifyIssuedCredential_BindsIssToLeaf(t *testing.T) {
 	}
 	if err := verify(issue("https://issuer-b.example", "https://issuer-a.example")); err == nil {
 		t.Error("accepted a credential in issuer A's name signed by issuer B's certificate")
+	}
+	requireName = false
+	if err := verify(issue("https://issuer-b.example", "https://issuer-a.example")); err != nil {
+		t.Errorf("by default, iss isn't checked against the certificate: %v", err)
 	}
 }
