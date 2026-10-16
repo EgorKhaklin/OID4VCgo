@@ -131,6 +131,16 @@ type VerifyResponseRequest struct {
 	// Credential Query declares TrustedAuthorities.
 	TrustedAuthorities dcql.TrustedAuthoritiesChecker
 
+	// IssuerAuthorized, if set, is asked for each presentation that
+	// otherwise verified whether its issuer may issue a credential of
+	// the type it's accepted as (see IssuerAuthorization), and an error
+	// discards that presentation as ReasonUntrustedIssuer. Without it,
+	// any issuer the key resolvers trust is accepted for any type the
+	// query asks for, which is enough only where every trusted issuer
+	// may issue every requested type. SD-JWT VC draft-19 §7.7 requires
+	// the check, through this or the trust configuration itself.
+	IssuerAuthorized func(ctx context.Context, a IssuerAuthorization) error
+
 	// ResponseEncryptionKey is the same ephemeral private key a prior
 	// BuildAuthorizationRequest/BuildDCAPIAuthorizationRequest call
 	// returned as ResponseDecryptionKey. REQUIRED if Query requests
@@ -432,6 +442,9 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 			claims, status, chain, err = v.verifyMdocPresentation(ctx, cq, presented, req)
 		default:
 			return nil, nil, fmt.Errorf("format %q is not yet supported", cq.Format)
+		}
+		if err == nil {
+			err = authorizeIssuer(ctx, req, cq, claims, chain)
 		}
 		var failed *Error
 		if errors.As(err, &failed) {

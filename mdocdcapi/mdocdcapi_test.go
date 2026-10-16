@@ -21,6 +21,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 const (
@@ -225,6 +226,14 @@ func TestVerifyResponseRefuses(t *testing.T) {
 		"unrequested element": {only, overDisclosed, nil, "family_name, which wasn't requested"},
 		"too large":           {h, strings.Repeat("A", MaxResponseBytes+1), nil, "more than"},
 		"no issuer keys":      {h, good, func(p *VerifyParams) { p.IssuerKeys = nil }, "IssuerKeys"},
+		"issuer not authorized for the doctype": {h, good, func(p *VerifyParams) {
+			p.IssuerAuthorized = func(_ context.Context, a verifier.IssuerAuthorization) error {
+				if a.Format != "mso_mdoc" || a.Type != testmdoc.DocType || !slices.Equal(a.RequestedTypes, []string{testmdoc.DocType}) {
+					t.Errorf("IssuerAuthorization = %+v", a)
+				}
+				return errors.New("not authorized for " + a.Type)
+			}
+		}, "issuer authorization: not authorized for"},
 	} {
 		if _, err := verify(t, tc.h, tc.response, tc.mutate); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v, want an error containing %q", name, err, tc.want)

@@ -55,6 +55,10 @@
 // decrypting it. VerifyResponse doesn't check revocation: each
 // VerifiedCredential carries its status reference (Claims["status"], or
 // MdocStatus) for the caller to resolve with package statuslist.
+// The issuer key resolvers establish who a credential's issuer is, not
+// which types it may issue: where trusted issuers aren't all authorized
+// for every requested type, VerifyResponseRequest.IssuerAuthorized
+// decides that per presentation (SD-JWT VC draft-19 §7.7).
 // An mdoc requested over the DC API with the "org-iso-mdoc" protocol,
 // as Safari does, isn't OpenID4VP: package mdocdcapi builds and verifies
 // that.
