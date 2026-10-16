@@ -75,7 +75,10 @@ func issueToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, header m
 
 // VerifyOptions configures VerifyToken.
 type VerifyOptions struct {
-	Now func() time.Time // defaults to time.Now
+	// Now is the time the token's iat and exp, and its signer's
+	// certificates (CheckX5C, CheckCWTX5Chain), are checked at; it
+	// defaults to time.Now.
+	Now func() time.Time
 
 	// MaxAge, if set, refuses a token issued longer ago (its iat): a
 	// signed list from before a revocation stays valid until its exp,

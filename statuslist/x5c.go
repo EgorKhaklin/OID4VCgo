@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
@@ -77,7 +78,7 @@ func checkX5C(token string, roots *x509.CertPool, ref StatusListRef, opts Verify
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
-	leaf, err := certchain.VerifyLeafWithPolicy(chain, roots, opts.LeafPolicy)
+	leaf, err := certchain.VerifyLeafWithPolicyAt(chain, roots, opts.LeafPolicy, opts.certificateTime())
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
@@ -117,7 +118,7 @@ func checkCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts
 	if len(chain) == 0 {
 		chain = unprotected.X5Chain
 	}
-	leaf, err := certchain.VerifyLeafWithPolicy(chain, roots, opts.LeafPolicy)
+	leaf, err := certchain.VerifyLeafWithPolicyAt(chain, roots, opts.LeafPolicy, opts.certificateTime())
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
@@ -131,4 +132,14 @@ func checkCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: unsupported key type %T", leaf.PublicKey)
 	}
 	return CheckCWT(token, leaf.PublicKey, alg, ref, opts)
+}
+
+// certificateTime is when a token signer's certificates must be valid:
+// Now, which the token's own times are checked against too, or the
+// current time (zero) without it.
+func (o VerifyOptions) certificateTime() time.Time {
+	if o.Now == nil {
+		return time.Time{}
+	}
+	return o.Now()
 }
