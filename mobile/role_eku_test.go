@@ -90,3 +90,65 @@ func TestCheckRoleRoots(t *testing.T) {
 		}
 	}
 }
+
+// Roots overlap not only when they're the same certificate: an
+// intermediate under the other role's root, a reissued root with the
+// same key and subject, or one certified through others in the sets
+// all let a certificate chain to both.
+func TestCheckRoleRoots_OverlapBeyondEqualCertificates(t *testing.T) {
+	newKey := func() *ecdsa.PrivateKey {
+		k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+	issue := func(name string, pub *ecdsa.PublicKey, parent *x509.Certificate, signer *ecdsa.PrivateKey) *x509.Certificate {
+		tmpl := &x509.Certificate{
+			SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: name},
+			NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+			IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+		}
+		if parent == nil {
+			parent = tmpl
+		}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, pub, signer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cert
+	}
+	asPEM := func(certs ...*x509.Certificate) string {
+		var b strings.Builder
+		for _, c := range certs {
+			b.Write(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}))
+		}
+		return b.String()
+	}
+	rootKey, intKey, subKey, otherKey := newKey(), newKey(), newKey(), newKey()
+	root := issue("shared root", &rootKey.PublicKey, nil, rootKey)
+	reissued := issue("shared root", &rootKey.PublicKey, nil, rootKey)
+	intermediate := issue("issuer intermediate", &intKey.PublicKey, root, rootKey)
+	sub := issue("issuing CA", &subKey.PublicKey, intermediate, intKey)
+	unrelated := issue("unrelated root", &otherKey.PublicKey, nil, otherKey)
+
+	for name, tc := range map[string]struct {
+		verifierRoots, issuerRoots string
+		refused                    bool
+	}{
+		"issuer roots are an intermediate of the verifier root": {asPEM(root), asPEM(intermediate), true},
+		"verifier roots are an intermediate of the issuer root": {asPEM(intermediate), asPEM(root), true},
+		"a reissued root, same key and subject":                 {asPEM(root), asPEM(reissued), true},
+		"two levels below, through a CA in the sets":            {asPEM(root, intermediate), asPEM(sub), true},
+		"unrelated": {asPEM(root), asPEM(unrelated), false},
+	} {
+		err := checkRoleRoots(config{VerifierRoots: tc.verifierRoots, IssuerRoots: tc.issuerRoots})
+		if tc.refused != (err != nil) {
+			t.Errorf("%s: %v, want refused = %v", name, err, tc.refused)
+		}
+	}
+}
