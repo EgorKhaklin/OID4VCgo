@@ -141,6 +141,9 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opt
 	if err := checkNoRegisteredClaimDisclosed(decoded, hashAlg, pres.Disclosures); err != nil {
 		return nil, nil, err
 	}
+	if err := checkNoRegisteredSubClaimDisclosable(decoded); err != nil {
+		return nil, nil, err
+	}
 	resolved, err := ResolveDisclosures(decoded, hashAlg, pres.Disclosures)
 	if err != nil {
 		return nil, nil, err
@@ -257,3 +260,45 @@ func verifyKeyBindingIfRequired(pres Presentation, opts VerifyOptions, hashAlg H
 // checks (RFC 9901 §7.3): the presentation's holder binding, not the
 // credential itself.
 var ErrKeyBinding = errors.New("key binding JWT")
+
+// checkNoRegisteredSubClaimDisclosable refuses an SD-JWT VC that makes
+// a sub-claim of one of nonDisclosableClaims selectively disclosable:
+// draft-19 §2.2.2.3 forbids them "including any of their sub-claims".
+// It looks at the Issuer-signed structure, so a sub-claim the Holder
+// withheld is refused too, not just one it disclosed: a status whose
+// status_list could be withheld, or a cnf whose key could, isn't the
+// claim the Issuer is required to sign.
+func checkNoRegisteredSubClaimDisclosable(decoded map[string]any) error {
+	for name := range nonDisclosableClaims {
+		if v, ok := decoded[name]; ok && hasDisclosureDigest(v) {
+			return fmt.Errorf("sdjwtvc: registered claim %q must not have selectively disclosable sub-claims", name)
+		}
+	}
+	return nil
+}
+
+// hasDisclosureDigest reports whether v holds an _sd array or an array
+// element digest ({"...": digest}) at any depth.
+func hasDisclosureDigest(v any) bool {
+	switch v := v.(type) {
+	case map[string]any:
+		if _, ok := v["_sd"]; ok {
+			return true
+		}
+		if _, ok := v["..."]; ok && len(v) == 1 {
+			return true
+		}
+		for _, child := range v {
+			if hasDisclosureDigest(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if hasDisclosureDigest(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
