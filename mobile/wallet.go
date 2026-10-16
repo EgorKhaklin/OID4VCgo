@@ -450,7 +450,8 @@ func (w *Wallet) HolderKeyIDs() (string, error) {
 // credentialID names, checks its signature, records the credential's revocation
 // status, and returns the credential's summary with it ("status":
 // {"value": "valid" | "invalid" | "suspended" | "0x…", "checked_at"}).
-// A credential without a status list is returned as it is. The list
+// A credential without a status list is returned as it is, as is an
+// expired one, whose status list isn't fetched. The list
 // covers many credentials, so fetching it doesn't tell the issuer which
 // one is checked.
 func (w *Wallet) CheckStatus(op *Operation, credentialID string) (string, error) {

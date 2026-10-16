@@ -92,3 +92,24 @@ func TestCheckStatus_IssNotNamedByTheCertificate(t *testing.T) {
 		t.Fatalf("CheckStatus = %+v, %v", checked.Status, err)
 	}
 }
+
+// An expired credential isn't valid whatever its status says, so
+// CheckStatus doesn't fetch its status list (draft-ietf-oauth-status-list
+// §8.3): a revocation since isn't seen, and nothing is recorded.
+func TestCheckStatus_SkipsAnExpiredCredential(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	c := receive(t, f, f.w, walletflowtest.SDJWTConfigurationID)[0]
+	ctx := context.Background()
+	c.ValidUntil = time.Now().Add(-time.Minute)
+	if err := f.store.Put(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	f.env.Revoke()
+	checked, err := f.w.CheckStatus(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("CheckStatus: %v", err)
+	}
+	if checked.Status.Value != "" || !checked.Status.CheckedAt.IsZero() {
+		t.Errorf("Status = %+v, want none: the list wasn't to be fetched", checked.Status)
+	}
+}
