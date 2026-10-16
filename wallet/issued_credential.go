@@ -51,6 +51,14 @@ type VerifyIssuedCredentialParams struct {
 	// §6.1.1). REQUIRED.
 	IssuerRoots *x509.CertPool
 
+	// RequireIssuerName refuses an SD-JWT VC whose iss its signing
+	// certificate doesn't name, as verifier.X5CIssuerKeyResolver's
+	// RequireIssuerName does. SD-JWT VC doesn't require them to
+	// correspond (§2.5), and issuers such as the EU reference PID issuer
+	// sign from a certificate naming none, so it's off by default: set
+	// it where IssuerRoots certify several issuers.
+	RequireIssuerName bool
+
 	// Now is the time validity is checked at; zero means time.Now.
 	Now time.Time
 }
@@ -150,10 +158,7 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("verify: %w", err)
 	}
-	// The issuer is the leaf's subject (SD-JWT VC, the x5c header): an
-	// iss must name it, or any issuer under IssuerRoots could issue in
-	// another's name.
-	if issRaw, present := payload["iss"]; present {
+	if issRaw, present := payload["iss"]; present && p.RequireIssuerName {
 		iss, ok := issRaw.(string)
 		if !ok {
 			return VerifiedIssuedCredential{}, errors.New("iss is not a string")

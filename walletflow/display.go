@@ -2,9 +2,11 @@ package walletflow
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"net/url"
 	"strings"
 	"time"
@@ -144,7 +146,7 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	if iss, ok := c.Claims["iss"].(string); ok && !c.StatusListCWT {
 		// Its status is its issuer's to sign, or one of its Status
 		// Issuers', not another issuer's under IssuerRoots.
-		checker.Options = statusOptionsFor(checker.Options, iss, w.cfg.StatusIssuers[iss])
+		checker.Options = statusOptionsFor(checker.Options, iss, signerKey(c.Credential), w.cfg.StatusIssuers[iss])
 	}
 	status, _, err := checker.Check(ctx, *c.StatusList, c.StatusListCWT)
 	if err != nil {
@@ -181,16 +183,17 @@ func statusValue(s statuslist.StatusType) string {
 	return fmt.Sprintf("0x%02x", uint8(s))
 }
 
-// statusOptionsFor is opts for checking issuer's status list: signed by
-// issuer, or by one of statusIssuers, each matched by the name its
-// certificate carries (certchain.CheckIssuerName).
-func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, statusIssuers []string) statuslist.VerifyOptions {
+// statusOptionsFor is opts for checking issuer's status list: signed
+// with issuerKey, the key that signed the credential, or by a
+// certificate naming issuer, or one naming one of statusIssuers
+// (certchain.CheckIssuerName).
+func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, issuerKey crypto.PublicKey, statusIssuers []string) statuslist.VerifyOptions {
 	if len(statusIssuers) == 0 {
-		opts.Issuer = issuer
+		opts.Issuer, opts.IssuerKey = issuer, issuerKey
 		return opts
 	}
 	opts.LeafPolicy = func(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
-		if certchain.CheckIssuerName(leaf, issuer) == nil {
+		if certchain.SameKey(leaf.PublicKey, issuerKey) || certchain.CheckIssuerName(leaf, issuer) == nil {
 			return nil
 		}
 		for _, s := range statusIssuers {
@@ -203,4 +206,23 @@ func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, statusIssuer
 	// A Status Issuer's token may carry its own iss.
 	opts.Issuer = ""
 	return opts
+}
+
+// signerKey is the key in an SD-JWT VC's x5c leaf, verified when the
+// credential was received; nil when it has none.
+func signerKey(credential string) crypto.PublicKey {
+	issuerJWT, _, _ := strings.Cut(credential, "~")
+	header, _, err := jose.DecodeUnverified(issuerJWT)
+	if err != nil {
+		return nil
+	}
+	ders, err := certchain.X5CDERsFromHeader(header)
+	if err != nil || len(ders) == 0 {
+		return nil
+	}
+	leaf, err := x509.ParseCertificate(ders[0])
+	if err != nil {
+		return nil
+	}
+	return leaf.PublicKey
 }
