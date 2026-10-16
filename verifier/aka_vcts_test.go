@@ -3,6 +3,7 @@ package verifier_test
 import (
 	"context"
 	"crypto/x509"
+	"slices"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
@@ -41,7 +42,17 @@ func TestAkaVCTs_DerivedTypeAnswersTheRequest(t *testing.T) {
 		c.Verify.IssuerKeys = verifier.X5CIssuerKeyResolver{Roots: roots}
 	}
 
-	f := newTxFixture(t, useRoots)
+	// IssuerAuthorized sees the credential's own type, the type it was
+	// matched as and its aka_vcts apart, so it can authorize the issuer
+	// for the requested type rather than trust aka_vcts (draft-19 §7.7).
+	var seen verifier.IssuerAuthorization
+	f := newTxFixture(t, func(c *verifier.TransactionsConfig) {
+		useRoots(c)
+		c.Verify.IssuerAuthorized = func(_ context.Context, a verifier.IssuerAuthorization) error {
+			seen = a
+			return nil
+		}
+	})
 	f.held = issue([]string{"urn:tx:1"})
 	begun := f.begin("browser-binding-A", false)
 	if _, err := f.txs.HandleResponse(context.Background(), f.answer(begun, nil)); err != nil {
@@ -50,6 +61,9 @@ func TestAkaVCTs_DerivedTypeAnswersTheRequest(t *testing.T) {
 	view, err := f.txs.Lookup(context.Background(), begun.ID, "browser-binding-A")
 	if err != nil || view.Status != verifier.TransactionDone || view.Result == nil || view.Result.Credentials[0].Claims["vct"] != "urn:tx:1:derived" {
 		t.Fatalf("Lookup = %+v, %v; want the derived credential verified", view, err)
+	}
+	if seen.Type != "urn:tx:1:derived" || !slices.Equal(seen.AkaTypes, []string{"urn:tx:1"}) || !slices.Equal(seen.RequestedTypes, []string{"urn:tx:1"}) {
+		t.Errorf("IssuerAuthorization = %+v", seen)
 	}
 
 	f = newTxFixture(t, useRoots)
