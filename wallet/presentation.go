@@ -334,11 +334,11 @@ func matchAllMdocQuery(ctx context.Context, cq dcql.CredentialQuery, candidates 
 		if cq.SatisfiedByMdocClaims(cand.MdocDocType, resolveHeldMdocNameSpaces(issuerSigned)) != nil {
 			continue
 		}
-		_, unprotected, _, err := cose.DecodeUnverified(issuerSigned.IssuerAuth)
+		protected, unprotected, _, err := cose.DecodeUnverified(issuerSigned.IssuerAuth)
 		if err != nil {
 			continue
 		}
-		if !candidateSatisfiesTrustedAuthorities(ctx, cq, trustedAuthorities, nil, unprotected.X5Chain) {
+		if !candidateSatisfiesTrustedAuthorities(ctx, cq, trustedAuthorities, nil, cose.X5ChainOf(protected, unprotected)) {
 			continue
 		}
 		matches = append(matches, cand)
