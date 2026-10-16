@@ -67,6 +67,21 @@ type Config struct {
 	// that isn't signed by a certificate chaining to
 	// IssuerMetadataRoots, which it requires.
 	RequireSignedIssuerMetadata bool
+
+	// RequireIssuerMetadataName refuses signed Credential Issuer
+	// Metadata whose signing certificate doesn't name the Credential
+	// Issuer, its sub: as a uniformResourceIdentifier subject
+	// alternative name, or for a "dns:" identifier a dNSName. Without
+	// it, any certificate under IssuerMetadataRoots can sign any
+	// issuer's metadata; set it where those roots certify several
+	// parties. Requires IssuerMetadataRoots.
+	RequireIssuerMetadataName bool
+
+	// MaxIssuerMetadataAge, when positive, refuses signed Credential
+	// Issuer Metadata issued (iat) longer ago than this: a signed
+	// document without exp would otherwise stay usable indefinitely,
+	// after the issuer has changed its endpoints.
+	MaxIssuerMetadataAge time.Duration
 }
 
 // Clock supplies the current time — a plain function value satisfies
@@ -160,6 +175,12 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 
 	if cfg.RequireSignedIssuerMetadata && cfg.IssuerMetadataRoots == nil {
 		return nil, fmt.Errorf("wallet: config: require_signed_issuer_metadata needs issuer_metadata_roots")
+	}
+	if cfg.RequireIssuerMetadataName && cfg.IssuerMetadataRoots == nil {
+		return nil, fmt.Errorf("wallet: config: require_issuer_metadata_name needs issuer_metadata_roots")
+	}
+	if cfg.MaxIssuerMetadataAge < 0 {
+		return nil, fmt.Errorf("wallet: config: max_issuer_metadata_age must not be negative")
 	}
 
 	fetcher, err := fapihttp.New(deps.HTTP, cfg.Fetch)

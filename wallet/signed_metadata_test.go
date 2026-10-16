@@ -2,11 +2,15 @@ package wallet_test
 
 import (
 	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -185,5 +189,68 @@ func TestNewRequireSignedIssuerMetadataNeedsRoots(t *testing.T) {
 	cfg.RequireSignedIssuerMetadata = true
 	if _, err := wallet.New(cfg, validDependencies()); err == nil {
 		t.Error("New accepted require_signed_issuer_metadata without issuer_metadata_roots")
+	}
+}
+
+// RequireIssuerMetadataName refuses signed metadata whose certificate
+// doesn't name the issuer, and MaxIssuerMetadataAge metadata issued too
+// long ago; without them, both are accepted.
+func TestFetchCredentialIssuerMetadata_SignedNameAndAge(t *testing.T) {
+	root, rootKey := testcert.CA(t, "metadata root")
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	naming := func(uri string) *x509.Certificate {
+		u, _ := url.Parse(uri)
+		der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+			SerialNumber: big.NewInt(time.Now().UnixNano()), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+			KeyUsage: x509.KeyUsageDigitalSignature, URIs: []*url.URL{u},
+		}, root, &key.PublicKey, rootKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cert
+	}
+	now := time.Now()
+	for name, tc := range map[string]struct {
+		certNames   func(issuerURL string) string
+		iat         time.Time
+		requireName bool
+		maxAge      time.Duration
+		ok          bool
+	}{
+		"names the issuer, required":         {func(u string) string { return u }, now, true, 0, true},
+		"names another issuer, required":     {func(string) string { return "https://other.example" }, now, true, 0, false},
+		"names another issuer, not required": {func(string) string { return "https://other.example" }, now, false, 0, true},
+		"recent, with a max age":             {func(u string) string { return u }, now.Add(-time.Minute), false, time.Hour, true},
+		"too old, with a max age":            {func(u string) string { return u }, now.Add(-2 * time.Hour), false, time.Hour, false},
+		"old, without a max age":             {func(u string) string { return u }, now.Add(-2 * time.Hour), false, 0, true},
+	} {
+		issuerURL := serveMetadata(t, func(issuerURL, _ string) (string, string) {
+			body, _ := json.Marshal(testMetadata(t, issuerURL))
+			claims := map[string]any{}
+			_ = json.Unmarshal(body, &claims)
+			claims["sub"], claims["iat"] = issuerURL, tc.iat.Unix()
+			return "application/jwt", signMetadataClaims(t, key, naming(tc.certNames(issuerURL)), claims)
+		})
+		cfg := validConfig()
+		cfg.IssuerMetadataRoots, cfg.RequireSignedIssuerMetadata = roots, true
+		cfg.RequireIssuerMetadataName, cfg.MaxIssuerMetadataAge = tc.requireName, tc.maxAge
+		deps := validDependencies()
+		deps.HTTP = http.DefaultClient
+		w, err := wallet.New(cfg, deps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.FetchCredentialIssuerMetadata(t.Context(), issuerURL); tc.ok != (err == nil) {
+			t.Errorf("%s: err = %v, want ok = %v", name, err, tc.ok)
+		}
 	}
 }
