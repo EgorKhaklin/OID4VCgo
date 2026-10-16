@@ -539,7 +539,7 @@ func (iss *Issuer) issueBatch(ctx context.Context, cc CredentialConfiguration, r
 			}
 			statusRefs[ref] = i
 		}
-		credential, err := iss.issueInstance(instance, key)
+		credential, err := iss.issueInstance(cc, instance, key)
 		if err != nil {
 			return nil, newError(ErrorCredentialRequestDenied, 400, "credential issuance failed", err)
 		}
@@ -595,9 +595,9 @@ func (c CredentialInstance) statusRef() (string, bool) {
 }
 
 // issueInstance issues instance's claims bound to key.
-func (iss *Issuer) issueInstance(instance CredentialInstance, key resolvedKey) (string, error) {
+func (iss *Issuer) issueInstance(cc CredentialConfiguration, instance CredentialInstance, key resolvedKey) (string, error) {
 	if instance.SDJWTClaims != nil {
-		return iss.issueSDJWT(*instance.SDJWTClaims, key)
+		return iss.issueSDJWT(*instance.SDJWTClaims, key, cc.TypeMetadata)
 	}
 	return iss.issueMdoc(*instance.MdocClaims, key)
 }
@@ -605,7 +605,7 @@ func (iss *Issuer) issueInstance(instance CredentialInstance, key resolvedKey) (
 // issueSDJWT binds claims to key's public key via cnf.jwk (RFC 7800),
 // using key.JWKRaw — the key's public members only, so nothing the
 // Wallet chose beyond its key ends up in the signed credential.
-func (iss *Issuer) issueSDJWT(claims sdjwtvc.Claims, key resolvedKey) (string, error) {
+func (iss *Issuer) issueSDJWT(claims sdjwtvc.Claims, key resolvedKey, typeMetadata *sdjwtvc.TypeMetadata) (string, error) {
 	var cnfJWK map[string]any
 	if err := json.Unmarshal(key.JWKRaw, &cnfJWK); err != nil {
 		return "", fmt.Errorf("issuer: unmarshal jwk for cnf: %w", err)
@@ -616,6 +616,7 @@ func (iss *Issuer) issueSDJWT(claims sdjwtvc.Claims, key resolvedKey) (string, e
 		KeyID:               iss.deps.SDJWTSigner.KeyID,
 		IssuerCertificate:   iss.deps.SDJWTSigner.IssuerCertificate,
 		IssuerIntermediates: iss.deps.SDJWTSigner.IssuerIntermediates,
+		TypeMetadata:        typeMetadata,
 	})
 	if err != nil {
 		return "", fmt.Errorf("issuer: issue sd-jwt vc: %w", err)

@@ -135,6 +135,12 @@ type IssueOptions struct {
 	// be included"). Each must sign the certificate before it. Requires
 	// IssuerCertificate.
 	IssuerIntermediates []*x509.Certificate
+
+	// TypeMetadata, if set, is the Type Metadata the Issuer publishes
+	// for this credential's vct: Issue refuses claims that break its
+	// claim metadata (CheckTypeMetadata), so the credential is one a
+	// consumer processing that metadata accepts.
+	TypeMetadata *TypeMetadata
 }
 
 var reservedTopLevelClaims = map[string]bool{
@@ -199,6 +205,11 @@ func issuerJWTHeader(opts IssueOptions) map[string]any {
 func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueOptions) (sdjwt string, disclosures []Disclosure, err error) {
 	if err := checkIssueInputs(signer, claims, opts); err != nil {
 		return "", nil, err
+	}
+	if opts.TypeMetadata != nil {
+		if err := CheckTypeMetadata(claims, *opts.TypeMetadata); err != nil {
+			return "", nil, err
+		}
 	}
 	hashAlg := opts.HashAlg
 	if hashAlg == "" {

@@ -70,6 +70,15 @@ type CredentialConfiguration struct {
 	// own doc comment for the "format-specific mechanisms take
 	// precedence" caveat.
 	CredentialMetadata *oid4vci.CredentialMetadata
+
+	// TypeMetadata, for an SD-JWT VC configuration, is the SD-JWT VC
+	// Type Metadata the Issuer publishes for VCT, if any. Every
+	// credential issued for this configuration is checked against its
+	// claim metadata (sdjwtvc.CheckTypeMetadata), and refused when it
+	// breaks it, so a Wallet or Verifier that processes the metadata
+	// accepts it. It isn't part of the Credential Issuer Metadata; serve
+	// it at its own URL.
+	TypeMetadata *sdjwtvc.TypeMetadata
 }
 
 func (c CredentialConfiguration) validate() error {
@@ -105,6 +114,11 @@ func (c CredentialConfiguration) validate() error {
 // credential_signing_alg_values_supported in the wrong wire shape)
 // rather than failing at New().
 func (c CredentialConfiguration) validateFormatSpecific() error {
+	if c.TypeMetadata != nil {
+		if err := c.validateTypeMetadata(); err != nil {
+			return err
+		}
+	}
 	switch c.Format {
 	case sdjwtvc.CredentialFormat:
 		if c.VCT == "" {
@@ -210,4 +224,19 @@ func (iss *Issuer) Metadata() oid4vci.Metadata {
 		md.CredentialConfigurationsSupported[id] = wire
 	}
 	return md
+}
+
+// validateTypeMetadata checks TypeMetadata belongs to this
+// configuration: an SD-JWT VC one, for its vct, and a valid document.
+func (c CredentialConfiguration) validateTypeMetadata() error {
+	if c.Format != sdjwtvc.CredentialFormat {
+		return fmt.Errorf("type_metadata is only for format %q", sdjwtvc.CredentialFormat)
+	}
+	if c.TypeMetadata.VCT != c.VCT {
+		return fmt.Errorf("type_metadata is for vct %q, not this configuration's %q", c.TypeMetadata.VCT, c.VCT)
+	}
+	if err := c.TypeMetadata.Validate(); err != nil {
+		return fmt.Errorf("type_metadata: %w", err)
+	}
+	return nil
 }
