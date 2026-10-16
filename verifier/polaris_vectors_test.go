@@ -59,10 +59,19 @@ var polarisLayersNotImplemented = map[string]string{}
 // test. A listed vector that is now refused fails the test: remove it from
 // this map. Any other vector with a wrong verdict fails the test, and so does
 // a refused control. Controls are never listed.
-var polarisKnownGaps = map[string]polarisGap{
-	"kb-exp-string":             {layer: "sd-jwt", clause: "RFC 7519 s4.1.4", note: "not refused at this commit"},
-	"x5c-includes-anchor":       {layer: "haip-x509", clause: "HAIP 1.0 s6.1.1", note: "not refused at this commit"},
-	"status-list-lst-truncated": {layer: "status-list", clause: "draft-ietf-oauth-status-list-21 s8.3 step 5", note: "not refused at this commit"},
+var polarisKnownGaps = map[string]polarisGap{}
+
+// polarisRequireIssuerName are the vectors judged with
+// X5CIssuerKeyResolver.RequireIssuerName set, by id. They test a relying
+// party's policy: SD-JWT VC doesn't require a credential's iss to name the
+// x5c leaf (oauth-wg/oauth-sd-jwt-vc#436), though the corpus at 0.3.0 still
+// grades them spec-implied. The check is off by default, so these three are
+// refused only when the caller opts in. Every other vector is judged on the
+// package's defaults.
+var polarisRequireIssuerName = map[string]bool{
+	"x5c-leaf-names-other-issuer": true,
+	"x5c-leaf-names-other-host":   true,
+	"x5c-leaf-uri-beats-host":     true,
 }
 
 type polarisGap struct{ layer, clause, note string }
@@ -185,6 +194,11 @@ func TestPolarisNegativeVectors(t *testing.T) {
 			t.Errorf("known gap %q is not a refusal in this file: remove it from polarisKnownGaps", id)
 		}
 	}
+	for id := range polarisRequireIssuerName {
+		if !slices.ContainsFunc(refusals, func(v polarisVector) bool { return v.ID == id && v.Trust == "x5c" }) {
+			t.Errorf("%q in polarisRequireIssuerName is not an x5c refusal in this file", id)
+		}
+	}
 
 	var passed, gaps, failed, skipped int
 	for _, group := range [][]polarisVector{controls, refusals} {
@@ -245,7 +259,7 @@ func (r polarisRun) judge(t *testing.T, v polarisVector) (verdict, why string) {
 	var keys SDJWTVCIssuerKeyResolver
 	switch v.Trust {
 	case "x5c":
-		keys = X5CIssuerKeyResolver{Roots: r.roots}
+		keys = X5CIssuerKeyResolver{Roots: r.roots, RequireIssuerName: polarisRequireIssuerName[v.ID]}
 	case "jwks":
 		keys = polarisFixedKey{pub: r.issuerPub}
 	default:
