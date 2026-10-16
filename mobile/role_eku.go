@@ -109,14 +109,65 @@ func boolEKU(set bool) string {
 	return ""
 }
 
+// shareAnchor reports whether roots a and b can vouch for the same
+// certificates: they share a certificate, or the same key under the
+// same subject (a reissued anchor), or a certificate in one is
+// certified, directly or through others in either, by one in the other
+// (an intermediate, or a cross-certificate). A certificate chaining to
+// one may then chain to both.
 func shareAnchor(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	theirs := pemCertificates(b)
-	return slices.ContainsFunc(pemCertificates(a), func(der []byte) bool {
-		return slices.ContainsFunc(theirs, func(o []byte) bool { return bytes.Equal(der, o) })
-	})
+	as, bs := parseCertificates(pemCertificates(a)), parseCertificates(pemCertificates(b))
+	all := append(slices.Clone(as), bs...)
+	for _, x := range as {
+		for _, y := range bs {
+			if sameAnchor(x, y) || certifiedBy(x, y, all) || certifiedBy(y, x, all) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func parseCertificates(ders [][]byte) []*x509.Certificate {
+	out := make([]*x509.Certificate, 0, len(ders))
+	for _, der := range ders {
+		if cert, err := x509.ParseCertificate(der); err == nil {
+			out = append(out, cert)
+		}
+	}
+	return out
+}
+
+// sameAnchor reports whether x and y are one anchor: the same
+// certificate, or the same key under the same subject.
+func sameAnchor(x, y *x509.Certificate) bool {
+	return bytes.Equal(x.Raw, y.Raw) ||
+		(bytes.Equal(x.RawSubject, y.RawSubject) && bytes.Equal(x.RawSubjectPublicKeyInfo, y.RawSubjectPublicKeyInfo))
+}
+
+// certifiedBy reports whether x is certified by y, directly or through
+// a path of certificates in all.
+func certifiedBy(x, y *x509.Certificate, all []*x509.Certificate) bool {
+	seen := map[*x509.Certificate]bool{x: true}
+	frontier := []*x509.Certificate{x}
+	for len(frontier) > 0 {
+		cur := frontier[0]
+		frontier = frontier[1:]
+		for _, issuer := range all {
+			if seen[issuer] || !bytes.Equal(cur.RawIssuer, issuer.RawSubject) || cur.CheckSignatureFrom(issuer) != nil {
+				continue
+			}
+			if sameAnchor(issuer, y) {
+				return true
+			}
+			seen[issuer] = true
+			frontier = append(frontier, issuer)
+		}
+	}
+	return false
 }
 
 // roleEKU is the leaf policy for the config key name's OID, nil if

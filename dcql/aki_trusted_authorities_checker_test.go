@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 )
 
@@ -250,4 +251,20 @@ func intermediateKeyBits(t *testing.T, cert *x509.Certificate) []byte {
 		t.Fatal(err)
 	}
 	return spki.PublicKey.Bytes
+}
+
+// The issuer chain is verified at the verification time the context
+// carries, as the verifier's own certificate checks are: a certificate
+// valid now but expired by then fails it.
+func TestAKITrustedAuthoritiesChecker_AtTheVerificationTime(t *testing.T) {
+	ca, caKey := testcert.CA(t, "test-ca")
+	leaf, _ := testcert.Leaf(t, "test-leaf", ca, caKey)
+	checker := dcql.AKITrustedAuthoritiesChecker{Roots: pool(ca)}
+	if err := checker.CheckTrustedAuthorities(context.Background(), verifiedAKI(ca), [][]byte{leaf.Raw}); err != nil {
+		t.Fatalf("now: %v", err)
+	}
+	later := certchain.WithTime(context.Background(), leaf.NotAfter.Add(time.Hour))
+	if err := checker.CheckTrustedAuthorities(later, verifiedAKI(ca), [][]byte{leaf.Raw}); err == nil {
+		t.Error("accepted a chain at a verification time after the leaf expired")
+	}
 }

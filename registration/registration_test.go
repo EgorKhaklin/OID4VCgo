@@ -229,3 +229,22 @@ func TestVerify_RefusesNoClientID(t *testing.T) {
 		t.Errorf("Verify with no client_id: %v", err)
 	}
 }
+
+// The registrar's certificate is checked at the time the registration
+// is, not the wall clock: one that has expired by then fails, though
+// the registration itself still holds.
+func TestVerify_RegistrarCertificateAtNow(t *testing.T) {
+	reg := newRegistrar(t)
+	r := shop()
+	r.Expires = time.Now().Add(3 * time.Hour)
+	token, err := registration.Issue(r, reg.key, reg.chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registration.Verify(token, reg.roots, clientID, time.Now()); err != nil {
+		t.Fatalf("now: %v", err)
+	}
+	if _, err := registration.Verify(token, reg.roots, clientID, reg.chain[0].NotAfter.Add(time.Hour)); err == nil {
+		t.Error("accepted a registration at a time after its registrar's certificate expired")
+	}
+}

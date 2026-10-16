@@ -66,9 +66,14 @@ func (w *Wallet) verifySignedMetadata(token, issuerURL string) ([]byte, error) {
 	if err := certchain.CheckNoAnchor(x5c); err != nil {
 		return nil, fmt.Errorf("signed metadata: signer certificate: %w", err)
 	}
-	leaf, err := certchain.VerifyLeaf(x5c, w.cfg.IssuerMetadataRoots)
+	leaf, err := certchain.VerifyLeafWithPolicyAt(x5c, w.cfg.IssuerMetadataRoots, nil, w.deps.Clock.Now())
 	if err != nil {
 		return nil, fmt.Errorf("signed metadata: signer certificate: %w", err)
+	}
+	if w.cfg.RequireIssuerMetadataName {
+		if err := certchain.CheckIssuerName(leaf, issuerURL); err != nil {
+			return nil, fmt.Errorf("signed metadata: signer certificate doesn't name the issuer: %w", err)
+		}
 	}
 	if certchain.IsSelfSigned(leaf) {
 		return nil, errors.New("signed metadata: the signer certificate is self-signed")
@@ -109,6 +114,9 @@ func (w *Wallet) checkSignedMetadataClaims(claims map[string]json.RawMessage, is
 	}
 	if time.Unix(iat, 0).After(now.Add(maxSignedMetadataClockSkew)) {
 		return errors.New("iat is in the future")
+	}
+	if age := w.cfg.MaxIssuerMetadataAge; age > 0 && time.Unix(iat, 0).Before(now.Add(-age)) {
+		return fmt.Errorf("issued %s ago, over the %s allowed", now.Sub(time.Unix(iat, 0)).Round(time.Second), age)
 	}
 	if raw, present := claims["exp"]; present {
 		var exp int64

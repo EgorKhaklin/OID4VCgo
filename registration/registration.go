@@ -238,7 +238,7 @@ func VerifyWithPolicy(token string, roots *x509.CertPool, clientID string, now t
 	if err != nil {
 		return Registration{}, fmt.Errorf("registration: %w", err)
 	}
-	leaf, err := certchain.VerifyLeafWithPolicy(ders, roots, policy)
+	leaf, err := certchain.VerifyLeafWithPolicyAt(ders, roots, policy, now)
 	if err != nil {
 		return Registration{}, fmt.Errorf("registration: registrar certificate: %w", err)
 	}
