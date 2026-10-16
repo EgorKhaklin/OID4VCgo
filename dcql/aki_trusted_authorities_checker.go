@@ -52,7 +52,7 @@ type AKITrustedAuthoritiesChecker struct {
 }
 
 // CheckTrustedAuthorities implements TrustedAuthoritiesChecker.
-func (c AKITrustedAuthoritiesChecker) CheckTrustedAuthorities(_ context.Context, authorities []TrustedAuthoritiesQuery, issuerChain [][]byte) error {
+func (c AKITrustedAuthoritiesChecker) CheckTrustedAuthorities(ctx context.Context, authorities []TrustedAuthoritiesQuery, issuerChain [][]byte) error {
 	var wantAKIs []string
 	for _, ta := range authorities {
 		if ta.Type == TrustedAuthorityAKI {
@@ -66,7 +66,7 @@ func (c AKITrustedAuthoritiesChecker) CheckTrustedAuthorities(_ context.Context,
 		return fmt.Errorf("dcql: no issuer certificate chain to check an %q trusted_authorities entry against", TrustedAuthorityAKI)
 	}
 	if c.Roots != nil {
-		return checkVerifiedChainAKI(issuerChain, c.Roots, wantAKIs)
+		return checkVerifiedChainAKI(ctx, issuerChain, c.Roots, wantAKIs)
 	}
 	leaf, err := x509.ParseCertificate(issuerChain[0])
 	if err != nil {
@@ -93,8 +93,10 @@ func (c AKITrustedAuthoritiesChecker) CheckTrustedAuthorities(_ context.Context,
 // matches only by an identifier derived from its own public key
 // (RFC 5280 §4.2.1.2 method 1, RFC 7093 method 1), which no certificate
 // for another key can carry and still sign the leaf.
-func checkVerifiedChainAKI(issuerChain [][]byte, roots *x509.CertPool, wantAKIs []string) error {
-	_, chains, err := certchain.VerifyChains(issuerChain, roots)
+func checkVerifiedChainAKI(ctx context.Context, issuerChain [][]byte, roots *x509.CertPool, wantAKIs []string) error {
+	// At the verification time the verifier set, as its own certificate
+	// checks are.
+	_, chains, err := certchain.VerifyChainsAt(issuerChain, roots, certchain.TimeFrom(ctx))
 	if err != nil {
 		return fmt.Errorf("dcql: issuer certificate chain: %w", err)
 	}
