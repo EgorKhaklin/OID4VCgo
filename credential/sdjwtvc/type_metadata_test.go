@@ -78,3 +78,29 @@ func TestTypeMetadata_ValidateRejects(t *testing.T) {
 		}
 	}
 }
+
+// A rendering uri must be an HTTPS URL or a data: URI (draft-19
+// §5.5.1), for the simple method's logo and background_image and each
+// svg_templates entry; another method's parameters aren't checked.
+func TestTypeMetadata_RenderingURIs(t *testing.T) {
+	for rendering, ok := range map[string]bool{
+		`{"simple":{"logo":{"uri":"https://issuer.example/logo.png"},"background_color":"#fff"}}`:  true,
+		`{"simple":{"background_image":{"uri":"data:image/png;base64,iVBORw0KGgo="}}}`:             true,
+		`{"svg_templates":[{"uri":"https://issuer.example/card.svg"}]}`:                            true,
+		`{"another_method":{"uri":"http://anything.example"}}`:                                     true,
+		`{"simple":{"logo":{"uri":"http://issuer.example/logo.png"}}}`:                             false,
+		`{"simple":{"logo":{"alt_text":"no uri"}}}`:                                                false,
+		`{"simple":{"background_image":{"uri":"file:///etc/passwd"}}}`:                             false,
+		`{"svg_templates":[{"uri":"https://issuer.example/a.svg"},{"uri":"javascript:alert(1)"}]}`: false,
+		`{"svg_templates":[{"properties":{"orientation":"portrait"}}]}`:                            false,
+		`{"svg_templates":{"uri":"https://issuer.example/card.svg"}}`:                              false,
+	} {
+		m := validTypeMetadata()
+		if err := json.Unmarshal([]byte(rendering), &m.Display[0].Rendering); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Validate(); (err == nil) != ok {
+			t.Errorf("%s: Validate = %v, want ok = %v", rendering, err, ok)
+		}
+	}
+}

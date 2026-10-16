@@ -84,6 +84,13 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if r.URL.Query().Has("time") {
+		// Historical resolution (draft-ietf-oauth-status-list §8.4):
+		// this Publisher keeps only the current list, and serving that
+		// for a past time would answer a question it wasn't asked.
+		http.Error(w, "historical resolution (the time parameter) is not supported", http.StatusNotImplemented)
+		return
+	}
 	cwt := strings.Contains(r.Header.Get("Accept"), CWTTokenMediaType)
 	token, err := p.cachedTokenFor(r.Context(), cwt)
 	if err != nil {

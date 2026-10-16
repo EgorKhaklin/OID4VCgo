@@ -174,3 +174,21 @@ func TestPublisher_CachesTokens(t *testing.T) {
 		}
 	}
 }
+
+// A request for the list at a past time (the time query parameter) is
+// answered 501: the Publisher keeps only the current list
+// (draft-ietf-oauth-status-list §8.4). Without it, the current list is
+// served.
+func TestPublisher_HistoricalResolutionNotImplemented(t *testing.T) {
+	ca, caKey := testcert.CA(t, "status CA")
+	cert, key := testcert.Leaf(t, "signer", ca, caKey)
+	p := &Publisher{URI: "https://i.example/s", Signer: key, Chain: []*x509.Certificate{cert},
+		Statuses: func(context.Context) ([]uint8, error) { return []uint8{0}, nil }}
+	for target, want := range map[string]int{"/s?time=1767225600": http.StatusNotImplemented, "/s": http.StatusOK} {
+		rec := httptest.NewRecorder()
+		p.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		if rec.Code != want {
+			t.Errorf("GET %s: status %d, want %d", target, rec.Code, want)
+		}
+	}
+}

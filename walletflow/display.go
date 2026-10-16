@@ -127,7 +127,9 @@ type CredentialStatus struct {
 // names, checks it's signed by a certificate chaining to IssuerRoots,
 // and records the credential's status in it: the stored credential is
 // returned with its Status. A credential without a status list has
-// nothing to check, and is returned as it is. The status list tells the
+// nothing to check, and is returned as it is, as is an expired one: it
+// isn't valid whatever its status, so its status list isn't fetched
+// (draft-ietf-oauth-status-list §8.3). The status list tells the
 // issuer nothing about which credential is checked: it's one list for
 // many credentials (the Token Status List's herd privacy).
 func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, error) {
@@ -136,6 +138,9 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 		return StoredCredential{}, fmt.Errorf("walletflow: credential: %w", err)
 	}
 	if c.StatusList == nil {
+		return c, nil
+	}
+	if !c.ValidUntil.IsZero() && !w.deps.Clock().Before(c.ValidUntil) {
 		return c, nil
 	}
 	checker := statuslist.Checker{
