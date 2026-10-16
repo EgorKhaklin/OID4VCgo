@@ -200,30 +200,38 @@ func checkNoRegisteredClaimDisclosed(decoded map[string]any, alg HashAlg, disclo
 }
 
 func checkIssuerJWTValidityWindow(decoded map[string]any, now func() time.Time, skew time.Duration) error {
-	if expRaw, ok := decoded["exp"]; ok {
+	return checkValidityWindow(decoded, now, skew, "", "credential")
+}
+
+// checkValidityWindow checks claims' optional exp and nbf: each, if
+// present, a NumericDate (RFC 7519 §2, §4.1.4, §4.1.5), and now within
+// them, give or take skew. prefix names the JWT in a claim error ("" or
+// "key binding JWT "); subject names it in a validity error.
+func checkValidityWindow(claims map[string]any, now func() time.Time, skew time.Duration, prefix, subject string) error {
+	if expRaw, ok := claims["exp"]; ok {
 		exp, ok := expRaw.(float64)
 		if !ok {
-			return fmt.Errorf("sdjwtvc: exp claim is not a number")
+			return fmt.Errorf("sdjwtvc: %sexp claim is not a number", prefix)
 		}
 		expires, err := jwtdate.FromFloat(exp)
 		if err != nil {
-			return fmt.Errorf("sdjwtvc: exp claim: %w", err)
+			return fmt.Errorf("sdjwtvc: %sexp claim: %w", prefix, err)
 		}
 		if !now().Add(-skew).Before(expires) {
-			return fmt.Errorf("sdjwtvc: credential has expired")
+			return fmt.Errorf("sdjwtvc: %s has expired", subject)
 		}
 	}
-	if nbfRaw, ok := decoded["nbf"]; ok {
+	if nbfRaw, ok := claims["nbf"]; ok {
 		nbf, ok := nbfRaw.(float64)
 		if !ok {
-			return fmt.Errorf("sdjwtvc: nbf claim is not a number")
+			return fmt.Errorf("sdjwtvc: %snbf claim is not a number", prefix)
 		}
 		notBefore, err := jwtdate.FromFloat(nbf)
 		if err != nil {
-			return fmt.Errorf("sdjwtvc: nbf claim: %w", err)
+			return fmt.Errorf("sdjwtvc: %snbf claim: %w", prefix, err)
 		}
 		if now().Add(skew).Before(notBefore) {
-			return fmt.Errorf("sdjwtvc: credential is not yet valid")
+			return fmt.Errorf("sdjwtvc: %s is not yet valid", subject)
 		}
 	}
 	return nil
@@ -249,6 +257,7 @@ func verifyKeyBindingIfRequired(pres Presentation, opts VerifyOptions, hashAlg H
 		ExpectedNonce:    opts.ExpectedNonce,
 		ExpectedSDHash:   sdHash,
 		MaxAge:           opts.MaxKeyBindingAge,
+		MaxClockSkew:     opts.MaxClockSkew,
 		Now:              opts.Now,
 	}); err != nil {
 		return fmt.Errorf("sdjwtvc: %w: %w", ErrKeyBinding, err)
