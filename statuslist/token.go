@@ -113,9 +113,13 @@ type VerifyOptions struct {
 	// which the MSO's status reference can name.
 	Issuer string
 
-	// IssuerKey is the public key that signed the Referenced Token, used
-	// with Issuer: a Status List Token signed with the same key is the
-	// issuer's own, whatever names the certificates carry.
+	// IssuerKey is the public key that signed the Referenced Token: a
+	// Status List Token signed with the same key is the issuer's own,
+	// whatever names the certificates carry. Set without Issuer, it's
+	// the only signer CheckX5C accepts, as for a Referenced Token with
+	// no issuer name (draft-ietf-oauth-status-list §11.3's same-key
+	// arrangement); a separate Status Issuer is then the caller's
+	// LeafPolicy to accept.
 	IssuerKey crypto.PublicKey
 }
 

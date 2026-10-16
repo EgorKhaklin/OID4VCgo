@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"time"
 
@@ -82,11 +83,8 @@ func checkX5C(token string, roots *x509.CertPool, ref StatusListRef, opts Verify
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
-	if opts.Issuer != "" && !certchain.SameKey(leaf.PublicKey, opts.IssuerKey) {
-		// The status of this issuer's tokens is its own to sign.
-		if err := certchain.CheckIssuerName(leaf, opts.Issuer); err != nil {
-			return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer isn't the referenced token's issuer: neither its key nor a name its certificate carries: %w", err)
-		}
+	if err := checkSignerIsIssuer(leaf, opts); err != nil {
+		return 0, TokenClaims{}, err
 	}
 	var alg jose.Alg
 	switch leaf.PublicKey.(type) {
@@ -142,4 +140,22 @@ func (o VerifyOptions) certificateTime() time.Time {
 		return time.Time{}
 	}
 	return o.Now()
+}
+
+// checkSignerIsIssuer checks a JWT token's signer is the Referenced
+// Token's issuer, as far as opts says who that is: it signs with
+// IssuerKey, or its certificate names Issuer. With neither set the
+// signer isn't bound beyond Roots.
+func checkSignerIsIssuer(leaf *x509.Certificate, opts VerifyOptions) error {
+	if (opts.Issuer == "" && opts.IssuerKey == nil) || certchain.SameKey(leaf.PublicKey, opts.IssuerKey) {
+		return nil
+	}
+	if opts.Issuer == "" {
+		return errors.New("statuslist: token signer isn't the referenced token's issuer: it signs with another key")
+	}
+	// The status of this issuer's tokens is its own to sign.
+	if err := certchain.CheckIssuerName(leaf, opts.Issuer); err != nil {
+		return fmt.Errorf("statuslist: token signer isn't the referenced token's issuer: neither its key nor a name its certificate carries: %w", err)
+	}
+	return nil
 }
