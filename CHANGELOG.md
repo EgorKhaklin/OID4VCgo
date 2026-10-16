@@ -8,8 +8,7 @@
 * **sdjwtvc:** sdjwtvc.Verify refuses an Issuer-signed JWT whose typ is vc+sd-jwt, and sdjwtvc.LegacyTypHeader is removed. Issuers still using vc+sd-jwt must move to dc+sd-jwt (sdjwtvc.TypHeader).
 * **sdjwtvc:** sdjwtvc.Verify, and with it the verifier and wallet, refuses an SD-JWT VC that makes a sub-claim of cnf, status or another registered claim selectively disclosable, and sdjwtvc.Issue refuses SD markers in Claims.Status and Claims.CNF.
 * **verifier:** a SD-JWT VC, Request Object or signed metadata whose x5c includes a self-signed certificate after the leaf is refused; send the chain without the trust anchor. With VerifyResponseRequest.Now (or mdocdcapi's Now) set, issuer certificates are checked at that instant, not the current time.
-* **verifier:** RequireValidStatus and walletflow's CheckStatus refuse an SD-JWT VC's Status List Token not signed by a certificate naming the credential's issuer. A deployment whose status lists come from a separate Status Issuer writes its own Accept, calling checker.RequireValid with a LeafPolicy for that issuer.
-* **verifier:** an SD-JWT VC with an iss is refused unless its x5c leaf names it (a uniformResourceIdentifier subject alternative name equal to iss, or for a "dns:" iss a matching dNSName). Issue credentials from a certificate naming the Credential Issuer's identifier.
+* **verifier:** RequireValidStatus and walletflow's CheckStatus refuse an SD-JWT VC's Status List Token that another issuer signed: its signer must sign with the key that signed the credential, or have a certificate naming the credential's iss. A deployment whose status lists come from a separate Status Issuer names it with verifier.RequireValidStatusFrom (a StatusIssuerPolicy) or walletflow.Config.StatusIssuers (status_issuers in the mobile libraries).
 
 ### Features
 
@@ -27,10 +26,10 @@
 * **sdjwtvc:** check a Key Binding JWT's exp and nbf ([ea51c0e](https://github.com/IDFoundry/OID4VCgo/commit/ea51c0ef984dbf2cd0d191b4a72d52c8001ecc4d))
 * **sdjwtvc:** refuse selectively disclosable sub-claims of registered claims ([ec1e0df](https://github.com/IDFoundry/OID4VCgo/commit/ec1e0dfaad9a4f37c77889c3bf68eae6760c46b9))
 * **statuslist:** refuse a truncated or corrupt status list ([de244fe](https://github.com/IDFoundry/OID4VCgo/commit/de244fe96cb54f137c24ff4cc7c9b9ab5d4062e1))
-* **verifier:** make the iss-to-certificate check opt-in, and bind status lists by key ([58e24ff](https://github.com/IDFoundry/OID4VCgo/commit/58e24ffa6f2d8fd838ccafd3bd39a69a22d3ebeb))
+* **verifier:** accept a status list signed with the credential's own key, whatever names its certificate carries ([58e24ff](https://github.com/IDFoundry/OID4VCgo/commit/58e24ffa6f2d8fd838ccafd3bd39a69a22d3ebeb))
 * **verifier:** refuse a status list another issuer signed ([e51915c](https://github.com/IDFoundry/OID4VCgo/commit/e51915c5ad582db6ddce2a842e931590bfeaa77a))
 * **verifier:** refuse a trust anchor sent in x5c, and check certificates at the verification time ([8df41e8](https://github.com/IDFoundry/OID4VCgo/commit/8df41e8d14932b2a3c3ff2b290e8e5061eec068b))
-* **verifier:** refuse an SD-JWT VC whose iss doesn't name its x5c certificate ([4ec198d](https://github.com/IDFoundry/OID4VCgo/commit/4ec198d4faa9f99ebb0096c3da39dba787d32fe8))
+* **verifier:** RequireIssuerName, an opt-in check that an SD-JWT VC's iss names its x5c certificate, in the verifier's X5CIssuerKeyResolver and the wallet's VerifyIssuedCredentialParams ([4ec198d](https://github.com/IDFoundry/OID4VCgo/commit/4ec198d4faa9f99ebb0096c3da39dba787d32fe8))
 * **verifier:** report a malformed direct_post.jwt response as a verifier.Error ([59b75c6](https://github.com/IDFoundry/OID4VCgo/commit/59b75c61a4e77d0d3bef2f20d158f03d0e4cffde))
 
 ## [0.43.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.42.0...v0.43.0) (2026-10-15)
