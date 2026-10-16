@@ -1,7 +1,10 @@
 package sdjwtvc
 
 import (
+	"encoding"
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 )
 
@@ -37,9 +40,59 @@ func seal(v any, alg HashAlg) (any, []Disclosure, error) {
 	case sdElement:
 		return nil, nil, fmt.Errorf("sdjwtvc: SDElement() used outside an array element")
 	default:
+		if generic, ok := asGeneric(v); ok {
+			return seal(generic, alg)
+		}
+		if hasSDMarker(v) {
+			return nil, nil, fmt.Errorf("sdjwtvc: an SD or SDElement marker inside a %T, which Issue can't seal: use map[string]any and []any around it", v)
+		}
 		return v, nil, nil
 	}
 }
+
+// asGeneric is v as a map[string]any or []any, when it's another map
+// with string keys or slice that JSON encodes the same way, so a marker
+// inside a typed container ([]map[string]any, say) is sealed rather
+// than encoded as an empty object. Anything with an encoding of its
+// own keeps it: a []byte (base64), a json.Marshaler, a nil map or
+// slice (null), and a map whose keys marshal as text.
+func asGeneric(v any) (any, bool) {
+	if v == nil {
+		return nil, false
+	}
+	if _, ok := v.(json.Marshaler); ok {
+		return nil, false
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Map:
+		key := rv.Type().Key()
+		if rv.IsNil() || key.Kind() != reflect.String || key.Implements(textMarshalerType) {
+			return nil, false
+		}
+		out := make(map[string]any, rv.Len())
+		for it := rv.MapRange(); it.Next(); {
+			out[it.Key().String()] = it.Value().Interface()
+		}
+		return out, true
+	case reflect.Slice:
+		if rv.IsNil() || rv.Type().Elem().Kind() == reflect.Uint8 {
+			return nil, false
+		}
+		out := make([]any, rv.Len())
+		for i := range out {
+			out[i] = rv.Index(i).Interface()
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+var (
+	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
+	sdValueType       = reflect.TypeFor[sdValue]()
+	sdElementType     = reflect.TypeFor[sdElement]()
+)
 
 func sealMap(m map[string]any, alg HashAlg) (map[string]any, []Disclosure, error) {
 	out := make(map[string]any, len(m))
@@ -166,20 +219,41 @@ func addDecoys(payload map[string]any, alg HashAlg, n int) error {
 }
 
 // hasSDMarker reports whether v holds an SD or SDElement marker at any
-// depth.
+// depth, through maps, slices, arrays, pointers, interfaces and struct
+// fields.
 func hasSDMarker(v any) bool {
-	switch v := v.(type) {
-	case sdValue, sdElement:
+	return hasSDMarkerValue(reflect.ValueOf(v), 0)
+}
+
+// maxMarkerDepth bounds hasSDMarker's walk, which a pointer cycle would
+// otherwise never end.
+const maxMarkerDepth = 64
+
+func hasSDMarkerValue(rv reflect.Value, depth int) bool {
+	if !rv.IsValid() || depth > maxMarkerDepth {
+		return false
+	}
+	if t := rv.Type(); t == sdValueType || t == sdElementType {
 		return true
-	case map[string]any:
-		for _, child := range v {
-			if hasSDMarker(child) {
+	}
+	switch rv.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		return !rv.IsNil() && hasSDMarkerValue(rv.Elem(), depth+1)
+	case reflect.Map:
+		for it := rv.MapRange(); it.Next(); {
+			if hasSDMarkerValue(it.Value(), depth+1) {
 				return true
 			}
 		}
-	case []any:
-		for _, child := range v {
-			if hasSDMarker(child) {
+	case reflect.Slice, reflect.Array:
+		for i := range rv.Len() {
+			if hasSDMarkerValue(rv.Index(i), depth+1) {
+				return true
+			}
+		}
+	case reflect.Struct:
+		for i := range rv.NumField() {
+			if hasSDMarkerValue(rv.Field(i), depth+1) {
 				return true
 			}
 		}
