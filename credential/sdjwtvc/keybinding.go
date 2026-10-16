@@ -57,6 +57,10 @@ type KeyBindingCheck struct {
 	ExpectedNonce    string
 	ExpectedSDHash   string
 
+	// MaxClockSkew is how far Now may be from the holder's clock when
+	// checking the Key Binding JWT's own exp and nbf, if it has them.
+	MaxClockSkew time.Duration
+
 	// MaxAge rejects a Key Binding JWT whose iat is further than MaxAge
 	// from now, in EITHER direction — too far in the past (RFC 9901
 	// §7.3 step 5.e) or claiming to be issued in the future (a
@@ -84,6 +88,9 @@ type KeyBindingCheck struct {
 func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg oid4vci.JOSEAlg, check KeyBindingCheck) (map[string]any, error) {
 	if check.MaxAge <= 0 {
 		return nil, fmt.Errorf("sdjwtvc: KeyBindingCheck.MaxAge is required (must be positive)")
+	}
+	if check.MaxClockSkew < 0 {
+		return nil, fmt.Errorf("sdjwtvc: KeyBindingCheck.MaxClockSkew must not be negative")
 	}
 	// An empty expected value would match a Key Binding JWT missing that
 	// claim altogether, leaving it replayable across Verifiers (aud) or
@@ -134,6 +141,12 @@ func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg oid4vci.J
 	}
 	if issued.Before(t.Add(-check.MaxAge)) {
 		return nil, fmt.Errorf("sdjwtvc: key binding JWT is too old (issued %s ago)", t.Sub(issued))
+	}
+	// exp and nbf are optional in a Key Binding JWT, but registered
+	// claims: when present, each is a NumericDate and holds (RFC 7519
+	// §4.1.4, §4.1.5).
+	if err := checkValidityWindow(claims, func() time.Time { return t }, check.MaxClockSkew, "key binding JWT ", "key binding JWT"); err != nil {
+		return nil, err
 	}
 	return claims, nil
 }
