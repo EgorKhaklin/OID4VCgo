@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"context"
+	"slices"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
@@ -42,9 +43,24 @@ type IssuerAuthorization struct {
 	// just for Type.
 	RequestedTypes []string
 
-	// Issuer is an SD-JWT VC's iss, "" for an mdoc or an SD-JWT VC
-	// without one.
+	// Issuer is an SD-JWT VC's iss when the issuer key resolver checked
+	// the credential's certificate names it (IssuerNameBinding:
+	// X5CIssuerKeyResolver with RequireIssuerName), and "" otherwise. An
+	// unchecked iss is whatever the signer wrote, so an issuer allowed
+	// by name here is never one another issuer under the same roots
+	// impersonated; without the check, decide from IssuerChain.
 	Issuer string
+
+	// ClaimedIssuer is an SD-JWT VC's iss as the credential states it,
+	// checked or not: for display and logs, never for a decision unless
+	// it equals Issuer.
+	ClaimedIssuer string
+
+	// MatchedTypes are the RequestedTypes this credential answers: its
+	// Type, and any of AkaTypes, that the query asked for. Authorize the
+	// issuer for each of them, not just for Type: a credential can match
+	// only through aka_vcts.
+	MatchedTypes []string
 
 	// IssuerChain is the issuer certificate chain the credential was
 	// verified with, as VerifiedCredential.IssuerChain.
@@ -65,7 +81,10 @@ func authorizeIssuer(ctx context.Context, req VerifyResponseRequest, cq dcql.Cre
 	switch cq.Format {
 	case sdjwtvc.CredentialFormat:
 		a.Type, _ = claims["vct"].(string)
-		a.Issuer, _ = claims["iss"].(string)
+		a.ClaimedIssuer, _ = claims["iss"].(string)
+		if binder, ok := req.IssuerKeys.(IssuerNameBinding); ok && binder.BindsIssuerName() {
+			a.Issuer = a.ClaimedIssuer
+		}
 		if aka, ok := claims["aka_vcts"].([]any); ok {
 			for _, t := range aka {
 				if s, ok := t.(string); ok {
@@ -76,16 +95,30 @@ func authorizeIssuer(ctx context.Context, req VerifyResponseRequest, cq dcql.Cre
 		if meta, err := cq.SDJWTVCMeta(); err == nil {
 			a.RequestedTypes = meta.VCTValues
 		}
+		for _, t := range append([]string{a.Type}, a.AkaTypes...) {
+			if t != "" && slices.Contains(a.RequestedTypes, t) && !slices.Contains(a.MatchedTypes, t) {
+				a.MatchedTypes = append(a.MatchedTypes, t)
+			}
+		}
 	case mdoc.CredentialFormat:
 		// VerifyResponse has already checked the doctype is the
 		// requested one.
 		if meta, err := cq.MdocMeta(); err == nil {
 			a.Type = meta.DoctypeValue
 			a.RequestedTypes = []string{meta.DoctypeValue}
+			a.MatchedTypes = []string{meta.DoctypeValue}
 		}
 	}
 	if err := req.IssuerAuthorized(ctx, a); err != nil {
 		return newError(ReasonUntrustedIssuer, "issuer authorization", err)
 	}
 	return nil
+}
+
+// IssuerNameBinding is implemented by an SDJWTVCIssuerKeyResolver that
+// can refuse a credential whose iss the certificate it verified
+// doesn't name. BindsIssuerName reports whether it does, so
+// IssuerAuthorization.Issuer is set only for a checked iss.
+type IssuerNameBinding interface {
+	BindsIssuerName() bool
 }
