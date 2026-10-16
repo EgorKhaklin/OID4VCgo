@@ -62,7 +62,8 @@ func TestAkaVCTs_DerivedTypeAnswersTheRequest(t *testing.T) {
 	if err != nil || view.Status != verifier.TransactionDone || view.Result == nil || view.Result.Credentials[0].Claims["vct"] != "urn:tx:1:derived" {
 		t.Fatalf("Lookup = %+v, %v; want the derived credential verified", view, err)
 	}
-	if seen.Type != "urn:tx:1:derived" || !slices.Equal(seen.AkaTypes, []string{"urn:tx:1"}) || !slices.Equal(seen.RequestedTypes, []string{"urn:tx:1"}) {
+	if seen.Type != "urn:tx:1:derived" || !slices.Equal(seen.AkaTypes, []string{"urn:tx:1"}) || !slices.Equal(seen.RequestedTypes, []string{"urn:tx:1"}) ||
+		!slices.Equal(seen.MatchedTypes, []string{"urn:tx:1"}) {
 		t.Errorf("IssuerAuthorization = %+v", seen)
 	}
 

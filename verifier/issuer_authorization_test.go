@@ -67,7 +67,8 @@ func TestIssuerAuthorized_Mdoc(t *testing.T) {
 	if !errors.As(err, &verr) || verr.Reason() != verifier.ReasonUntrustedIssuer {
 		t.Fatalf("VerifyResponse = %v, want untrusted_issuer", err)
 	}
-	if seen.Format != "mso_mdoc" || seen.Type != testmdoc.DocType || !slices.Equal(seen.RequestedTypes, []string{testmdoc.DocType}) {
+	if seen.Format != "mso_mdoc" || seen.Type != testmdoc.DocType || !slices.Equal(seen.RequestedTypes, []string{testmdoc.DocType}) ||
+		!slices.Equal(seen.MatchedTypes, []string{testmdoc.DocType}) {
 		t.Errorf("IssuerAuthorization = %+v", seen)
 	}
 }

@@ -53,10 +53,14 @@ type X5CIssuerKeyResolver struct {
 	// names, any other exactly one of its uniformResourceIdentifier
 	// names. It's a relying party's policy, not a requirement of SD-JWT
 	// VC: use it where one root certifies several issuers, so none can
-	// sign in another's name. VerifyResponseRequest.IssuerAuthorized can
-	// apply a check of its own instead.
+	// sign in another's name. Without it, IssuerAuthorization.Issuer is
+	// empty, and VerifyResponseRequest.IssuerAuthorized decides from the
+	// verified certificate (IssuerChain) instead.
 	RequireIssuerName bool
 }
+
+// BindsIssuerName implements IssuerNameBinding.
+func (r X5CIssuerKeyResolver) BindsIssuerName() bool { return r.RequireIssuerName }
 
 // ResolveIssuerKey implements SDJWTVCIssuerKeyResolver.
 func (r X5CIssuerKeyResolver) ResolveIssuerKey(ctx context.Context, header, payload map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error) {

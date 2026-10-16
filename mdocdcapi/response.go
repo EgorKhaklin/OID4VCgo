@@ -192,7 +192,8 @@ func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document
 	}
 	if p.IssuerAuthorized != nil {
 		if err := p.IssuerAuthorized(ctx, verifier.IssuerAuthorization{
-			Format: mdoc.CredentialFormat, Type: mso.DocType, RequestedTypes: []string{p.Pending.DocType}, IssuerChain: issuerChain,
+			Format: mdoc.CredentialFormat, Type: mso.DocType, RequestedTypes: []string{p.Pending.DocType}, MatchedTypes: []string{mso.DocType},
+			IssuerChain: issuerChain,
 		}); err != nil {
 			return Verified{}, fmt.Errorf("mdocdcapi: issuer authorization: %w", err)
 		}
