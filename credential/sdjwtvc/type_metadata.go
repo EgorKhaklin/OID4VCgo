@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 )
 
@@ -92,7 +93,11 @@ var svgIDPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // Validate checks m against draft-13's MUSTs: vct is present; every
 // display entry has locale and name; every claim has a valid path,
 // display entries with locale and label, a known sd value, and a
-// well-formed svg_id unique within the document.
+// well-formed svg_id unique within the document. It also checks the
+// rendering uri of a "simple" logo or background_image, and of each
+// "svg_templates" entry, is present and an HTTPS URL or a data: URI, as
+// draft-19 §5.5.1 requires: a consumer reading a later draft would
+// refuse anything else.
 func (m TypeMetadata) Validate() error {
 	if m.VCT == "" {
 		return errors.New("sdjwtvc: type metadata: vct is required")
@@ -100,6 +105,9 @@ func (m TypeMetadata) Validate() error {
 	for i, d := range m.Display {
 		if d.Locale == "" || d.Name == "" {
 			return fmt.Errorf("sdjwtvc: type metadata: display[%d]: locale and name are required", i)
+		}
+		if err := validateRendering(d.Rendering); err != nil {
+			return fmt.Errorf("sdjwtvc: type metadata: display[%d]: rendering: %w", i, err)
 		}
 	}
 	svgIDs := map[string]bool{}
@@ -169,4 +177,65 @@ func validateSvgID(id string, seen map[string]bool) error {
 	}
 	seen[id] = true
 	return nil
+}
+
+// renderingURI is a rendering method's object with a uri: a "simple"
+// logo or background_image, or an "svg_templates" entry.
+type renderingURI struct {
+	URI *string `json:"uri"`
+}
+
+// validateRendering checks the uri properties of the rendering methods
+// draft-19 §5.5.1 defines; another method's parameters are its own.
+func validateRendering(rendering map[string]json.RawMessage) error {
+	if raw, ok := rendering["simple"]; ok {
+		var simple struct {
+			Logo            *renderingURI `json:"logo"`
+			BackgroundImage *renderingURI `json:"background_image"`
+		}
+		if err := json.Unmarshal(raw, &simple); err != nil {
+			return fmt.Errorf("simple: %w", err)
+		}
+		if simple.Logo != nil {
+			if err := validateRenderingURI(simple.Logo.URI); err != nil {
+				return fmt.Errorf("simple: logo: %w", err)
+			}
+		}
+		if simple.BackgroundImage != nil {
+			if err := validateRenderingURI(simple.BackgroundImage.URI); err != nil {
+				return fmt.Errorf("simple: background_image: %w", err)
+			}
+		}
+	}
+	if raw, ok := rendering["svg_templates"]; ok {
+		var templates []renderingURI
+		if err := json.Unmarshal(raw, &templates); err != nil {
+			return fmt.Errorf("svg_templates: %w", err)
+		}
+		for i, tmpl := range templates {
+			if err := validateRenderingURI(tmpl.URI); err != nil {
+				return fmt.Errorf("svg_templates[%d]: %w", i, err)
+			}
+		}
+	}
+	return nil
+}
+
+// validateRenderingURI checks a rendering uri is present and an HTTPS
+// URL or a data: URI (draft-19 §5.5.1).
+func validateRenderingURI(uri *string) error {
+	if uri == nil || *uri == "" {
+		return errors.New("uri is required")
+	}
+	u, err := url.Parse(*uri)
+	if err != nil {
+		return fmt.Errorf("uri: %w", err)
+	}
+	switch {
+	case u.Scheme == "https" && u.Host != "":
+		return nil
+	case u.Scheme == "data":
+		return nil
+	}
+	return fmt.Errorf("uri %q is neither an HTTPS URL nor a data: URI", *uri)
 }
