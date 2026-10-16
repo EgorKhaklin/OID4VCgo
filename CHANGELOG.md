@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.45.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.44.0...v0.45.0) (2026-10-16)
+
+
+### Features
+
+* **sdjwtvc:** check issued claims against their published Type Metadata ([673ce00](https://github.com/IDFoundry/OID4VCgo/commit/673ce004cf7a1d8dc31b443701f5011baf23429c))
+
+
+### Bug Fixes
+
+* **mdoc:** accept an IssuerAuth x5chain in the protected header ([99a91cd](https://github.com/IDFoundry/OID4VCgo/commit/99a91cdf24c87e2647a81bddd2bdb55617b20c71))
+* **sdjwtvc:** require HTTPS or data: rendering URIs in TypeMetadata ([49d7834](https://github.com/IDFoundry/OID4VCgo/commit/49d7834c960a3bd2fbefd5e1e32ff15eada319ac))
+* **statuslist:** answer a historical status list request with 501 ([81f5c5a](https://github.com/IDFoundry/OID4VCgo/commit/81f5c5aec34fc9efb5c198f550c66bb7f7bf573e))
+* **statuslist:** check a token signer's certificates at VerifyOptions.Now ([62f0c11](https://github.com/IDFoundry/OID4VCgo/commit/62f0c113dcd1726e4d3c16ca957e73978a524cd6))
+* **walletflow:** don't fetch an expired credential's status list ([485c955](https://github.com/IDFoundry/OID4VCgo/commit/485c955c8ad0bd44d39d04524be7e5d2292c6d59))
+* **wallet:** refuse a request with no nonce or dcql_query ([5530caf](https://github.com/IDFoundry/OID4VCgo/commit/5530cafdd129b4160df755354565268e6f268240))
+
 ## [0.44.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.43.0...v0.44.0) (2026-10-16)
 
 
