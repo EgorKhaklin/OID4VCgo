@@ -35,11 +35,33 @@ func FuzzDecodeUnverified(f *testing.F) {
 	f.Add([]byte{0xa0})
 	f.Add(append([]byte{0x00}, valid...))
 	f.Add(valid[:len(valid)-1])
+	// Tags in front of the array: its own (18), once and twice,
+	// COSE_Mac0's (17) and the CWT tag (61).
+	f.Add(append([]byte{0xd2}, valid...))
+	f.Add(append([]byte{0xd2, 0xd2}, valid...))
+	f.Add(append([]byte{0xd1}, valid...))
+	f.Add(append([]byte{0xd8, 0x3d}, valid...))
+	protectedX5Chain, err := Sign(ES256, key, Headers{X5Chain: [][]byte{[]byte("fuzz-cert")}}, Headers{}, []byte("hi"), nil)
+	if err != nil {
+		f.Fatalf("sign with a protected x5chain: %v", err)
+	}
+	f.Add(protectedX5Chain)
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		if _, _, _, err := DecodeUnverified(data); err != nil {
+		protected, unprotected, _, err := DecodeUnverified(data)
+		if err != nil {
 			return
 		}
+		// Only a COSE_Sign1 array, untagged or with its own tag 18, is
+		// accepted: never one behind another tag.
+		body := data
+		if len(body) > 0 && body[0] == 0xd2 {
+			body = body[1:]
+		}
+		if len(body) == 0 || body[0]>>5 != 4 {
+			t.Fatalf("DecodeUnverified accepted %x, which isn't a COSE_Sign1 array, untagged or tagged 18", data[:min(len(data), 8)])
+		}
+		_ = X5ChainOf(protected, unprotected)
 		_, _, _, _ = Verify(ES256, &key.PublicKey, data, nil)
 	})
 }

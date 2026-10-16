@@ -71,6 +71,32 @@ func FuzzVerifySigned(f *testing.F) {
 		f.Add(payload, disclosures, []byte{}, true)
 	}
 
+	// Seeds for the checks a well-formed credential can still fail:
+	// aka_vcts (draft-19 §2.2.2.2), a disclosure digest inside a
+	// registered claim (§2.2.2.3), and a Key Binding JWT's exp and nbf.
+	for _, payload := range []string{
+		`{"vct":"urn:example:pid:derived","aka_vcts":["urn:example:pid"]}`,
+		`{"vct":"urn:example:pid","aka_vcts":["urn:example:pid"]}`,
+		`{"vct":"urn:example:pid","aka_vcts":[]}`,
+		`{"vct":"urn:example:pid","aka_vcts":"urn:example:pid"}`,
+		`{"vct":"urn:example:pid","status":{"_sd":["AAAA"]}}`,
+		`{"vct":"urn:example:pid","cnf":{"jwk":{"kty":"EC"},"x":[{"...":"AAAA"}]}}`,
+		`{"vct":"urn:example:pid","exp":"1767225600","nbf":1767225600}`,
+	} {
+		f.Add([]byte(payload), "", []byte{}, false)
+	}
+	for _, kb := range []map[string]any{
+		{"aud": aud, "nonce": nonce, "iat": now.Unix(), "exp": "1767225600"},
+		{"aud": aud, "nonce": nonce, "iat": now.Unix(), "exp": now.Add(-time.Minute).Unix()},
+		{"aud": aud, "nonce": nonce, "iat": now.Unix(), "nbf": now.Add(time.Minute).Unix()},
+	} {
+		kbJSON, err := json.Marshal(kb)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add([]byte(`{"vct":"urn:example:pid"}`), "", kbJSON, false)
+	}
+
 	f.Fuzz(func(t *testing.T, payload []byte, disclosures string, kbPayload []byte, inject bool) {
 		var parsed []Disclosure
 		var rawDisclosures []string
