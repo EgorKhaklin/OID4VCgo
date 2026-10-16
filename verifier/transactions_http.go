@@ -13,6 +13,7 @@ import (
 const (
 	headerContentType  = "Content-Type"
 	headerCacheControl = "Cache-Control"
+	mediaTypeJSON      = "application/json"
 	cacheNoStore       = "no-store"
 )
 
@@ -90,7 +91,7 @@ func (t *Transactions) ResponseHandler() http.Handler {
 			return
 		case errors.As(err, new(*serverFault)):
 			// The Verifier's own failure, not the answer's.
-			w.Header().Set(headerContentType, "application/json")
+			w.Header().Set(headerContentType, mediaTypeJSON)
 			w.Header().Set(headerCacheControl, cacheNoStore)
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "server_error"})
@@ -103,14 +104,14 @@ func (t *Transactions) ResponseHandler() http.Handler {
 		if answered.RedirectURI != "" {
 			body["redirect_uri"] = answered.RedirectURI
 		}
-		w.Header().Set(headerContentType, "application/json")
+		w.Header().Set(headerContentType, mediaTypeJSON)
 		w.Header().Set(headerCacheControl, cacheNoStore)
 		_ = json.NewEncoder(w).Encode(body)
 	})
 }
 
 func writeResponseError(w http.ResponseWriter, description string) {
-	w.Header().Set(headerContentType, "application/json")
+	w.Header().Set(headerContentType, mediaTypeJSON)
 	w.Header().Set(headerCacheControl, cacheNoStore)
 	w.WriteHeader(http.StatusBadRequest)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_request", "error_description": description})

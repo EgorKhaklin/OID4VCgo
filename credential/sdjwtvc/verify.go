@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -303,11 +304,7 @@ func hasDisclosureDigest(v any) bool {
 			}
 		}
 	case []any:
-		for _, child := range v {
-			if hasDisclosureDigest(child) {
-				return true
-			}
-		}
+		return slices.ContainsFunc(v, hasDisclosureDigest)
 	}
 	return false
 }
