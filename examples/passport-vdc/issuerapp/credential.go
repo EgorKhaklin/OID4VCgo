@@ -188,6 +188,11 @@ func (a *App) handleVCTMetadata(w http.ResponseWriter, _ *http.Request) {
 			claim("Passport file (gmrtd, all data groups)", credential.PassportFile),
 		},
 	}
+	// SD-JWT VC draft-19 §7.2: nosniff, and a restrictive
+	// Content-Security-Policy so the document is never treated as
+	// active content when opened in a browser.
 	w.Header().Set(headerContentType, "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'")
 	_ = json.NewEncoder(w).Encode(doc)
 }
