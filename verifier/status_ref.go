@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"fmt"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
@@ -60,11 +61,16 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 // check. A credential with no status reference passes: it has no
 // status to check.
 //
-// An SD-JWT VC's Status List Token must be signed by its issuer, so
+// A Status List Token must be signed by the credential's issuer, so
 // another issuer's certificate under the same roots can't decide its
-// status: with the key that signed the credential, or by a certificate
-// naming the credential's iss, or without one the URI its own
-// certificate names (statuslist.VerifyOptions.Issuer).
+// status. For an SD-JWT VC that's the key that signed the credential,
+// or a certificate naming the credential's iss, or without one the URI
+// its own certificate names (statuslist.VerifyOptions.Issuer). For an
+// mdoc it's ISO/IEC 18013-5 §12.3.6's rule (mdoc.StatusTrust): a chain
+// to the Certificate the MSO's status names, or else to the CA that
+// signed the document signer. A credential verified with no issuer
+// certificate (a resolver that verifies no chain) is bound only by the
+// checker's roots.
 // Where status lists come from a separate Status Issuer, use
 // RequireValidStatusFrom.
 func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id string, result VerifyResponseResult) error {
@@ -76,7 +82,8 @@ func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id
 // Issuer trusted to sign issuer's status lists: nil to accept it, an
 // error to refuse. issuer is the credential's (its iss, or the URI its
 // own certificate names), so a Status Issuer can be accepted for some
-// issuers and not others.
+// issuers and not others; it's "" for an mdoc, or an SD-JWT VC with
+// neither, so decide from leaf and chains.
 type StatusIssuerPolicy func(issuer string, leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 // RequireValidStatusFrom is RequireValidStatus for deployments whose
@@ -92,13 +99,17 @@ func RequireValidStatusFrom(checker statuslist.Checker, statusIssuers StatusIssu
 		for _, vc := range result.Credentials {
 			ref, cwt, ok, err := vc.StatusListRef()
 			if err == nil && ok {
+				// Its status list is its issuer's, or its Status Issuer's,
+				// to sign.
 				c := checker
-				if !cwt {
-					// Its status list is its issuer's, or its Status
-					// Issuer's, to sign.
+				if cwt {
+					c, err = mdocStatusChecker(checker, vc, statusIssuers)
+				} else {
 					c.Options = statusOptionsFor(checker.Options, vc.issuerName(), vc.issuerKey(), statusIssuers)
 				}
-				err = c.RequireValid(ctx, ref, cwt)
+				if err == nil {
+					err = c.RequireValid(ctx, ref, cwt)
+				}
 			}
 			if err != nil {
 				return fmt.Errorf("verifier: credential status: %w", err)
@@ -112,7 +123,7 @@ func RequireValidStatusFrom(checker statuslist.Checker, statusIssuers StatusIssu
 // issuer, or with statusIssuers, by issuer or a Status Issuer it
 // accepts for issuer.
 func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, issuerKey crypto.PublicKey, statusIssuers StatusIssuerPolicy) statuslist.VerifyOptions {
-	if statusIssuers == nil || issuer == "" {
+	if statusIssuers == nil || (issuer == "" && issuerKey == nil) {
 		opts.Issuer, opts.IssuerKey = issuer, issuerKey
 		return opts
 	}
@@ -123,7 +134,7 @@ func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, issuerKey cr
 				return err
 			}
 		}
-		if certchain.SameKey(leaf.PublicKey, issuerKey) || certchain.CheckIssuerName(leaf, issuer) == nil {
+		if certchain.SameKey(leaf.PublicKey, issuerKey) || (issuer != "" && certchain.CheckIssuerName(leaf, issuer) == nil) {
 			return nil
 		}
 		if err := statusIssuers(issuer, leaf, chains); err != nil {
@@ -164,4 +175,50 @@ func (vc VerifiedCredential) issuerKey() crypto.PublicKey {
 		return nil
 	}
 	return leaf.PublicKey
+}
+
+// mdocStatusChecker is checker for an mdoc's revocation list: its
+// signer trusted as ISO/IEC 18013-5 §12.3.6 says (mdoc.StatusTrust), or
+// a Status Issuer statusIssuers accepts, given no issuer name. An mdoc
+// verified with no issuer chain, and whose MSO names no status
+// Certificate, is bound only by checker's roots.
+func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, statusIssuers StatusIssuerPolicy) (statuslist.Checker, error) {
+	var ref *mdoc.StatusListRef
+	if vc.MdocStatus != nil {
+		ref = vc.MdocStatus.StatusList
+	}
+	path := make([]*x509.Certificate, 0, len(vc.IssuerChain))
+	for _, der := range vc.IssuerChain {
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			return checker, fmt.Errorf("issuer chain: %w", err)
+		}
+		path = append(path, cert)
+	}
+	if (ref == nil || len(ref.Certificate) == 0) && len(path) == 0 {
+		return checker, nil
+	}
+	trust, err := mdoc.StatusTrust(ref, path)
+	if err != nil {
+		return checker, err
+	}
+	c := checker
+	if trust.Roots != nil {
+		c.Roots = trust.Roots
+		return c, nil
+	}
+	base := checker.Options.LeafPolicy
+	c.Options.LeafPolicy = func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+		if base != nil {
+			if err := base(leaf, chains); err != nil {
+				return err
+			}
+		}
+		err := trust.LeafPolicy(leaf, chains)
+		if err != nil && statusIssuers != nil && statusIssuers("", leaf, chains) == nil {
+			return nil
+		}
+		return err
+	}
+	return c, nil
 }

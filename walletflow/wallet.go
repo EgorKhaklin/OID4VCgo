@@ -43,8 +43,12 @@ type Config struct {
 	// Status Issuers, each recognized by a certificate under IssuerRoots
 	// naming it (a uniformResourceIdentifier, or for a "dns:" one a
 	// dNSName). CheckStatus otherwise accepts only a status list the
-	// credential's issuer signed itself, so another issuer under the
-	// same roots can't decide its status.
+	// credential's issuer signed itself, with the credential's own key
+	// or a certificate naming its iss, so another issuer under the same
+	// roots can't decide its status. An mdoc's is bound as ISO/IEC
+	// 18013-5 §12.3.6 says instead: under the Certificate its MSO's
+	// status names, or else the CA that signed its document signer;
+	// StatusIssuers, keyed by iss, doesn't apply to it.
 	StatusIssuers map[string][]string
 
 	// IssuanceProfile is the profile issuance follows. The zero value,

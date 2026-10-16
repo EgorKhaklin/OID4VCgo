@@ -249,8 +249,12 @@ asks only with `org-iso-mdoc`.
 `iss`), the Status Issuers that may sign its status lists on its behalf,
 each recognized by a certificate under `issuer_roots` naming it (a URI,
 or a DNS name for a `dns:` identifier). Without it, `CheckStatus`
-accepts only a status list the credential's issuer signed itself, so
-another issuer under the same roots can't decide its status. Added
+accepts only a status list the credential's issuer signed itself, with
+the credential's own key or a certificate naming its `iss`, so another
+issuer under the same roots can't decide its status. An mdoc's status
+list is bound as ISO/IEC 18013-5 §12.3.6 says instead (under the
+certificate its MSO's status names, or else the CA that signed its
+document signer), and `status_issuers` doesn't apply to it. Added
 within ABI version 12.
 `development`
 relaxes what production requires, for a wallet talking to services on a

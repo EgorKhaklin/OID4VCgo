@@ -74,27 +74,31 @@ func TestRequireValidStatus_SameKeyAsTheCredential(t *testing.T) {
 	}))
 	defer srv.Close()
 	base = srv.URL
+	iss := "https://backend.issuer.example"
 	credential := func(path string) verifier.VerifyResponseResult {
-		return verifier.VerifyResponseResult{Credentials: []verifier.VerifiedCredential{{
-			Claims: map[string]any{
-				"iss":    "https://backend.issuer.example",
-				"status": map[string]any{"status_list": map[string]any{"idx": float64(0), "uri": base + path}},
-			},
-			IssuerChain: [][]byte{credentialCert.Raw},
-		}}}
+		claims := map[string]any{"status": map[string]any{"status_list": map[string]any{"idx": float64(0), "uri": base + path}}}
+		if iss != "" {
+			claims["iss"] = iss
+		}
+		return verifier.VerifyResponseResult{Credentials: []verifier.VerifiedCredential{{Claims: claims, IssuerChain: [][]byte{credentialCert.Raw}}}}
 	}
 	checker := statuslist.Checker{Fetcher: statuslist.Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots}
 	noStatusIssuers := func(string, *x509.Certificate, [][]*x509.Certificate) error { return errors.New("no Status Issuers") }
 	ctx := context.Background()
-	for name, check := range map[string]func(context.Context, string, verifier.VerifyResponseResult) error{
-		"RequireValidStatus":     verifier.RequireValidStatus(checker),
-		"RequireValidStatusFrom": verifier.RequireValidStatusFrom(checker, noStatusIssuers),
-	} {
-		if err := check(ctx, "id", credential("/same")); err != nil {
-			t.Errorf("%s, signed with the credential's key: %v", name, err)
-		}
-		if err := check(ctx, "id", credential("/other")); err == nil {
-			t.Errorf("%s accepted a list signed by another key whose certificate names no one", name)
+	// With an iss, and without one: the credential's key binds its list
+	// either way.
+	for _, withIss := range []string{"https://backend.issuer.example", ""} {
+		iss = withIss
+		for name, check := range map[string]func(context.Context, string, verifier.VerifyResponseResult) error{
+			"RequireValidStatus":     verifier.RequireValidStatus(checker),
+			"RequireValidStatusFrom": verifier.RequireValidStatusFrom(checker, noStatusIssuers),
+		} {
+			if err := check(ctx, "id", credential("/same")); err != nil {
+				t.Errorf("iss %q, %s, signed with the credential's key: %v", iss, name, err)
+			}
+			if err := check(ctx, "id", credential("/other")); err == nil {
+				t.Errorf("iss %q, %s accepted a list signed by another key whose certificate names no one", iss, name)
+			}
 		}
 	}
 }

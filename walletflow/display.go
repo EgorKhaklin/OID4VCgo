@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
+	"encoding/base64"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"net/url"
@@ -148,9 +150,14 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 		Roots:   w.cfg.IssuerRoots,
 		Options: statuslist.VerifyOptions{Now: w.deps.Clock},
 	}
-	if iss, ok := c.Claims["iss"].(string); ok && !c.StatusListCWT {
-		// Its status is its issuer's to sign, or one of its Status
-		// Issuers', not another issuer's under IssuerRoots.
+	// Its status is its issuer's to sign, or one of its Status Issuers',
+	// not another issuer's under IssuerRoots.
+	if c.StatusListCWT {
+		if checker, err = mdocStatusChecker(checker, c.Credential); err != nil {
+			return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
+		}
+	} else {
+		iss, _ := c.Claims["iss"].(string)
 		checker.Options = statusOptionsFor(checker.Options, iss, signerKey(c.Credential), w.cfg.StatusIssuers[iss])
 	}
 	status, _, err := checker.Check(ctx, *c.StatusList, c.StatusListCWT)
@@ -193,7 +200,7 @@ func statusValue(s statuslist.StatusType) string {
 // certificate naming issuer, or one naming one of statusIssuers
 // (certchain.CheckIssuerName).
 func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, issuerKey crypto.PublicKey, statusIssuers []string) statuslist.VerifyOptions {
-	if len(statusIssuers) == 0 {
+	if len(statusIssuers) == 0 || issuer == "" {
 		opts.Issuer, opts.IssuerKey = issuer, issuerKey
 		return opts
 	}
@@ -230,4 +237,38 @@ func signerKey(credential string) crypto.PublicKey {
 		return nil
 	}
 	return leaf.PublicKey
+}
+
+// mdocStatusChecker is checker for a stored mdoc's revocation list,
+// whose signer must be trusted as ISO/IEC 18013-5 §12.3.6 says
+// (mdoc.StatusTrust): through the Certificate its MSO's status names,
+// or else under the CA that signed its document signer. Both are read
+// from the credential, verified when it was received.
+func mdocStatusChecker(checker statuslist.Checker, credential string) (statuslist.Checker, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(credential)
+	if err != nil {
+		return checker, fmt.Errorf("decode credential: %w", err)
+	}
+	issuerSigned, err := mdoc.UnmarshalIssuerSigned(raw)
+	if err != nil {
+		return checker, err
+	}
+	status, path, err := mdoc.IssuerAuthStatus(issuerSigned)
+	if err != nil {
+		return checker, err
+	}
+	var ref *mdoc.StatusListRef
+	if status != nil {
+		ref = status.StatusList
+	}
+	trust, err := mdoc.StatusTrust(ref, path)
+	if err != nil {
+		return checker, err
+	}
+	if trust.Roots != nil {
+		checker.Roots = trust.Roots
+	} else {
+		checker.Options.LeafPolicy = trust.LeafPolicy
+	}
+	return checker, nil
 }
