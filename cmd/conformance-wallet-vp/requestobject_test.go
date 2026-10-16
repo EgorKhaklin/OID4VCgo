@@ -68,7 +68,9 @@ func signRequestObjectPayload(t *testing.T, leaf *x509.Certificate, key *ecdsa.P
 		"response_uri":  "https://verifier.example.com/response",
 		"nonce":         "test-nonce",
 		"state":         "test-state",
-		"dcql_query":    map[string]any{"credentials": []any{}},
+		"dcql_query": map[string]any{"credentials": []any{map[string]any{
+			"id": "cred", "format": "dc+sd-jwt", "meta": map[string]any{"vct_values": []any{"urn:example:1"}},
+		}}},
 		"client_metadata": map[string]any{
 			"jwks": map[string]any{"keys": []any{encJWK}},
 			"encrypted_response_enc_values_supported": []string{"A128GCM"},
