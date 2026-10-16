@@ -350,12 +350,11 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	}
 
 	// The size credential/mdoc verifies IssuerAuth up to.
-	_, unprotected, _, err := cose.DecodeUnverified(doc.issuerSigned.IssuerAuth)
+	protected, unprotected, _, err := cose.DecodeUnverified(doc.issuerSigned.IssuerAuth)
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: decode IssuerAuth: %w", err)
 	}
-	// x5chain is an unprotected header in mdoc (as Multipaz reads it).
-	chain := unprotected.X5Chain
+	chain := cose.X5ChainOf(protected, unprotected)
 	if len(chain) == 0 {
 		return Verified{}, fmt.Errorf("proximity: IssuerAuth has no x5chain")
 	}

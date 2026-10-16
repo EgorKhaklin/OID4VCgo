@@ -61,9 +61,18 @@ type VerifiedMSO struct {
 // ValidFrom/ValidUntil against opts.Now (or time.Now if unset).
 // Resolving which key issuerPub is (the IssuerAuth x5chain and an
 // Issuer trust policy) is the caller's job — see the package doc
-// comment.
+// comment. VerifiedMSO.X5Chain is IssuerAuth's x5chain from either
+// header (§12.3.4 puts it in the unprotected one, and a reader should
+// accept it in the protected one).
+//
+// Two of §12.3.4/§12.3.5's rules for the issuer aren't checked here:
+// each IssuerSignedItem's random is at least 16 bytes, and validFrom is
+// no earlier than signed. They protect the holder's privacy and keep
+// the MSO tidy, but a reader learns nothing false from a credential
+// that breaks them, so refusing one would only refuse a credential
+// whose data is sound. Issue meets both.
 func Verify(signed IssuerSigned, docType string, issuerPub crypto.PublicKey, alg oid4vci.COSEAlg, opts VerifyOptions) (VerifiedMSO, error) {
-	_, unprotected, payload, err := cose.Verify(alg, issuerPub, signed.IssuerAuth, []byte{})
+	protected, unprotected, payload, err := cose.Verify(alg, issuerPub, signed.IssuerAuth, []byte{})
 	if err != nil {
 		return VerifiedMSO{}, fmt.Errorf("mdoc: verify IssuerAuth: %w", err)
 	}
@@ -122,7 +131,7 @@ func Verify(signed IssuerSigned, docType string, issuerPub crypto.PublicKey, alg
 		NameSpaces:        nameSpaces,
 		DeviceKey:         deviceKey,
 		ValidityInfo:      mso.ValidityInfo,
-		X5Chain:           unprotected.X5Chain,
+		X5Chain:           cose.X5ChainOf(protected, unprotected),
 		KeyAuthorizations: mso.DeviceKeyInfo.KeyAuthorizations,
 		Status:            mso.Status,
 	}, nil

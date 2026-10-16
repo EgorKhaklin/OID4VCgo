@@ -229,12 +229,7 @@ func verifyIssuedMdoc(p VerifyIssuedCredentialParams, now time.Time) (VerifiedIs
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("decode issuerAuth: %w", err)
 	}
-	// ISO/IEC 18013-5 puts x5chain in the unprotected header; RFC 9360
-	// allows either bucket.
-	chain := unprotected.X5Chain
-	if len(chain) == 0 {
-		chain = protected.X5Chain
-	}
+	chain := cose.X5ChainOf(protected, unprotected)
 	leaf, err := certchain.VerifyLeaf(chain, p.IssuerRoots)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)

@@ -607,3 +607,15 @@ var decMode = func() cbor.DecMode {
 	}
 	return mode
 }()
+
+// X5ChainOf is a COSE_Sign1's x5chain (RFC 9360): from the protected
+// header if it carries one, which the signature covers, or else from
+// the unprotected header. ISO/IEC 18013-5 §12.3.4 has an mdoc's
+// IssuerAuth carry it unprotected, and has a reader accept it protected
+// too.
+func X5ChainOf(protected, unprotected Headers) [][]byte {
+	if len(protected.X5Chain) > 0 {
+		return protected.X5Chain
+	}
+	return unprotected.X5Chain
+}

@@ -587,11 +587,11 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 		return nil, nil, nil, newError(ReasonMalformed, "unmarshal device response", err)
 	}
 
-	_, unprotected, _, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
+	protected, unprotected, _, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
 	if err != nil {
 		return nil, nil, nil, newError(ReasonMalformed, "decode issuer auth", err)
 	}
-	issuerPub, issuerAlg, err := req.MdocIssuerKeys.ResolveMdocIssuerKey(ctx, unprotected.X5Chain, doc.DocType)
+	issuerPub, issuerAlg, err := req.MdocIssuerKeys.ResolveMdocIssuerKey(ctx, cose.X5ChainOf(protected, unprotected), doc.DocType)
 	if err != nil {
 		return nil, nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
 	}
@@ -600,7 +600,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	if err != nil {
 		return nil, nil, nil, newError(ReasonInvalidCredential, "verify issuer signed", err)
 	}
-	chain, err := CheckMdocIssuer(ctx, req.MdocIssuerKeys, unprotected.X5Chain, doc.DocType, issuerPub, verified)
+	chain, err := CheckMdocIssuer(ctx, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType, issuerPub, verified)
 	if err != nil {
 		return nil, nil, nil, newError(ReasonUntrustedIssuer, "check document signer", err)
 	}
