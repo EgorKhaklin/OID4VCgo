@@ -188,3 +188,25 @@ func TestMdocNegativeVectors(t *testing.T) {
 		})
 	}
 }
+
+// An IssuerAuth carrying its x5chain in the protected header, as a
+// reader should accept (ISO/IEC 18013-5 §12.3.4), verifies: the issuer
+// key resolver is given that chain.
+func TestVerifyMdocResponse_ProtectedX5Chain(t *testing.T) {
+	mf := newMdocVerifyFixture(t)
+	protected, unprotected, payload, err := cose.DecodeUnverified(mf.f.IssuerSigned.IssuerAuth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unprotected.X5Chain) == 0 || len(protected.X5Chain) != 0 {
+		t.Fatal("the fixture's x5chain isn't where this test expects it")
+	}
+	protected.X5Chain, unprotected.X5Chain = unprotected.X5Chain, nil
+	resigned, err := cose.Sign(cose.ES256, mf.f.IssuerKey, protected, unprotected, payload, []byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mf.f.IssuerSigned.IssuerAuth = resigned
+	result, err := mf.verifyWith(t, mf.nonce, func(r *verifier.VerifyResponseRequest) { r.MdocIssuerKeys = x5chainLeafIssuerKey{} })
+	assertMdocGivenNameAlice(t, result, err)
+}

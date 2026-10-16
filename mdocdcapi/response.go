@@ -147,7 +147,7 @@ func decrypt(response string, key *ecdh.PrivateKey, transcript []byte) ([]byte, 
 // signature over transcript, and that it disclosed only requested
 // elements.
 func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document, transcript []byte) (Verified, error) {
-	_, unprotected, _, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
+	protected, unprotected, _, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: decode IssuerAuth: %w", err)
 	}
@@ -155,7 +155,7 @@ func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document
 		// Certificates are valid, or not, at the verification's instant.
 		ctx = verifier.WithVerificationTime(ctx, p.Now())
 	}
-	issuerPub, issuerAlg, err := p.IssuerKeys.ResolveMdocIssuerKey(ctx, unprotected.X5Chain, doc.DocType)
+	issuerPub, issuerAlg, err := p.IssuerKeys.ResolveMdocIssuerKey(ctx, cose.X5ChainOf(protected, unprotected), doc.DocType)
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: resolve the issuer key: %w", err)
 	}
@@ -163,7 +163,7 @@ func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: %w", err)
 	}
-	issuerChain, err := verifier.CheckMdocIssuer(ctx, p.IssuerKeys, unprotected.X5Chain, doc.DocType, issuerPub, mso)
+	issuerChain, err := verifier.CheckMdocIssuer(ctx, p.IssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType, issuerPub, mso)
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: document signer: %w", err)
 	}

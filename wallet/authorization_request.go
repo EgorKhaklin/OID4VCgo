@@ -315,6 +315,13 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
 		}
 	}
+	if missing := missingRequestParameter(wire.Nonce, wire.DCQLQuery); missing != "" {
+		return AuthorizationRequest{}, &RequestRejectedError{
+			Code: "invalid_request", Description: missing + " is required",
+			State: wire.State, ResponseURI: wire.ResponseURI,
+			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+		}
+	}
 	info, err := parseVerifierInfo(wire.VerifierInfo, wire.DCQLQuery)
 	if err != nil {
 		return AuthorizationRequest{}, &RequestRejectedError{
@@ -509,4 +516,18 @@ func checkResponseURI(raw string, allowLoopbackHTTP bool) error {
 		return fmt.Errorf("response_uri: %w", err)
 	}
 	return nil
+}
+
+// missingRequestParameter names the first REQUIRED request parameter
+// an authenticated request lacks, "" when it has them: nonce, which
+// the presentation is bound to (OpenID4VP 1.0 §5.2), and dcql_query,
+// what it asks for (§5.1; this Wallet supports no scope alternative).
+func missingRequestParameter(nonce string, query dcql.Query) string {
+	switch {
+	case nonce == "":
+		return "nonce"
+	case len(query.Credentials) == 0:
+		return "dcql_query"
+	}
+	return ""
 }
