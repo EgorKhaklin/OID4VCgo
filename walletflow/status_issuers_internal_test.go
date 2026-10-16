@@ -89,3 +89,18 @@ func namedCertNoURI(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey)
 	}
 	return certForKey(t, ca, caKey, &key.PublicKey, "")
 }
+
+// signerKey reads an SD-JWT VC's x5c leaf key, and has none for a
+// credential it can't read one from.
+func TestSignerKey(t *testing.T) {
+	for name, credential := range map[string]string{
+		"not a JWT":              "junk~",
+		"no x5c":                 "eyJhbGciOiJFUzI1NiJ9.e30.c2ln~",
+		"an x5c that isn't DER":  "eyJhbGciOiJFUzI1NiIsIng1YyI6WyJBQUFBIl19.e30.c2ln~",
+		"an x5c that's no array": "eyJhbGciOiJFUzI1NiIsIng1YyI6IkFBQUEifQ.e30.c2ln~",
+	} {
+		if got := signerKey(credential); got != nil {
+			t.Errorf("%s: %v, want nil", name, got)
+		}
+	}
+}

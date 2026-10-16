@@ -143,6 +143,11 @@ type Options struct {
 	// PlainClaims are SD-JWT VC claims issued in plaintext, not
 	// selectively disclosable: every presentation sends them.
 	PlainClaims map[string]any
+	// SDJWTIss is the SD-JWT VC's iss, none when "". The issuer's
+	// certificate names no one, so a credential with one has the shape
+	// of the EU reference PID: an iss its certificate doesn't name, and
+	// a status list signed with the same key.
+	SDJWTIss string
 	// NoNonceEndpoint has the issuer publish no nonce endpoint: its
 	// proofs then carry no c_nonce, and iat dates them (OpenID4VCI 1.0
 	// §7, Appendix F.4).
@@ -181,6 +186,7 @@ type Env struct {
 	accessTokens server.AccessTokenIssuer
 	preAuthCodes issuer.PreAuthorizedCodeStore
 	plainClaims  map[string]any
+	sdjwtIss     string
 	vct          string
 
 	mu            sync.Mutex
@@ -213,7 +219,7 @@ func New(opts Options) (env *Env, err error) {
 		return nil, errors.New("walletflowtest: BearerTokens and AnonymousRefresh need Anonymous")
 	}
 	ts := httptest.NewUnstartedServer(nil)
-	e := &Env{IssuerURL: "https://" + ts.Listener.Addr().String(), preAuthCodes: oid4vcgostorage.NewPreAuthorizedCodeStore(), plainClaims: opts.PlainClaims}
+	e := &Env{IssuerURL: "https://" + ts.Listener.Addr().String(), preAuthCodes: oid4vcgostorage.NewPreAuthorizedCodeStore(), plainClaims: opts.PlainClaims, sdjwtIss: opts.SDJWTIss}
 	e.vct = e.IssuerURL + "/vct/test"
 	e.deferAll = opts.Defer
 	e.Provider = newProvider()
@@ -630,7 +636,7 @@ func (e *Env) Notifications() []oid4vci.NotificationEvent {
 
 func (e *Env) claims() (*sdjwtvc.Claims, *mdoc.Claims) {
 	exp := sdjwtvc.RoundedExp(time.Now(), 24*time.Hour)
-	sdjwtClaims := &sdjwtvc.Claims{VCT: e.vct, Exp: &exp, Additional: map[string]any{
+	sdjwtClaims := &sdjwtvc.Claims{VCT: e.vct, Iss: e.sdjwtIss, Exp: &exp, Additional: map[string]any{
 		"family_name": sdjwtvc.SD(FamilyName), "given_name": sdjwtvc.SD(GivenName),
 		"picture": sdjwtvc.SD("data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(Portrait)),
 	}}
