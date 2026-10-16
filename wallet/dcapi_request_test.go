@@ -212,3 +212,26 @@ func TestWallet_ParseDCAPIRequest(t *testing.T) {
 		t.Error("a wallet without VerifierTrust parsed a DC API request")
 	}
 }
+
+// A DC API request without nonce or dcql_query is answered with
+// invalid_request, as the redirect flow's is (OpenID4VP 1.0 §5.1,
+// §5.2).
+func TestParseDCAPIRequest_RequiresNonceAndQuery(t *testing.T) {
+	key, cert, trust := testVerifierSignerAndCert(t)
+	v := newTestVerifierWith(t, key, cert)
+	dcapi, err := v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
+		Query: testQuery(t), ExpectedOrigins: []string{testDCAPIOrigin},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, claim := range []string{"nonce", "dcql_query"} {
+		_, err := wallet.ParseDCAPIRequest(wallet.ParseDCAPIRequestParams{
+			Request: resign(t, key, dcapi.RequestObject, func(c map[string]any) { delete(c, claim) }), Origin: testDCAPIOrigin, VerifierTrust: trust,
+		})
+		var rejected *wallet.RequestRejectedError
+		if !errors.As(err, &rejected) || rejected.Code != "invalid_request" || !strings.Contains(rejected.Description, claim) {
+			t.Errorf("no %s: err = %v, want an invalid_request answer naming it", claim, err)
+		}
+	}
+}

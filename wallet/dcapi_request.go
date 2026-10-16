@@ -98,11 +98,12 @@ func finishDCAPIRequest(wire wireRequestObjectPayload, origin string, cert *x509
 	if err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 	}
-	if wire.Nonce == "" {
+	if missing := missingRequestParameter(wire.Nonce, wire.DCQLQuery); missing != "" {
 		// A request from where it claims to be, missing what the answer
-		// is bound to: tell the Verifier, as the redirect flow does.
+		// is bound to or what it asks for: tell the Verifier, as the
+		// redirect flow does.
 		return AuthorizationRequest{}, &RequestRejectedError{
-			Code: "invalid_request", Description: "nonce is required",
+			Code: "invalid_request", Description: missing + " is required",
 			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
 			op: dcAPIParseOp,
 		}
