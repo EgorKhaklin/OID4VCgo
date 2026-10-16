@@ -39,6 +39,26 @@ func FuzzVerifySignedMSO(f *testing.F) {
 	f.Add(validMSO)
 	f.Add([]byte{0xa0})
 	f.Add(validMSO[:len(validMSO)-1])
+	// The MSO-structure rules a signed MSO can still break (ISO/IEC
+	// 18013-5 §12.3.4, §12.3.5).
+	for _, mutate := range []func(*MobileSecurityObject){
+		func(m *MobileSecurityObject) { m.Version = "2.0" },
+		func(m *MobileSecurityObject) { m.DigestAlgorithm = "SHA-1" },
+		func(m *MobileSecurityObject) { m.DigestAlgorithm = SHA384 },
+		func(m *MobileSecurityObject) { delete(m.ValueDigests, "org.iso.18013.5.1") },
+		func(m *MobileSecurityObject) { m.DocType = "org.example.other.1" },
+	} {
+		var m MobileSecurityObject
+		if err := decMode.Unmarshal(validMSO, &m); err != nil {
+			f.Fatalf("unmarshal MSO: %v", err)
+		}
+		mutate(&m)
+		seed, err := encMode.Marshal(m)
+		if err != nil {
+			f.Fatalf("marshal MSO: %v", err)
+		}
+		f.Add(seed)
+	}
 
 	deviceNameSpaces := map[string]map[string]interface{}{
 		"org.iso.18013.5.1": {"given_name": "Alice"},

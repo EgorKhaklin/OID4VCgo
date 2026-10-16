@@ -99,6 +99,9 @@ jobs:
           - id: proximity-reader-verify
             pkg: ./proximity
             name: FuzzReaderVerify
+          - id: proximity-verify-reader-auth
+            pkg: ./proximity
+            name: FuzzVerifyReaderAuth
           - id: sdjwtvc-parse
             pkg: ./credential/sdjwtvc
             name: FuzzParse
@@ -120,6 +123,15 @@ jobs:
           - id: dcql-query
             pkg: ./dcql
             name: FuzzQuery
+          - id: dcql-match
+            pkg: ./dcql
+            name: FuzzMatch
+          - id: registration-verify
+            pkg: ./registration
+            name: FuzzVerifyRegistration
+          - id: registration-verify-signed
+            pkg: ./registration
+            name: FuzzVerifyRegistrationSigned
           - id: verifier-parse-direct-post-jwt-response
             pkg: ./verifier
             name: FuzzParseDirectPostJWTResponse
