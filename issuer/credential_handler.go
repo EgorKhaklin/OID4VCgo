@@ -109,6 +109,9 @@ func (iss *Issuer) serveCredential(w http.ResponseWriter, r *http.Request, cfg C
 		WriteError(w, err)
 		return
 	}
+	// For Prepare: which configuration's claims to build. A request that
+	// doesn't resolve fails in RequestCredential, with its own error.
+	req.ResolvedConfigurationID, _ = iss.ResolveCredentialConfiguration(grant.Authorized, req)
 	done, err := cfg.Prepare(r.Context(), grant, &req)
 	if err != nil {
 		writePrepareError(w, err)

@@ -190,6 +190,15 @@ type CredentialRequest struct {
 	// ErrorUnknownCredentialIdentifier.
 	CredentialIdentifier string
 
+	// ResolvedConfigurationID is the key of the
+	// CredentialConfigurationsSupported entry the request resolves to,
+	// through CredentialConfigurationID or, for CredentialIdentifier, the
+	// token's authorization_details. CredentialHandler sets it before
+	// Prepare, so Prepare builds the claims of the configuration the
+	// token authorized; it's ignored on input. A direct caller of
+	// RequestCredential finds it with ResolveCredentialConfiguration.
+	ResolvedConfigurationID string
+
 	// Proofs is §8.2's own "proofs" parameter: exactly one proof type
 	// (a key in this map, either oid4vci.ProofTypeJWT or
 	// oid4vci.ProofTypeAttestation) mapped to a non-empty array of raw
@@ -539,6 +548,9 @@ func (iss *Issuer) issueBatch(ctx context.Context, cc CredentialConfiguration, r
 			}
 			statusRefs[ref] = i
 		}
+		if err := checkInstanceType(cc, instance); err != nil {
+			return nil, fmt.Errorf("issuer: request credential: %w", err)
+		}
 		credential, err := iss.issueInstance(cc, instance, key)
 		if err != nil {
 			return nil, newError(ErrorCredentialRequestDenied, 400, "credential issuance failed", err)
@@ -657,4 +669,33 @@ func jwkHeaderKey(header map[string]any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("marshal jwk header: %w", err)
 	}
 	return raw, nil
+}
+
+// ResolveCredentialConfiguration is the key of the
+// CredentialConfigurationsSupported entry req resolves to under auth,
+// as RequestCredential resolves it (§8.2), with the same errors: for
+// building the claims of the configuration the token authorized.
+func (iss *Issuer) ResolveCredentialConfiguration(auth AuthorizedRequest, req CredentialRequest) (string, error) {
+	id, _, err := iss.resolveCredentialConfiguration(auth, req)
+	return id, err
+}
+
+// checkInstanceType refuses to sign a credential of another type than
+// cc's: its claims come from the deployment (Prepare, PerCredential),
+// but the token authorized cc (OpenID4VCI §8: "Credentials of the same
+// Credential Configuration"). An SD-JWT VC's vct must be cc's, or list
+// it in aka_vcts; an mdoc's docType must be cc's.
+func checkInstanceType(cc CredentialConfiguration, instance CredentialInstance) error {
+	switch {
+	case instance.SDJWTClaims != nil:
+		c := instance.SDJWTClaims
+		if c.VCT != cc.VCT && !slices.Contains(c.AkaVCTs, cc.VCT) {
+			return fmt.Errorf("the credential's vct %q isn't the configuration's %q", c.VCT, cc.VCT)
+		}
+	case instance.MdocClaims != nil:
+		if instance.MdocClaims.DocType != cc.DocType {
+			return fmt.Errorf("the credential's docType %q isn't the configuration's %q", instance.MdocClaims.DocType, cc.DocType)
+		}
+	}
+	return nil
 }
