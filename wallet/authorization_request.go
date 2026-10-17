@@ -111,6 +111,10 @@ type AuthorizationRequest struct {
 	// (verifier_info, OpenID4VP 1.0 §5.11), unverified: check one
 	// before relying on it (registration.Verify, for a registration).
 	VerifierInfo []VerifierInfo
+
+	// VPFormats is the Verifier's client_metadata.vp_formats_supported,
+	// nil when it has none: present only credentials it Accepts.
+	VPFormats VPFormats
 }
 
 // RequestRejectedError is returned by ParseAuthorizationRequest when
@@ -332,10 +336,19 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 		}
 	}
 
+	formats, err := parseVPFormats(wire.ClientMetadata)
+	if err != nil {
+		return AuthorizationRequest{}, &RequestRejectedError{
+			Code: "invalid_request", Description: err.Error(),
+			State: wire.State, ResponseURI: wire.ResponseURI,
+			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+		}
+	}
+
 	return AuthorizationRequest{
 		ClientID: params.ClientID, ResponseURI: wire.ResponseURI, Nonce: wire.Nonce, State: wire.State,
 		Query: wire.DCQLQuery, VerifierCertificate: cert, ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid,
-		ResponseEncryptionEnc: enc, VerifierInfo: info,
+		ResponseEncryptionEnc: enc, VerifierInfo: info, VPFormats: formats,
 	}, nil
 }
 
