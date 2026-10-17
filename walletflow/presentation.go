@@ -501,6 +501,21 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 	return p.w.reserve(ctx, sel, p.verifier(), p.Linkable, p.byID)
 }
 
+// loadAsShown is the stored credential id, as it was when shown to the
+// holder: ErrCredentialChanged if it's been refreshed since, as its
+// claims, or which of them are always disclosed, may not be what the
+// holder saw.
+func (w *Wallet) loadAsShown(ctx context.Context, id string, shown map[string]StoredCredential) (StoredCredential, error) {
+	c, err := w.loadForReserve(ctx, id)
+	if err != nil {
+		return StoredCredential{}, err
+	}
+	if was, ok := shown[id]; ok && !was.ReceivedAt.Equal(c.ReceivedAt) {
+		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: %w", id, ErrCredentialChanged)
+	}
+	return c, nil
+}
+
 // reserve is Presentation.reserve for the Verifier whose VerifierHash is
 // verifier; linkable is what the holder was told about each credential
 // (Presentation.Linkable), which a reserved copy must agree with, and
@@ -516,13 +531,8 @@ func (w *Wallet) reserve(ctx context.Context, sel Selection, verifier string, li
 			c, ok := current[id]
 			if !ok {
 				var err error
-				if c, err = w.loadForReserve(ctx, id); err != nil {
+				if c, err = w.loadAsShown(ctx, id, shown); err != nil {
 					return nil, err
-				}
-				if was, ok := shown[id]; ok && !was.ReceivedAt.Equal(c.ReceivedAt) {
-					// Refreshed since: its claims, or which of them are
-					// always disclosed, may not be what the holder saw.
-					return nil, fmt.Errorf("walletflow: credential %q: %w", id, ErrCredentialChanged)
 				}
 			}
 			r, err := w.reserveCopy(&c, q, id, verifier, linkable(id))
