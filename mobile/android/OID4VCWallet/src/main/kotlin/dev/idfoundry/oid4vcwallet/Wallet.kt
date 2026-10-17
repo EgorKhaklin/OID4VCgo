@@ -159,6 +159,26 @@ public data class WalletConfiguration(
      * only a status list the issuer signed itself.
      */
     @SerialName("status_issuers") val statusIssuers: Map<String, List<String>> = emptyMap(),
+    /**
+     * Refuses a received SD-JWT VC whose `iss` its signing certificate
+     * doesn't name. SD-JWT VC doesn't require them to correspond: set it
+     * where [issuerRoots] certify several issuers.
+     */
+    @SerialName("require_issuer_name") val requireIssuerName: Boolean = false,
+    /**
+     * PEM certificates: the trust anchors for signed Credential Issuer
+     * Metadata. With them, signed metadata is asked for and verified.
+     */
+    @SerialName("issuer_metadata_roots") val issuerMetadataRoots: String = "",
+    /**
+     * Refuses an issuer whose metadata isn't signed under
+     * [issuerMetadataRoots], before the holder signs in or enters a code.
+     */
+    @SerialName("require_signed_issuer_metadata") val requireSignedIssuerMetadata: Boolean = false,
+    /** Refuses signed metadata whose certificate doesn't name the issuer. */
+    @SerialName("require_issuer_metadata_name") val requireIssuerMetadataName: Boolean = false,
+    /** Refuses signed metadata signed longer ago than this many seconds; 0 doesn't limit it. */
+    @SerialName("max_issuer_metadata_age_seconds") val maxIssuerMetadataAgeSeconds: Long = 0,
 ) {
     /** How an in-person response authenticates the mdoc (ISO/IEC 18013-5 §9.1.3). */
     @Serializable

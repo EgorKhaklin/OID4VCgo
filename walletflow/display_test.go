@@ -2,6 +2,8 @@ package walletflow_test
 
 import (
 	"context"
+	"crypto/x509"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"testing"
 	"time"
 
@@ -111,5 +113,32 @@ func TestCheckStatus_SkipsAnExpiredCredential(t *testing.T) {
 	}
 	if checked.Status.Value != "" || !checked.Status.CheckedAt.IsZero() {
 		t.Errorf("Status = %+v, want none: the list wasn't to be fetched", checked.Status)
+	}
+}
+
+// With signed issuer metadata required, an issuer whose metadata isn't
+// signed under IssuerMetadataRoots is refused at StartIssuance, before
+// the holder signs in or enters a code (HAIP 1.0 §4.1; OpenID4VCI
+// §13.6.2). Without the requirement it's used as before.
+func TestStartIssuance_RequireSignedIssuerMetadata(t *testing.T) {
+	for _, require := range []bool{true, false} {
+		f := newFixture(t, walletflowtest.Options{})
+		other, _ := testcert.CA(t, "another metadata root")
+		roots := x509.NewCertPool()
+		roots.AddCert(other)
+		w, err := walletflow.New(walletflow.Config{
+			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+			IssuerMetadataRoots: roots, RequireSignedIssuerMetadata: require,
+		}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = w.StartIssuance(context.Background(), f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+		if require && err == nil {
+			t.Error("required: started an issuance with an issuer whose metadata isn't signed under the roots")
+		}
+		if !require && err != nil {
+			t.Errorf("not required: %v", err)
+		}
 	}
 }

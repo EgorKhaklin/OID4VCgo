@@ -199,7 +199,9 @@ library's an `IOException`.
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci",
  "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "proximity_device_auth": "signature",
- "status_issuers": {"https://issuer.example": ["https://status.example"]}}
+ "status_issuers": {"https://issuer.example": ["https://status.example"]},
+ "require_issuer_name": false, "issuer_metadata_roots": "<PEM>", "require_signed_issuer_metadata": false,
+ "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0}
 ```
 
 `issuer_roots` is needed to receive credentials, and `verifier_roots` to
@@ -256,6 +258,19 @@ list is bound as ISO/IEC 18013-5 §12.3.6 says instead (under the
 certificate its MSO's status names, or else the CA that signed its
 document signer), and `status_issuers` doesn't apply to it. Added
 within ABI version 12.
+`require_issuer_name` refuses a received SD-JWT VC whose `iss` its
+signing certificate doesn't name; SD-JWT VC doesn't require them to
+correspond, so set it where `issuer_roots` certify several issuers.
+`issuer_metadata_roots` are the trust anchors for signed Credential
+Issuer Metadata (OpenID4VCI §12.2.3, HAIP 1.0 §4.1): with them, signed
+metadata is asked for and verified. `require_signed_issuer_metadata`
+refuses an issuer whose metadata isn't signed under them, before the
+holder signs in or enters a transaction code;
+`require_issuer_metadata_name` refuses signed metadata whose
+certificate doesn't name the issuer; and
+`max_issuer_metadata_age_seconds` refuses metadata signed longer ago.
+The two requirements need `issuer_metadata_roots`. Added within ABI
+version 12.
 `development`
 relaxes what production requires, for a wallet talking to services on a
 development machine. Never ship an app with it set. It lets issuers,
