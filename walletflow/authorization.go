@@ -257,6 +257,11 @@ func (w *Wallet) rebuild(ctx context.Context, a PendingAuthorization) (*Issuance
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: issuer metadata: %w", err)
 	}
+	// The issuer's metadata may have changed since the authorization
+	// began: it's held to the same checks StartIssuance applied.
+	if err := w.checkOffered(metadata, a.Offer.CredentialConfigurationIDs); err != nil {
+		return nil, err
+	}
 	plan, err := wallet.PlanAuthorization(a.Offer, metadata)
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: %w", err)
