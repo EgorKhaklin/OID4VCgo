@@ -1,6 +1,7 @@
 package mobile
 
 import (
+	"errors"
 	"time"
 
 	"context"
@@ -25,10 +26,30 @@ type Presentation struct {
 // trust, and finds the credentials that can answer it.
 func (w *Wallet) StartPresentation(op *Operation, requestLink string) (*Presentation, error) {
 	p, err := w.w.StartPresentation(op.context(), requestLink)
+	var refused *walletflow.RequestRefusedError
+	w.refusalMu.Lock()
+	w.refusalRedirect = ""
+	if errors.As(err, &refused) {
+		w.refusalRedirect = refused.RedirectURI
+	}
+	w.refusalMu.Unlock()
 	if err != nil {
 		return nil, classify(err)
 	}
 	return &Presentation{p: p}, nil
+}
+
+// TakeRefusalRedirect returns, once, the redirect_uri the Verifier
+// answered the latest refused request with, "" for none. When
+// StartPresentation fails with request_refused, open it, as OpenID4VP
+// §8.2 has the wallet do for a same-device request: the error itself
+// carries no URL.
+func (w *Wallet) TakeRefusalRedirect() string {
+	w.refusalMu.Lock()
+	defer w.refusalMu.Unlock()
+	uri := w.refusalRedirect
+	w.refusalRedirect = ""
+	return uri
 }
 
 // StartDCAPIPresentation parses an OpenID4VP request delivered through

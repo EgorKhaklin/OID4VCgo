@@ -600,6 +600,14 @@ public final class Wallet: @unchecked Sendable {
         return try Presentation(p)
     }
 
+    /// Where the Verifier asked to take the holder after the wallet
+    /// refused its request: when `startPresentation` throws
+    /// `requestRefused`, open this URL, if any, as OpenID4VP §8.2 has a
+    /// wallet do. It's returned once.
+    public func takeRefusalRedirect() -> URL? {
+        URL(string: handle.takeRefusalRedirect())
+    }
+
     /// The held mdocs, each with whether the page at `origin` has been
     /// shown it and whether presenting it there now would be linkable
     /// (`shownToVerifier`, `linkableHere`): for a document provider's

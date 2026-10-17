@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -153,6 +154,11 @@ type Wallet struct {
 	w    *walletflow.Wallet
 	keys KeyStore
 	ka   *agreement
+
+	// refusalRedirect is the redirect_uri the Verifier answered the
+	// latest refused request with (TakeRefusalRedirect).
+	refusalMu       sync.Mutex
+	refusalRedirect string
 }
 
 // SetKeyAgreement gives the wallet ka, to agree keys with its holder
