@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"slices"
 )
 
@@ -69,7 +70,7 @@ func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, er
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 	}
 	var wire wireRequestObjectPayload
-	if err := json.Unmarshal(payload, &wire); err != nil {
+	if err := strictjson.Unmarshal(payload, &wire); err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: parse payload: %w", err)
 	}
 	if wire.ClientID != clientID {

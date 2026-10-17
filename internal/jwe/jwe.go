@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"io"
 	"strings"
 
@@ -355,7 +356,7 @@ func decodeEPK(header map[string]any) (*ecdh.PublicKey, error) {
 		return nil, fmt.Errorf("jwe: marshal epk: %w", err)
 	}
 	var epk jwk.JWK
-	if err := json.Unmarshal(epkJSON, &epk); err != nil {
+	if err := strictjson.Unmarshal(epkJSON, &epk); err != nil {
 		return nil, fmt.Errorf("jwe: unmarshal epk: %w", err)
 	}
 	if epk.Kty != "EC" || epk.Crv != "P-256" {

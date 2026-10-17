@@ -112,9 +112,9 @@ func resolveHeldSDJWTVC(credential string) (sdjwtvc.Presentation, sdjwtvc.HashAl
 	if err := json.Unmarshal(rawPayload, &payload); err != nil {
 		return sdjwtvc.Presentation{}, "", nil, fmt.Errorf("unmarshal issuer jwt payload: %w", err)
 	}
-	hashAlg := sdjwtvc.DefaultHashAlg
-	if declared, ok := payload["_sd_alg"].(string); ok {
-		hashAlg = sdjwtvc.HashAlg(declared)
+	hashAlg, err := sdjwtvc.PayloadHashAlg(payload, sdjwtvc.DefaultHashAlg)
+	if err != nil {
+		return sdjwtvc.Presentation{}, "", nil, err
 	}
 	claims, err := sdjwtvc.ResolveDisclosures(payload, hashAlg, pres.Disclosures)
 	if err != nil {

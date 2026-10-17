@@ -54,3 +54,20 @@ func hashString(alg HashAlg, s string) (string, error) {
 	h.Write([]byte(s))
 	return b64.EncodeToString(h.Sum(nil)), nil
 }
+
+// PayloadHashAlg is the hash algorithm an Issuer-signed JWT's payload
+// declares in "_sd_alg", or fallback when it has none (RFC 9901
+// §4.1.1: "the value MUST be a case-sensitive string"). A non-string
+// _sd_alg is an error, not the fallback: it would otherwise resolve the
+// disclosures under an algorithm the issuer didn't declare.
+func PayloadHashAlg(payload map[string]any, fallback HashAlg) (HashAlg, error) {
+	raw, present := payload["_sd_alg"]
+	if !present {
+		return fallback, nil
+	}
+	declared, ok := raw.(string)
+	if !ok || declared == "" {
+		return "", fmt.Errorf("sdjwtvc: _sd_alg must be a non-empty string, got %T", raw)
+	}
+	return HashAlg(declared), nil
+}

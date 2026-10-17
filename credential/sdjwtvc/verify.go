@@ -126,12 +126,13 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opt
 		return nil, nil, err
 	}
 
-	hashAlg := opts.HashAlg
-	if hashAlg == "" {
-		hashAlg = DefaultHashAlg
+	fallback := opts.HashAlg
+	if fallback == "" {
+		fallback = DefaultHashAlg
 	}
-	if declared, ok := decoded["_sd_alg"].(string); ok {
-		hashAlg = HashAlg(declared)
+	hashAlg, err := PayloadHashAlg(decoded, fallback)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	if raw, present := decoded["aka_vcts"]; present {

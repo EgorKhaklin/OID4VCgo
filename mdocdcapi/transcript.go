@@ -25,10 +25,13 @@ var encMode = func() cbor.EncMode {
 // error, and nesting and sizes are bounded.
 var decMode = func() cbor.DecMode {
 	mode, err := cbor.DecOptions{
-		DupMapKey:        cbor.DupMapKeyEnforcedAPF,
-		MaxNestedLevels:  16,
-		MaxArrayElements: 1024,
-		MaxMapPairs:      1024,
+		DupMapKey: cbor.DupMapKeyEnforcedAPF,
+		// A struct field matches only its exact key: "DocType" isn't
+		// "docType".
+		FieldNameMatching: cbor.FieldNameMatchingCaseSensitive,
+		MaxNestedLevels:   16,
+		MaxArrayElements:  1024,
+		MaxMapPairs:       1024,
 	}.DecMode()
 	if err != nil {
 		panic(fmt.Sprintf("mdocdcapi: build CBOR decoder: %v", err))

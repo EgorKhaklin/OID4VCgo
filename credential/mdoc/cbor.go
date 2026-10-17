@@ -48,6 +48,9 @@ func mustDecMode() cbor.DecMode {
 		MaxArrayElements: MaxCBORContainerItems,
 		MaxMapPairs:      MaxCBORContainerItems,
 		DupMapKey:        cbor.DupMapKeyEnforcedAPF,
+		// A struct field matches only its exact key: "DocType" isn't
+		// "docType".
+		FieldNameMatching: cbor.FieldNameMatchingCaseSensitive,
 	}.DecMode()
 	if err != nil {
 		panic(fmt.Sprintf("mdoc: build CBOR decoder: %v", err))

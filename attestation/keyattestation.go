@@ -262,7 +262,8 @@ func (a KeyAttestation) Verify(pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 		if opts.Now.IsZero() {
 			return VerifiedClaims{}, fmt.Errorf("attestation: VerifyOptions.Now is required when the attestation has an exp claim")
 		}
-		if opts.Now.After(t) {
+		// RFC 7519 §4.1.4: the current time must be before exp.
+		if !opts.Now.Before(t) {
 			return VerifiedClaims{}, fmt.Errorf("attestation: expired")
 		}
 	} else if opts.RequireExpiry {

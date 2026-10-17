@@ -216,7 +216,7 @@ func TestVerify_RegistrarCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registration.Verify(token, reg.roots, clientID, time.Now()); err == nil || !strings.Contains(err.Error(), "digital signatures") {
+	if _, err := registration.Verify(token, reg.roots, clientID, time.Now()); err == nil || !strings.Contains(err.Error(), "digitalSignature") {
 		t.Errorf("a certificate not for signing: %v, want refused", err)
 	}
 }

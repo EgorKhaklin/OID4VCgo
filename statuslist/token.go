@@ -213,7 +213,9 @@ func checkTokenTimes(iat int64, exp *int64, opts VerifyOptions) error {
 		if err != nil {
 			return fmt.Errorf("statuslist: token exp is out of range")
 		}
-		if t.After(expires) {
+		// RFC 7519 §4.1.4: "the current date/time MUST be before the
+		// expiration date/time".
+		if !t.Before(expires) {
 			return fmt.Errorf("statuslist: token is expired")
 		}
 	}

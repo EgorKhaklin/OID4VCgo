@@ -7,8 +7,11 @@ import (
 )
 
 // Disclosure is a single SD-JWT Disclosure (RFC 9901 §4.2): either an
-// object-property disclosure (Name set, §4.2.1) or an array-element
-// disclosure (Name empty, §4.2.2).
+// object-property disclosure (§4.2.1) or an array-element disclosure
+// (§4.2.2). One built as a literal is an array element when its Name is
+// empty; one from NewObjectDisclosure or ParseDisclosure keeps the form
+// it was made in, so a property named "" (a valid JSON name) stays a
+// property.
 type Disclosure struct {
 	Salt  string
 	Name  string
@@ -21,11 +24,15 @@ type Disclosure struct {
 	// whitespace or key encoding without being wrong, but would break
 	// digest matching against the original.
 	encoded string
+
+	// named is set for an object-property disclosure whatever its Name,
+	// "" included: the arity it was made or parsed with, not its Name.
+	named bool
 }
 
 // IsArrayElement reports whether d is an array-element disclosure
 // (RFC 9901 §4.2.2) rather than an object-property one (§4.2.1).
-func (d Disclosure) IsArrayElement() bool { return d.Name == "" }
+func (d Disclosure) IsArrayElement() bool { return !d.named && d.Name == "" }
 
 func newSalt() (string, error) {
 	b := make([]byte, 16) // 128 bits — RFC 9901 §4.2.1's recommended entropy
@@ -45,7 +52,7 @@ func NewObjectDisclosure(name string, value any) (Disclosure, error) {
 	if err != nil {
 		return Disclosure{}, err
 	}
-	return encodeDisclosure(Disclosure{Salt: salt, Name: name, Value: value})
+	return encodeDisclosure(Disclosure{Salt: salt, Name: name, Value: value, named: true})
 }
 
 // NewArrayElementDisclosure creates a Disclosure for an array element
@@ -120,6 +127,7 @@ func ParseDisclosure(s string) (Disclosure, error) {
 		if err := json.Unmarshal(arr[1], &d.Name); err != nil {
 			return Disclosure{}, fmt.Errorf("sdjwtvc: disclosure name: %w", err)
 		}
+		d.named = true
 		if d.Name == "_sd" || d.Name == "..." {
 			return Disclosure{}, fmt.Errorf("sdjwtvc: disclosure claim name %q is reserved", d.Name)
 		}

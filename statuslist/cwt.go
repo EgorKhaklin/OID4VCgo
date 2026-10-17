@@ -137,7 +137,7 @@ func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opt
 	}
 
 	var decoded map[int]interface{}
-	if err := cbor.Unmarshal(raw, &decoded); err != nil {
+	if err := cwtDecMode.Unmarshal(raw, &decoded); err != nil {
 		return TokenClaims{}, fmt.Errorf("statuslist: unmarshal CWT claims: %w", err)
 	}
 
@@ -205,7 +205,7 @@ func decodeCBORValue(v interface{}, out interface{}) error {
 	if err != nil {
 		return fmt.Errorf("statuslist: re-marshal CBOR value: %w", err)
 	}
-	if err := cbor.Unmarshal(raw, out); err != nil {
+	if err := cwtDecMode.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("statuslist: unmarshal CBOR value: %w", err)
 	}
 	return nil
@@ -224,3 +224,20 @@ func toInt64Claim(v interface{}) (int64, error) {
 		return 0, fmt.Errorf("expected an integer, got %T", v)
 	}
 }
+
+// cwtDecMode decodes a Status List Token's CWT claims: duplicate map
+// keys are refused (RFC 8392 §7.2.1 has claims keys unique, and two
+// "status_list" or "exp" entries would let a decoder pick either), a
+// struct field matches only its exact key, and nesting is bounded. The
+// claims' size is bounded already, by the signed token's.
+var cwtDecMode = func() cbor.DecMode {
+	mode, err := cbor.DecOptions{
+		MaxNestedLevels:   16,
+		DupMapKey:         cbor.DupMapKeyEnforcedAPF,
+		FieldNameMatching: cbor.FieldNameMatchingCaseSensitive,
+	}.DecMode()
+	if err != nil {
+		panic(fmt.Sprintf("statuslist: build CBOR decoder: %v", err))
+	}
+	return mode
+}()

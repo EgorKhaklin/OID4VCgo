@@ -454,3 +454,28 @@ func TestHeader_X5CAndTrustChain(t *testing.T) {
 		t.Errorf("TrustChain() = %v", parsed.TrustChain())
 	}
 }
+
+// An attestation is expired at its exp, not one second after (RFC 7519
+// §4.1.4: the current time "MUST be before" exp).
+func TestVerify_ExpiredAtExp(t *testing.T) {
+	issuerKey, attestedKey := testKey(t), testKey(t)
+	attestedJWK, err := marshalJWK(&attestedKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iat := time.Now().Unix()
+	exp := iat + 60
+	compact, err := Issue(issuerKey, jose.ES256, Header{}, Claims{IssuedAt: iat, ExpiresAt: &exp, AttestedKeys: []json.RawMessage{attestedJWK}, KeyStorage: []AttackPotentialResistance{ISO18045High}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Parse(compact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for at, ok := range map[int64]bool{exp - 1: true, exp: false} {
+		if _, err := parsed.Verify(&issuerKey.PublicKey, jose.ES256, VerifyOptions{Now: time.Unix(at, 0)}); (err == nil) != ok {
+			t.Errorf("at exp%+d: %v", at-exp, err)
+		}
+	}
+}

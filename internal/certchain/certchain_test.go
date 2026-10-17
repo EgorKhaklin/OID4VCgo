@@ -64,6 +64,17 @@ func TestVerifyChains_Refuses(t *testing.T) {
 	if _, err := VerifyLeaf([][]byte{subCA.Raw}, roots); err == nil || !strings.Contains(err.Error(), "CA certificate") {
 		t.Errorf("a CA certificate as the leaf: %v, want refused", err)
 	}
+	// A leaf for key agreement only can't sign (RFC 5280 §4.2.1.3); one
+	// without a key usage extension isn't restricted.
+	for usage, ok := range map[x509.KeyUsage]bool{x509.KeyUsageKeyAgreement: false, 0: true} {
+		c := mustCert(t, &x509.Certificate{
+			SerialNumber: big.NewInt(4), Subject: pkix.Name{CommonName: "leaf"},
+			NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: usage,
+		}, root, &leafKey.PublicKey, rootKey)
+		if _, err := VerifyLeaf([][]byte{c.Raw}, roots); (err == nil) != ok {
+			t.Errorf("key usage %v: %v", usage, err)
+		}
+	}
 }
 
 // TestVerifyChainsAt: validity is checked at the given time, not the
