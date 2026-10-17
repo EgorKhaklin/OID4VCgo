@@ -81,11 +81,18 @@ func (t *Transactions) ResponseHandler() http.Handler {
 			writeResponseError(w, "the response is malformed")
 			return
 		}
+		if r.PostForm.Get("response") == "" && r.PostForm.Get("error") != "" {
+			// An unencrypted error response, which a Wallet that can't
+			// encrypt may send (§8.3.1). Without a response key it can't
+			// be tied to a request, so it's acknowledged, not recorded.
+			writeResponseJSON(w, map[string]string{})
+			return
+		}
 		answered, err := t.HandleResponse(r.Context(), r.PostForm.Get("response"))
 		var walletErr *ResponseError
 		switch {
 		case errors.As(err, &walletErr):
-			answered = Answered{}
+			// A same-device request's Answered carries its redirect_uri.
 		case errors.Is(err, ErrTransactionAnswered):
 			writeResponseError(w, "this request has already been answered")
 			return
@@ -104,10 +111,14 @@ func (t *Transactions) ResponseHandler() http.Handler {
 		if answered.RedirectURI != "" {
 			body["redirect_uri"] = answered.RedirectURI
 		}
-		w.Header().Set(headerContentType, mediaTypeJSON)
-		w.Header().Set(headerCacheControl, cacheNoStore)
-		_ = json.NewEncoder(w).Encode(body)
+		writeResponseJSON(w, body)
 	})
+}
+
+func writeResponseJSON(w http.ResponseWriter, body map[string]string) {
+	w.Header().Set(headerContentType, mediaTypeJSON)
+	w.Header().Set(headerCacheControl, cacheNoStore)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 func writeResponseError(w http.ResponseWriter, description string) {
