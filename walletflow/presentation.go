@@ -81,6 +81,11 @@ type Disclosure struct {
 	// (wallet.PreviewedCredential.AlwaysDisclosed). Show them with
 	// Claims.
 	AlwaysDisclosed []dcql.Path
+	// Retained are the claims the Verifier says it intends to keep: an
+	// mdoc's elements its query marks intent_to_retain (OpenID4VP
+	// Appendix B.2.4). Show them to the holder with Claims, as ISO/IEC
+	// 18013-5 has a wallet show the reader's intent to retain.
+	Retained []dcql.Path
 }
 
 // Presented is what Respond or Decline sent.
@@ -136,10 +141,41 @@ func (w *Wallet) StartPresentation(ctx context.Context, requestLink string) (*Pr
 	// Object's signature, and that client_id is bound to that
 	// certificate.
 	req, err := w.core.FetchAuthorizationRequest(ctx, link.RequestURI, link.ClientID)
+	var rejected *wallet.RequestRejectedError
+	if errors.As(err, &rejected) {
+		return nil, w.refuse(ctx, rejected)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: presentation request: %w", err)
 	}
 	return w.newPresentation(ctx, req)
+}
+
+// refuse tells the Verifier its authentic request r is refused, by an
+// error response to its response_uri (OpenID4VP §8.5), and returns
+// the *RequestRefusedError. A request with nowhere to send it, or no
+// key to encrypt it to, is refused locally.
+func (w *Wallet) refuse(ctx context.Context, r *wallet.RequestRejectedError) error {
+	refused := &RequestRefusedError{Code: r.Code, Description: r.Description}
+	if r.ResponseURI == "" || r.ResponseEncryptionKey == nil {
+		refused.sendErr = errors.New("the request names no response_uri or encryption key")
+		return refused
+	}
+	responseJWE, err := wallet.BuildDirectPostErrorResponse(wallet.BuildDirectPostErrorResponseParams{
+		Error: r.Code, ErrorDescription: r.Description, State: r.State,
+		EncryptionKey: r.ResponseEncryptionKey, EncryptionKeyID: r.ResponseEncryptionKeyID, EncryptionEnc: r.ResponseEncryptionEnc,
+	})
+	if err != nil {
+		refused.sendErr = err
+		return refused
+	}
+	reply, err := wallet.SubmitDirectPostResponse(ctx, w.deps.HTTP, r.ResponseURI, responseJWE)
+	if err != nil {
+		refused.sendErr = err
+		return refused
+	}
+	refused.RedirectURI = reply.RedirectURI
+	return refused
 }
 
 func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRequest) (*Presentation, error) {
@@ -270,7 +306,7 @@ func (p *Presentation) Preview(ctx context.Context, sel Selection) ([]Disclosure
 	ids := p.idsByCredential()
 	out := make([]Disclosure, 0, len(preview))
 	for _, c := range preview {
-		out = append(out, Disclosure{QueryID: c.QueryID, CredentialID: ids[c.Credential.Credential], Claims: c.Claims, AlwaysDisclosed: c.AlwaysDisclosed})
+		out = append(out, Disclosure{QueryID: c.QueryID, CredentialID: ids[c.Credential.Credential], Claims: c.Claims, AlwaysDisclosed: c.AlwaysDisclosed, Retained: c.Retained})
 	}
 	return out, nil
 }
@@ -465,6 +501,21 @@ func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCo
 	return p.w.reserve(ctx, sel, p.verifier(), p.Linkable, p.byID)
 }
 
+// loadAsShown is the stored credential id, as it was when shown to the
+// holder: ErrCredentialChanged if it's been refreshed since, as its
+// claims, or which of them are always disclosed, may not be what the
+// holder saw.
+func (w *Wallet) loadAsShown(ctx context.Context, id string, shown map[string]StoredCredential) (StoredCredential, error) {
+	c, err := w.loadForReserve(ctx, id)
+	if err != nil {
+		return StoredCredential{}, err
+	}
+	if was, ok := shown[id]; ok && !was.ReceivedAt.Equal(c.ReceivedAt) {
+		return StoredCredential{}, fmt.Errorf("walletflow: credential %q: %w", id, ErrCredentialChanged)
+	}
+	return c, nil
+}
+
 // reserve is Presentation.reserve for the Verifier whose VerifierHash is
 // verifier; linkable is what the holder was told about each credential
 // (Presentation.Linkable), which a reserved copy must agree with, and
@@ -480,13 +531,8 @@ func (w *Wallet) reserve(ctx context.Context, sel Selection, verifier string, li
 			c, ok := current[id]
 			if !ok {
 				var err error
-				if c, err = w.loadForReserve(ctx, id); err != nil {
+				if c, err = w.loadAsShown(ctx, id, shown); err != nil {
 					return nil, err
-				}
-				if was, ok := shown[id]; ok && !was.ReceivedAt.Equal(c.ReceivedAt) {
-					// Refreshed since: its claims, or which of them are
-					// always disclosed, may not be what the holder saw.
-					return nil, fmt.Errorf("walletflow: credential %q: %w", id, ErrCredentialChanged)
 				}
 			}
 			r, err := w.reserveCopy(&c, q, id, verifier, linkable(id))

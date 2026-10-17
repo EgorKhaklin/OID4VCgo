@@ -119,6 +119,13 @@ public class WalletException internal constructor(
              */
             public val proofUnsupported: Code = Code(Mobile.CodeProofUnsupported)
             /**
+             * The wallet refused a Verifier's request it must not answer —
+             * `transaction_data` it doesn't support, or a parameter
+             * OpenID4VP forbids — and told the Verifier:
+             * [WalletException.protocolError] is the error code it sent.
+             */
+            public val requestRefused: Code = Code(Mobile.CodeRequestRefused)
+            /**
              * An issuer, Authorization Server or Verifier answered with an
              * error, or with something the wallet refuses:
              * [WalletException.protocolError] carries its OAuth error code,
@@ -164,6 +171,7 @@ public class WalletException internal constructor(
             code == Code.reissueRequired -> "This credential can't be refreshed. Receive it again from the issuer."
             code == Code.deliveryUnknown -> "Your response may not have reached the verifier. Check with them before sharing again."
             code == Code.untrustedVerifier -> "This verifier isn't one your wallet trusts, so its request wasn't opened."
+            code == Code.requestRefused -> "This verifier's request asks for something this wallet doesn't support, so it was refused."
             code == Code.profileViolation || code == Code.clientAuthUnsupported || code == Code.proofUnsupported ->
                 "This wallet can't receive credentials from this issuer."
             code == Code.protocol && protocolError == "invalid_grant" -> "That code or PIN wasn't accepted."

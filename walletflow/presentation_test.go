@@ -3,6 +3,7 @@ package walletflow_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -321,5 +322,29 @@ func TestPresentation_RefreshedSinceShown(t *testing.T) {
 	}
 	if _, err := p.Respond(ctx, sel); err != nil {
 		t.Errorf("Respond in a new presentation: %v", err)
+	}
+}
+
+// The preview reports the claims the Verifier says it will keep (an
+// mdoc query's intent_to_retain, OpenID4VP Appendix B.2.4), for the
+// consent screen to show.
+func TestPresentation_PreviewRetained(t *testing.T) {
+	f, v, w := presentationFixture(t)
+	held := receive(t, f, w, walletflowtest.MdocConfigurationID)
+	ctx := context.Background()
+	q := mdocQuery(t, "mdl", "family_name", "given_name")
+	keep := true
+	q.Claims[0].IntentToRetain = &keep
+	_, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{q}})
+	p, err := w.StartPresentation(ctx, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disclosed, err := p.Preview(ctx, walletflow.Selection{"mdl": {held[0].ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disclosed) != 1 || len(disclosed[0].Retained) != 1 || !slices.Equal(disclosed[0].Retained[0], q.Claims[0].Path) {
+		t.Errorf("Retained = %v, want only %v", disclosed[0].Retained, q.Claims[0].Path)
 	}
 }

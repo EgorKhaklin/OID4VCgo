@@ -206,6 +206,32 @@ func TestDCAPIPresentation_RefusesAnUntrustedVerifier(t *testing.T) {
 	}
 }
 
+// A DC API request carrying transaction_data, which the wallet doesn't
+// support, is refused with the error OpenID4VP §8.4 requires, for the
+// platform to hand back to the page.
+func TestDCAPIPresentation_RefusesTransactionData(t *testing.T) {
+	f, v, w := presentationFixture(t)
+	r := unsignedOf(t, v.BeginDCAPI(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}}, dcapiOrigin))
+	var claims map[string]any
+	if err := json.Unmarshal(r.Data, &claims); err != nil {
+		t.Fatal(err)
+	}
+	claims["transaction_data"] = []string{base64.RawURLEncoding.EncodeToString([]byte(`{"type":"payment","credential_ids":["pid"]}`))}
+	data, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.StartDCAPIPresentation(context.Background(), r.Protocol, data, r.Origin)
+	var refused *walletflow.RequestRefusedError
+	if !errors.As(err, &refused) || refused.Code != "invalid_transaction_data" {
+		t.Fatalf("StartDCAPIPresentation = %v; want refused with invalid_transaction_data", err)
+	}
+	var response map[string]string
+	if err := json.Unmarshal(refused.DCAPIResponse, &response); err != nil || response["error"] != "invalid_transaction_data" {
+		t.Errorf("DCAPIResponse = %s, %v", refused.DCAPIResponse, err)
+	}
+}
+
 // unsignedOf is r as an unsigned request: its Request Object's claims,
 // without the signature, client_id or expected_origins.
 func unsignedOf(t *testing.T, r *walletflowtest.DCAPIRequest) *walletflowtest.DCAPIRequest {

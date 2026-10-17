@@ -32,6 +32,7 @@ func classify(err error) error {
 	var denied *walletflow.AuthorizationDeniedError
 	var protocol *wallet.Error
 	var rejected *wallet.DirectPostRejectedError
+	var refusedRequest *walletflow.RequestRefusedError
 	var clientErr *client.Error
 	var urlErr *url.Error
 	var netErr net.Error
@@ -73,6 +74,10 @@ func classify(err error) error {
 		return newError(CodeDeliveryUnknown, walletflow.ErrDeliveryUnknown)
 	case errors.Is(err, wallet.ErrUntrustedVerifier):
 		return newError(CodeUntrustedVerifier, wallet.ErrUntrustedVerifier)
+	case errors.As(err, &refusedRequest):
+		// Not the description: the message never carries a remote
+		// party's text.
+		return &Error{Code: CodeRequestRefused, Detail: errorCode(refusedRequest.Code), Message: "the wallet refused the verifier's request"}
 	case errors.Is(err, walletflow.ErrMalformedRequest):
 		// What the platform handed over, not a service's refusal.
 		return newError(CodeInvalidInput, walletflow.ErrMalformedRequest)

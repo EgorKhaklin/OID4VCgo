@@ -105,12 +105,13 @@ type VerifyResponseRequest struct {
 
 	// MaxKeyBindingAge bounds how old a Key Binding JWT's own "iat"
 	// may be. REQUIRED (must be positive) when Query includes any
-	// "dc+sd-jwt" Credential Query that requires holder binding (the
-	// default — see dcql.CredentialQuery.RequiresCryptographicHolderBinding);
+	// "dc+sd-jwt" Credential Query: a credential bound to a key (cnf)
+	// is presented with a KB-JWT, which is checked, even where the
+	// query doesn't require holder binding (HAIP 1.0 §6.1.1.1).
 	// VerifyResponse rejects the Go zero value in that case rather
 	// than silently disabling this freshness check (see
 	// credential/sdjwtvc.KeyBindingCheck.MaxAge's own doc comment for
-	// why). Ignored when no requested Credential Query needs it.
+	// why). Ignored when no "dc+sd-jwt" Credential Query is asked.
 	MaxKeyBindingAge time.Duration
 
 	// MdocIssuerKeys resolves the Issuer key for each "mso_mdoc"
@@ -385,8 +386,8 @@ func checkMaxKeyBindingAgeRequired(req VerifyResponseRequest) error {
 		return nil
 	}
 	for _, cq := range req.Query.Credentials {
-		if cq.Format == sdjwtvc.CredentialFormat && cq.RequiresCryptographicHolderBinding() {
-			return fmt.Errorf("verifier: verify response: max_key_binding_age is required (must be positive) when a %q credential query requires holder binding", sdjwtvc.CredentialFormat)
+		if cq.Format == sdjwtvc.CredentialFormat {
+			return fmt.Errorf("verifier: verify response: max_key_binding_age is required (must be positive) for a %q credential query: a credential bound to a key is checked for its KB-JWT", sdjwtvc.CredentialFormat)
 		}
 	}
 	return nil
@@ -522,7 +523,13 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		return nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
 	}
 
-	requireHolderBinding := cq.RequiresCryptographicHolderBinding()
+	// A credential bound to a key is presented with a KB-JWT whatever
+	// the query asks (HAIP 1.0 §6.1.1.1: "If the credential has
+	// cryptographic holder binding, a KB-JWT ... MUST always be present
+	// when presenting an SD-JWT VC"), and that KB-JWT is verified: one
+	// left unchecked could be replayed from another presentation.
+	_, bound := payload["cnf"]
+	requireHolderBinding := cq.RequiresCryptographicHolderBinding() || bound
 	keyBindingRequirement := sdjwtvc.KeyBindingNotRequired
 	var holderPub crypto.PublicKey
 	var holderAlg jose.Alg

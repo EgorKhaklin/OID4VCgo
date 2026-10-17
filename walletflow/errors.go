@@ -65,6 +65,14 @@ var (
 	// request (StartDCAPIPresentation, StartMdocPresentation) that can't
 	// be parsed: what the platform handed over, not a service's answer.
 	ErrMalformedRequest = errors.New("walletflow: the request is malformed")
+	// ErrRequestRefused is wrapped, in a *RequestRefusedError, by
+	// StartPresentation and StartDCAPIPresentation for an authentic
+	// request the wallet must refuse: transaction_data it doesn't
+	// support (OpenID4VP §8.4: "it MUST return an error"), an origin
+	// outside a signed request's expected_origins (Appendix A.2), or a
+	// parameter OpenID4VP forbids. The Verifier is told, as OpenID4VP
+	// requires: see RequestRefusedError.
+	ErrRequestRefused = errors.New("walletflow: the wallet refuses the request")
 	// ErrUntrustedVerifier is wallet.ErrUntrustedVerifier, wrapped by
 	// StartPresentation for a request from a Verifier VerifierTrust
 	// doesn't accept, and by StartMdocPresentation, under
@@ -124,4 +132,50 @@ func cleanText(text string) string {
 		n++
 	}
 	return b.String()
+}
+
+// RequestRefusedError is an authentic request the wallet refused, and
+// the error it returned to the Verifier (OpenID4VP §8.5). For a
+// redirect request, the error response was sent to the request's
+// response_uri before StartPresentation returned; for a Digital
+// Credentials API request, DCAPIResponse is the error to hand back to
+// the platform, as for Presented.DCAPIResponse. Show the holder that
+// the request was refused, not that the wallet failed.
+type RequestRefusedError struct {
+	// Code and Description are the error response's error and
+	// error_description: invalid_transaction_data, invalid_request, and
+	// so on.
+	Code        string
+	Description string
+
+	// RedirectURI is where the Verifier asked to take the holder after
+	// receiving the error (same-device), "" for none.
+	RedirectURI string
+
+	// DCAPIResponse is a DC API request's error response.
+	DCAPIResponse []byte
+
+	// sendErr is why the error response couldn't be sent: the Verifier
+	// may not have been told.
+	sendErr error
+}
+
+func (e *RequestRefusedError) Error() string {
+	msg := "walletflow: the wallet refuses the request: " + e.Code
+	if e.Description != "" {
+		msg += ": " + e.Description
+	}
+	if e.sendErr != nil {
+		msg += " (the Verifier wasn't told: " + e.sendErr.Error() + ")"
+	}
+	return msg
+}
+
+// Unwrap is ErrRequestRefused, and why the error response couldn't be
+// sent, if it couldn't.
+func (e *RequestRefusedError) Unwrap() []error {
+	if e.sendErr != nil {
+		return []error{ErrRequestRefused, e.sendErr}
+	}
+	return []error{ErrRequestRefused}
 }

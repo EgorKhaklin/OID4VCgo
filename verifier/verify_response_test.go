@@ -503,6 +503,24 @@ func TestVerifyResponseRejects(t *testing.T) {
 			}
 		},
 	}
+	// A credential bound to a key (cnf) is checked for its KB-JWT even
+	// where the query doesn't require holder binding (HAIP 1.0
+	// §6.1.1.1): one for another request, or none, is refused.
+	unbound := func(t *testing.T) dcql.Query {
+		q := testIdentityQuery(t)
+		no := false
+		q.Credentials[0].RequireCryptographicHolderBinding = &no
+		return q
+	}
+	cases["binding not required, KB-JWT for another nonce"] = func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
+		return rejectCaseSDJWTVC(t, unbound(t), v.ClientID(), "wrong-nonce", nonce)
+	}
+	cases["binding not required, cnf without a KB-JWT"] = func(t *testing.T, v *verifier.Verifier, nonce string) verifier.VerifyResponseRequest {
+		req := rejectCaseSDJWTVC(t, unbound(t), v.ClientID(), nonce, nonce)
+		compact := req.Response.VPToken["identity_credential"][0]
+		req.Response.VPToken["identity_credential"][0] = compact[:strings.LastIndex(compact, "~")+1]
+		return req
+	}
 	for name, setup := range cases {
 		t.Run(name, func(t *testing.T) {
 			cfg, deps := validConfig(t)
@@ -526,7 +544,7 @@ func TestVerifyResponseRejects(t *testing.T) {
 // VerifyResponseRequest.MaxKeyBindingAge's zero value is rejected
 // outright — rather than silently disabling the Key Binding JWT
 // freshness check — whenever the request includes a "dc+sd-jwt"
-// Credential Query that requires holder binding (the default).
+// Credential Query, whether or not it requires holder binding.
 func TestVerifyResponseRequiresMaxKeyBindingAge(t *testing.T) {
 	cfg, deps := validConfig(t)
 	v, err := verifier.New(cfg, deps)
@@ -549,6 +567,20 @@ func TestVerifyResponseRequiresMaxKeyBindingAge(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("VerifyResponse = nil error, want error (max_key_binding_age unset while a query requires holder binding)")
+	}
+
+	// Also where the query doesn't require holder binding: a credential
+	// bound to a key is still checked for its KB-JWT.
+	no := false
+	query.Credentials[0].RequireCryptographicHolderBinding = &no
+	_, err = v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query:         query,
+		Response:      verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
+		ExpectedNonce: built.Nonce,
+		IssuerKeys:    fixedSDJWTVCIssuerKeyResolver{pub: &fixture.issuerKey.PublicKey, alg: jose.ES256},
+	})
+	if err == nil || !strings.Contains(err.Error(), "max_key_binding_age") {
+		t.Errorf("binding not required, max_key_binding_age unset: %v, want refused", err)
 	}
 }
 

@@ -685,7 +685,7 @@ func isLoopback(host string) bool {
 // checkVerifies refuses a query the Verify configuration can't verify
 // an answer to, so the mistake shows when the request is made, not as
 // every answer's LastError: a resolver for each credential format it
-// asks for, MaxKeyBindingAge where holder binding applies, and
+// asks for, MaxKeyBindingAge for an SD-JWT VC query, and
 // TrustedAuthorities where it declares trusted_authorities.
 func (t *Transactions) checkVerifies(query dcql.Query) error {
 	for _, cq := range query.Credentials {

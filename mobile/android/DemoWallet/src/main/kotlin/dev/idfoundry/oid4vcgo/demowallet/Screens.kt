@@ -674,7 +674,7 @@ private fun LazyListScope.disclosures(model: WalletModel, p: Presentation) {
         item { SectionHeader("Will share · " + (holder?.name?.let { "$it · $title" } ?: title)) }
         // Claims the issuer didn't make selectively disclosable are shared
         // too, whatever the selection.
-        items(d.claims + d.alwaysDisclosed) { path -> DisclosedRow(path, model.candidateClaims[d.credentialID], Credentials.isUnregistered(path, d.queryID, p)) }
+        items(d.claims + d.alwaysDisclosed) { path -> DisclosedRow(path, model.candidateClaims[d.credentialID], Credentials.isUnregistered(path, d.queryID, p), path in d.retained) }
     }
 }
 
@@ -781,7 +781,7 @@ private fun LinkabilityHint(summary: CredentialSummary, text: Color) {
 
 /** One claim sharing discloses: its path and the value the verifier will see, or the photo. */
 @Composable
-fun DisclosedRow(path: List<PathElement>, claims: JsonElement?, unregistered: Boolean) {
+fun DisclosedRow(path: List<PathElement>, claims: JsonElement?, unregistered: Boolean, retained: Boolean = false) {
     val label = Claims.path(path)
     val value = claims?.let { Claims.resolve(path, it) }
     Column(Modifier.padding(horizontal = 16.dp, vertical = 2.dp).testTag("disclosed")) {
@@ -796,6 +796,9 @@ fun DisclosedRow(path: List<PathElement>, claims: JsonElement?, unregistered: Bo
         }
         if (unregistered) {
             Text("Not in its registration", Modifier.testTag("disclosed-unregistered"), style = MaterialTheme.typography.labelSmall, color = Color(0xFFE65100))
+        }
+        if (retained) {
+            Text("The verifier will keep this", Modifier.testTag("disclosed-retained"), style = MaterialTheme.typography.labelSmall)
         }
     }
 }
