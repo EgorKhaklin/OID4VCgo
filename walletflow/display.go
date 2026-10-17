@@ -11,9 +11,12 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"math"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -46,7 +49,7 @@ type Display struct {
 func displayFor(metadata oid4vci.Metadata, configID string, locales []string) Display {
 	var d Display
 	if i := bestLocale(len(metadata.Display), func(i int) string { return metadata.Display[i].Locale }, locales); i >= 0 {
-		d.IssuerName = metadata.Display[i].Name
+		d.IssuerName = displayText(metadata.Display[i].Name, maxDisplayName)
 		d.IssuerLogo = logoOf(metadata.Display[i].Logo)
 	}
 	cm := metadata.CredentialConfigurationsSupported[configID].CredentialMetadata
@@ -55,11 +58,59 @@ func displayFor(metadata oid4vci.Metadata, configID string, locales []string) Di
 	}
 	if i := bestLocale(len(cm.Display), func(i int) string { return cm.Display[i].Locale }, locales); i >= 0 {
 		c := cm.Display[i]
-		d.Name, d.Description, d.Logo = c.Name, c.Description, logoOf(c.Logo)
-		d.BackgroundColor, d.TextColor = c.BackgroundColor, c.TextColor
+		d.Name, d.Description, d.Logo = displayText(c.Name, maxDisplayName), displayText(c.Description, maxDisplayDescription), logoOf(c.Logo)
+		d.BackgroundColor, d.TextColor = displayColor(c.BackgroundColor), displayColor(c.TextColor)
 	}
 	return d
 }
+
+// The longest display texts kept, in runes: an issuer's name or a
+// credential's (and a logo's alt text), and a description.
+const (
+	maxDisplayName        = 200
+	maxDisplayDescription = 1000
+)
+
+// displayText is s, from an issuer's metadata, fit to show the holder:
+// control characters become spaces, Unicode bidirectional formatting
+// characters (which can make text read other than it is) are dropped,
+// and at most max runes are kept.
+func displayText(s string, max int) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range s {
+		switch {
+		case n == max:
+			return strings.TrimSpace(b.String())
+		case r == utf8.RuneError, isBidiControl(r):
+			continue
+		case unicode.IsControl(r):
+			r = ' '
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// isBidiControl reports whether r is a bidirectional formatting
+// character: the embeddings, overrides and isolates, and the marks.
+func isBidiControl(r rune) bool {
+	return r == '\u061c' || r == '\u200e' || r == '\u200f' || (r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069')
+}
+
+// displayColor is c, an issuer's background_color or text_color
+// (OpenID4VCI 1.0 §12.2.4: a CSS color), if it's a hex color or a
+// named one, or rgb()/hsl() of numbers, "" otherwise: nothing else
+// reaches the app's styling.
+func displayColor(c string) string {
+	if displayColorPattern.MatchString(c) {
+		return c
+	}
+	return ""
+}
+
+var displayColorPattern = regexp.MustCompile(`^(#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|[A-Za-z]{3,20}|(rgb|rgba|hsl|hsla)\([0-9.%, /deg]{1,40}\))$`)
 
 // bestLocale picks, among n display entries with the given locales, the
 // one for the first of prefs it has — exactly, then by language — else
@@ -105,7 +156,7 @@ func logoOf(l *oid4vci.Logo) *Logo {
 		return nil
 	case u.Scheme == "https" && u.Host != "",
 		u.Scheme == "data" && strings.HasPrefix(u.Opaque, "image/"):
-		return &Logo{URI: l.URI, AltText: l.AltText}
+		return &Logo{URI: l.URI, AltText: displayText(l.AltText, maxDisplayName)}
 	}
 	return nil
 }
