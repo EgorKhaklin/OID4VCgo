@@ -242,9 +242,6 @@ func VerifyWithPolicy(token string, roots *x509.CertPool, clientID string, now t
 	if err != nil {
 		return Registration{}, fmt.Errorf("registration: registrar certificate: %w", err)
 	}
-	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
-		return Registration{}, errors.New("registration: the registrar certificate isn't for digital signatures")
-	}
 	_, payload, err := jose.Verify(jose.ES256, leaf.PublicKey, token)
 	if err != nil {
 		return Registration{}, fmt.Errorf("registration: signature: %w", err)

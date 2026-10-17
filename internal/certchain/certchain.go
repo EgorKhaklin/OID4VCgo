@@ -91,7 +91,8 @@ func VerifyLeafWithPolicyAt(ders [][]byte, roots *x509.CertPool, policy func(lea
 // roots must be set: crypto/x509 treats a nil pool as "the system's
 // roots", which would trust any publicly trusted certificate. A leaf
 // that's itself a CA certificate is refused too: every role here signs
-// with an end-entity certificate.
+// with an end-entity certificate, so a leaf whose key usage extension
+// doesn't allow digitalSignature is refused as well.
 func VerifyChains(ders [][]byte, roots *x509.CertPool) (*x509.Certificate, [][]*x509.Certificate, error) {
 	return VerifyChainsAt(ders, roots, time.Time{})
 }
@@ -121,6 +122,13 @@ func VerifyChainsAt(ders [][]byte, roots *x509.CertPool, now time.Time) (*x509.C
 	}
 	if leaf.BasicConstraintsValid && leaf.IsCA {
 		return nil, nil, fmt.Errorf("certchain: leaf certificate must not be a CA certificate")
+	}
+	// Every leaf here signs: a key usage extension, when present, must
+	// allow it (RFC 5280 §4.2.1.3), as ISO/IEC 18013-5 and HAIP's
+	// certificate profiles also have it. One without the extension
+	// isn't restricted.
+	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return nil, nil, fmt.Errorf("certchain: leaf certificate's key usage doesn't allow digitalSignature")
 	}
 
 	intermediates := x509.NewCertPool()
