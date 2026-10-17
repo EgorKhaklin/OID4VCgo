@@ -637,8 +637,45 @@ func TestVerifyResponse_OriginMustBeExpected(t *testing.T) {
 		_, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 			Query: testQuery(t), ExpectedNonce: "n", Origin: tc.origin, ExpectedOrigins: tc.expected, MaxKeyBindingAge: time.Hour,
 		})
-		if err == nil || !strings.Contains(err.Error(), "expected_origins") {
+		if err == nil || !strings.Contains(err.Error(), "origin") {
 			t.Errorf("%s: %v, want the origin refused", name, err)
 		}
+	}
+}
+
+// A DC API request's expected_origins, and the origin a response is
+// verified for, must be serialized origins: one with a path, a trailing
+// slash or a query would never match what the browser gives.
+func TestDCAPI_OriginsMustBeSerializedOrigins(t *testing.T) {
+	v := newTestVerifier(t)
+	for _, origin := range []string{"https://verifier.example.com/", "https://verifier.example.com/path", "verifier.example.com", "https://verifier.example.com?x=1", ""} {
+		if _, err := v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
+			Query: testQuery(t), ExpectedOrigins: []string{origin},
+		}); err == nil {
+			t.Errorf("expected_origins [%q]: built", origin)
+		}
+	}
+	if _, err := v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
+		Query: testQuery(t), ExpectedOrigins: []string{"https://verifier.example.com", "http://localhost:8080"},
+	}); err != nil {
+		t.Errorf("serialized origins: %v", err)
+	}
+}
+
+// A response carrying more presentations for one credential query than
+// MaxPresentationsPerQuery is refused before any is verified.
+func TestVerifyResponse_CapsPresentationsPerQuery(t *testing.T) {
+	v := newTestVerifier(t)
+	query := dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "pid", Format: sdjwtvc.CredentialFormat, Meta: testverify.MustSDJWTVCMeta(t, testVCT), Multiple: true}}}
+	many := make([]string, verifier.MaxPresentationsPerQuery+1)
+	for i := range many {
+		many[i] = "not-even-parsed"
+	}
+	_, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query: query, Response: verifier.ParsedResponse{VPToken: map[string][]string{"pid": many}}, ExpectedNonce: "n", MaxKeyBindingAge: time.Hour,
+		IssuerKeys: fixedSDJWTVCIssuerKeyResolver{pub: &testP256Key(t).PublicKey, alg: jose.ES256},
+	})
+	if err == nil || !strings.Contains(err.Error(), "accepted") {
+		t.Errorf("VerifyResponse = %v, want the presentations refused by count", err)
 	}
 }

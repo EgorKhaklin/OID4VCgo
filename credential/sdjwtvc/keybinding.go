@@ -3,6 +3,7 @@ package sdjwtvc
 import (
 	"crypto"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -112,10 +113,10 @@ func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg oid4vci.J
 	}
 
 	if aud, _ := claims["aud"].(string); aud != check.ExpectedAudience {
-		return nil, fmt.Errorf("sdjwtvc: key binding JWT aud does not match the expected audience")
+		return nil, fmt.Errorf("sdjwtvc: %w: its aud does not match the expected audience", ErrNotThisRequest)
 	}
 	if nonce, _ := claims["nonce"].(string); nonce != check.ExpectedNonce {
-		return nil, fmt.Errorf("sdjwtvc: key binding JWT nonce does not match the expected value")
+		return nil, fmt.Errorf("sdjwtvc: %w: its nonce does not match the expected value", ErrNotThisRequest)
 	}
 	if sdHash, _ := claims["sd_hash"].(string); sdHash != check.ExpectedSDHash {
 		return nil, fmt.Errorf("sdjwtvc: key binding JWT sd_hash does not match the presented SD-JWT")
@@ -150,3 +151,8 @@ func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg oid4vci.J
 	}
 	return claims, nil
 }
+
+// ErrNotThisRequest is wrapped by VerifyKeyBindingJWT, and so by Verify,
+// when the Key Binding JWT is for another audience or nonce: a
+// presentation made for another request, or replayed from one.
+var ErrNotThisRequest = errors.New("key binding JWT is for another request")

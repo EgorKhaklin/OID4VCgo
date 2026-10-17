@@ -99,6 +99,11 @@ func (v *Verifier) BuildDCAPIAuthorizationRequest(req BuildDCAPIAuthorizationReq
 	if len(req.ExpectedOrigins) == 0 {
 		return BuildDCAPIAuthorizationRequestResult{}, fmt.Errorf("verifier: build dc api authorization request: expected_origins must be non-empty")
 	}
+	for _, origin := range req.ExpectedOrigins {
+		if err := checkSerializedOrigin(origin); err != nil {
+			return BuildDCAPIAuthorizationRequestResult{}, fmt.Errorf("verifier: build dc api authorization request: expected_origins: %w", err)
+		}
+	}
 
 	nonce, err := randomToken(v.deps.Random)
 	if err != nil {

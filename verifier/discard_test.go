@@ -2,6 +2,7 @@ package verifier_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -82,6 +83,42 @@ func TestVerifyResponse_DiscardsFailedPresentations(t *testing.T) {
 		}
 		if len(result.Credentials) != tc.wantVerified || len(result.Discarded) != 1 || result.Discarded[0].CredentialQueryID != tc.wantDiscarded || result.Discarded[0].Reason == "" {
 			t.Errorf("%s: %d verified, discarded %+v", name, len(result.Credentials), result.Discarded)
+		}
+	}
+}
+
+// A presentation bound to another request's nonce or audience isn't
+// just discarded: the whole response is refused (OpenID4VP §14.1.2),
+// even when the rest would answer the query.
+func TestVerifyResponse_RefusesTheResponseForAnotherRequestsPresentation(t *testing.T) {
+	query := dcql.Query{Credentials: []dcql.CredentialQuery{{
+		ID: "pid", Format: sdjwtvc.CredentialFormat, Meta: testverify.MustSDJWTVCMeta(t, testVCT), Multiple: true,
+	}}}
+	cfg, deps := validConfig(t)
+	v, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuerKey := testP256Key(t)
+	good := newSDJWTVCPresentationWithIssuer(t, issuerKey, v.ClientID(), built.Nonce)
+	for name, bad := range map[string]string{
+		"another nonce":    newSDJWTVCPresentationWithIssuer(t, issuerKey, v.ClientID(), "another-nonce").compact,
+		"another audience": newSDJWTVCPresentationWithIssuer(t, issuerKey, "x509_hash:another-verifier", built.Nonce).compact,
+	} {
+		_, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+			Query:            query,
+			Response:         verifier.ParsedResponse{VPToken: map[string][]string{"pid": {good.compact, bad}}},
+			ExpectedNonce:    built.Nonce,
+			IssuerKeys:       fixedSDJWTVCIssuerKeyResolver{pub: &issuerKey.PublicKey, alg: jose.ES256},
+			MaxKeyBindingAge: time.Hour,
+		})
+		var verr *verifier.Error
+		if !errors.As(err, &verr) || verr.Reason() != verifier.ReasonHolderBinding {
+			t.Errorf("%s: %v, want the whole response refused as holder_binding", name, err)
 		}
 	}
 }

@@ -353,7 +353,7 @@ func verifySign1(alg Alg, pub crypto.PublicKey, raw rawSign1, externalAAD, sigPa
 	if err != nil {
 		return Headers{}, Headers{}, err
 	}
-	if protected.Alg != alg {
+	if !sameAlg(protected.Alg, alg) {
 		return Headers{}, Headers{}, fmt.Errorf("cose: protected alg %d does not match expected %d", protected.Alg, alg)
 	}
 
@@ -618,4 +618,15 @@ func X5ChainOf(protected, unprotected Headers) [][]byte {
 		return protected.X5Chain
 	}
 	return unprotected.X5Chain
+}
+
+// esp256 is COSE's fully-specified identifier for ECDSA with P-256 and
+// SHA-256 (RFC 9864), the same signature ES256 (-7) names: HAIP 1.0 §7
+// has a Verifier accept either ("-7 or -9, as applicable").
+const esp256 Alg = -9
+
+// sameAlg reports whether a header's alg names the signature algorithm
+// alg verifies with: the same identifier, or ESP256 for ES256.
+func sameAlg(header, alg Alg) bool {
+	return header == alg || (alg == ES256 && header == esp256)
 }

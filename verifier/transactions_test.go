@@ -601,3 +601,45 @@ func TestTransactions_ResponseHandlerAcceptsAWalletErrorResponse(t *testing.T) {
 		t.Errorf("after the mismatched error response: %+v, %v", view, err)
 	}
 }
+
+// A Wallet's error response to a same-device request is answered with
+// the Verifier's redirect_uri, carrying the error code, so the holder's
+// browser returns to the Verifier (HAIP 1.0 §5.1); a cross-device one
+// with {}. An unencrypted error response, which a Wallet that can't
+// encrypt may send (OpenID4VP §8.3.1), is answered 200 (§8.2).
+func TestTransactions_ErrorResponses(t *testing.T) {
+	f := newTxFixture(t, nil)
+	resp := httptest.NewServer(f.txs.ResponseHandler())
+	defer resp.Close()
+	post := func(form url.Values) (int, map[string]string) {
+		t.Helper()
+		r, err := http.PostForm(resp.URL, form)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = r.Body.Close() }()
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		return r.StatusCode, body
+	}
+
+	same := f.begin("browser-binding-A", true)
+	status, body := post(url.Values{"response": {f.errorAnswer(same, "access_denied", "the holder declined")}})
+	u, err := url.Parse(body["redirect_uri"])
+	if status != http.StatusOK || err != nil || !strings.HasPrefix(body["redirect_uri"], "https://verifier.example.com/continue?") || u.Query().Get("error") != "access_denied" {
+		t.Errorf("same-device decline: %d %v, want 200 with a redirect_uri carrying error=access_denied", status, body)
+	}
+	odd := f.begin("browser-binding-A", true)
+	if _, body := post(url.Values{"response": {f.errorAnswer(odd, "Not-A-Code", "")}}); !strings.Contains(body["redirect_uri"], "error=invalid_request") {
+		t.Errorf("an error code that isn't a plain token: %v, want error=invalid_request", body)
+	}
+
+	cross := f.begin("browser-binding-A", false)
+	if status, body := post(url.Values{"response": {f.errorAnswer(cross, "access_denied", "")}}); status != http.StatusOK || len(body) != 0 {
+		t.Errorf("cross-device decline: %d %v, want 200 {}", status, body)
+	}
+
+	if status, body := post(url.Values{"error": {"access_denied"}, "state": {"any"}}); status != http.StatusOK || len(body) != 0 {
+		t.Errorf("unencrypted error response: %d %v, want 200 {}", status, body)
+	}
+}

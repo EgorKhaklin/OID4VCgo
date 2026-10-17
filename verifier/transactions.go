@@ -398,6 +398,13 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 	result, err := t.verify(ctx, tx, responseJWE)
 	if err != nil {
 		t.recordFailure(ctx, id, err)
+		var walletErr *ResponseError
+		if errors.As(err, &walletErr) && tx.SameDevice {
+			// The holder's browser goes back to the Verifier, which shows
+			// the refusal (HAIP 1.0 §5.1: in the same-device flow,
+			// "Verifiers MUST include redirect_uri" in the response).
+			return Answered{ID: id, RedirectURI: withQuery(t.cfg.RedirectURI, "error", errorCodeOf(walletErr.Code))}, err
+		}
 		return Answered{}, err
 	}
 
@@ -721,4 +728,19 @@ func storeFault(err error) error {
 		return err
 	}
 	return &serverFault{err}
+}
+
+// errorCodeOf is a Wallet's error code fit for a redirect: a plain
+// OAuth error code token (lowercase letters and underscores) as it is,
+// anything else invalid_request.
+func errorCodeOf(code string) string {
+	if code == "" || len(code) > 64 {
+		return "invalid_request"
+	}
+	for _, r := range code {
+		if (r < 'a' || r > 'z') && r != '_' {
+			return "invalid_request"
+		}
+	}
+	return code
 }

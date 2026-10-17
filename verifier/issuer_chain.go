@@ -23,6 +23,17 @@ type MdocIssuerChainResolver interface {
 	ResolveMdocIssuerChains(ctx context.Context, x5chain [][]byte, docType string) ([][]*x509.Certificate, error)
 }
 
+// SDJWTVCIssuerChainResolver is an SDJWTVCIssuerKeyResolver that
+// verifies the issuer's x5c chain, and gives the paths it verified:
+// given one, VerifyResponse hands TrustedAuthorities and
+// IssuerAuthorized (VerifiedCredential.IssuerChain) the verified path,
+// without its trust anchor, rather than the x5c header, which can carry
+// certificates that aren't on it. X5CIssuerKeyResolver is one.
+type SDJWTVCIssuerChainResolver interface {
+	SDJWTVCIssuerKeyResolver
+	ResolveIssuerChains(ctx context.Context, header map[string]any) ([][]*x509.Certificate, error)
+}
+
 // keyBoundChain is chain if its leaf certificate's key is issuerPub,
 // the key the credential verified with, and nil otherwise: a chain
 // that didn't sign the credential says nothing about who issued it,
