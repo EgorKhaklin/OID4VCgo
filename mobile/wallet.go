@@ -57,6 +57,19 @@ type config struct {
 	// over the Digital Credentials API, as untrusted_verifier
 	// (walletflow.Config.RequireSignedDCAPIRequests).
 	RequireSignedDCAPIRequests bool `json:"require_signed_dcapi_requests,omitempty"`
+	// RequireIssuerName refuses a received SD-JWT VC whose iss its
+	// signing certificate doesn't name (walletflow.Config.RequireIssuerName).
+	RequireIssuerName bool `json:"require_issuer_name,omitempty"`
+	// IssuerMetadataRoots are PEM certificates: the trust anchors for
+	// signed Credential Issuer Metadata. With them, signed metadata is
+	// asked for and verified; RequireSignedIssuerMetadata refuses an
+	// issuer without it, RequireIssuerMetadataName one whose metadata's
+	// certificate doesn't name it, and MaxIssuerMetadataAgeSeconds
+	// metadata signed longer ago (walletflow.Config).
+	IssuerMetadataRoots         string `json:"issuer_metadata_roots,omitempty"`
+	RequireSignedIssuerMetadata bool   `json:"require_signed_issuer_metadata,omitempty"`
+	RequireIssuerMetadataName   bool   `json:"require_issuer_metadata_name,omitempty"`
+	MaxIssuerMetadataAgeSeconds int64  `json:"max_issuer_metadata_age_seconds,omitempty"`
 	// Development relaxes what production requires, for a wallet talking to services on a
 	// development machine. Never ship an app with it set. It lets issuers,
 	// Authorization Servers, Verifiers and status lists be on loopback
@@ -230,6 +243,18 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 		return walletflow.Config{}, err
 	}
 	wcfg.StatusIssuers = cfg.StatusIssuers
+	wcfg.RequireIssuerName = cfg.RequireIssuerName
+	if wcfg.IssuerMetadataRoots, err = optionalCertPool("issuer_metadata_roots", cfg.IssuerMetadataRoots); err != nil {
+		return walletflow.Config{}, err
+	}
+	if (cfg.RequireSignedIssuerMetadata || cfg.RequireIssuerMetadataName) && wcfg.IssuerMetadataRoots == nil {
+		return walletflow.Config{}, newError(CodeInvalidInput, errors.New("require_signed_issuer_metadata and require_issuer_metadata_name need issuer_metadata_roots"))
+	}
+	if cfg.MaxIssuerMetadataAgeSeconds < 0 {
+		return walletflow.Config{}, newError(CodeInvalidInput, errors.New("max_issuer_metadata_age_seconds must not be negative"))
+	}
+	wcfg.RequireSignedIssuerMetadata, wcfg.RequireIssuerMetadataName = cfg.RequireSignedIssuerMetadata, cfg.RequireIssuerMetadataName
+	wcfg.MaxIssuerMetadataAge = time.Duration(cfg.MaxIssuerMetadataAgeSeconds) * time.Second
 	verifierRoots, err := optionalCertPool("verifier_roots", cfg.VerifierRoots)
 	if err != nil {
 		return walletflow.Config{}, err

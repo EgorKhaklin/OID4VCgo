@@ -85,6 +85,21 @@ public struct WalletConfiguration: Codable, Sendable {
     /// `issuerRoots` naming it. Without it, `checkStatus` accepts only a
     /// status list the issuer signed itself.
     public var statusIssuers: [String: [String]]
+    /// Refuses a received SD-JWT VC whose `iss` its signing certificate
+    /// doesn't name. SD-JWT VC doesn't require them to correspond: set it
+    /// where `issuerRoots` certify several issuers.
+    public var requireIssuerName: Bool
+    /// PEM certificates: the trust anchors for signed Credential Issuer
+    /// Metadata. With them, signed metadata is asked for and verified.
+    public var issuerMetadataRoots: String
+    /// Refuses an issuer whose metadata isn't signed under
+    /// `issuerMetadataRoots`, before the holder signs in or enters a code.
+    public var requireSignedIssuerMetadata: Bool
+    /// Refuses signed metadata whose certificate doesn't name the issuer.
+    public var requireIssuerMetadataName: Bool
+    /// Refuses signed metadata signed longer ago than this many seconds;
+    /// 0 doesn't limit it.
+    public var maxIssuerMetadataAgeSeconds: Int
     /// The profile issuance follows.
     public var issuanceProfile: IssuanceProfile
     /// How an in-person response authenticates the mdoc. `.macPreferred`
@@ -139,7 +154,9 @@ public struct WalletConfiguration: Codable, Sendable {
                 copyPolicy: CopyPolicy = .perPresentation, issuanceProfile: IssuanceProfile = .openID4VCI,
                 tlsPins: [String: [String]] = [:], proximityDeviceAuth: ProximityDeviceAuth = .signature,
                 verifierRequireEKU: String = "", registrarRequireEKU: String = "",
-                statusIssuers: [String: [String]] = [:]) {
+                statusIssuers: [String: [String]] = [:], requireIssuerName: Bool = false,
+                issuerMetadataRoots: String = "", requireSignedIssuerMetadata: Bool = false,
+                requireIssuerMetadataName: Bool = false, maxIssuerMetadataAgeSeconds: Int = 0) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -159,6 +176,11 @@ public struct WalletConfiguration: Codable, Sendable {
         self.verifierRequireEKU = verifierRequireEKU
         self.registrarRequireEKU = registrarRequireEKU
         self.statusIssuers = statusIssuers
+        self.requireIssuerName = requireIssuerName
+        self.issuerMetadataRoots = issuerMetadataRoots
+        self.requireSignedIssuerMetadata = requireSignedIssuerMetadata
+        self.requireIssuerMetadataName = requireIssuerMetadataName
+        self.maxIssuerMetadataAgeSeconds = maxIssuerMetadataAgeSeconds
     }
 
     enum CodingKeys: String, CodingKey {
@@ -169,7 +191,9 @@ public struct WalletConfiguration: Codable, Sendable {
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy", issuanceProfile = "issuance_profile"
         case tlsPins = "tls_pins", proximityDeviceAuth = "proximity_device_auth"
         case verifierRequireEKU = "verifier_require_eku", registrarRequireEKU = "registrar_require_eku"
-        case statusIssuers = "status_issuers"
+        case statusIssuers = "status_issuers", requireIssuerName = "require_issuer_name"
+        case issuerMetadataRoots = "issuer_metadata_roots", requireSignedIssuerMetadata = "require_signed_issuer_metadata"
+        case requireIssuerMetadataName = "require_issuer_metadata_name", maxIssuerMetadataAgeSeconds = "max_issuer_metadata_age_seconds"
     }
 
     public init(from decoder: Decoder) throws {
@@ -192,7 +216,12 @@ public struct WalletConfiguration: Codable, Sendable {
                   proximityDeviceAuth: try c.decodeIfPresent(ProximityDeviceAuth.self, forKey: .proximityDeviceAuth) ?? .signature,
                   verifierRequireEKU: try c.decodeIfPresent(String.self, forKey: .verifierRequireEKU) ?? "",
                   registrarRequireEKU: try c.decodeIfPresent(String.self, forKey: .registrarRequireEKU) ?? "",
-                  statusIssuers: try c.decodeIfPresent([String: [String]].self, forKey: .statusIssuers) ?? [:])
+                  statusIssuers: try c.decodeIfPresent([String: [String]].self, forKey: .statusIssuers) ?? [:],
+                  requireIssuerName: try c.decodeIfPresent(Bool.self, forKey: .requireIssuerName) ?? false,
+                  issuerMetadataRoots: try c.decodeIfPresent(String.self, forKey: .issuerMetadataRoots) ?? "",
+                  requireSignedIssuerMetadata: try c.decodeIfPresent(Bool.self, forKey: .requireSignedIssuerMetadata) ?? false,
+                  requireIssuerMetadataName: try c.decodeIfPresent(Bool.self, forKey: .requireIssuerMetadataName) ?? false,
+                  maxIssuerMetadataAgeSeconds: try c.decodeIfPresent(Int.self, forKey: .maxIssuerMetadataAgeSeconds) ?? 0)
     }
 
     /// The scheme of `redirectURI`: the callback scheme an

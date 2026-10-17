@@ -51,6 +51,26 @@ type Config struct {
 	// StatusIssuers, keyed by iss, doesn't apply to it.
 	StatusIssuers map[string][]string
 
+	// RequireIssuerName refuses a received SD-JWT VC whose iss its
+	// signing certificate doesn't name
+	// (wallet.VerifyIssuedCredentialParams.RequireIssuerName). SD-JWT VC
+	// doesn't require them to correspond, so it's off by default: set
+	// it where IssuerRoots certify several issuers, so none can issue in
+	// another's name.
+	RequireIssuerName bool
+
+	// IssuerMetadataRoots, RequireSignedIssuerMetadata,
+	// RequireIssuerMetadataName and MaxIssuerMetadataAge are the
+	// Credential Issuer Metadata trust settings of wallet.Config: with
+	// IssuerMetadataRoots set, signed metadata (OpenID4VCI §12.2.3, HAIP
+	// 1.0 §4.1) is asked for and verified, and RequireSignedIssuerMetadata
+	// refuses an issuer without it, before the holder authenticates or
+	// enters a transaction code. See wallet.Config for each.
+	IssuerMetadataRoots         *x509.CertPool
+	RequireSignedIssuerMetadata bool
+	RequireIssuerMetadataName   bool
+	MaxIssuerMetadataAge        time.Duration
+
 	// IssuanceProfile is the profile issuance follows. The zero value,
 	// ProfileOpenID4VCI, follows the issuer's and Authorization Server's
 	// metadata; ProfileHAIP also refuses issuers outside HAIP 1.0.
@@ -306,6 +326,8 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	core, err := wallet.New(wallet.Config{
 		Assurance: cfg.assurance(), ProofSigningAlg: oid4vci.ES256, VerifierTrust: cfg.VerifierTrust,
 		RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
+		IssuerMetadataRoots:        cfg.IssuerMetadataRoots, RequireSignedIssuerMetadata: cfg.RequireSignedIssuerMetadata,
+		RequireIssuerMetadataName: cfg.RequireIssuerMetadataName, MaxIssuerMetadataAge: cfg.MaxIssuerMetadataAge,
 		Fetch: fapihttp.Config{
 			MaxResponseBytes: maxResponseBytes, RequestTimeout: httpTimeout, MaxRedirects: 2,
 			AllowLoopbackHosts: cfg.Development,
