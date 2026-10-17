@@ -580,6 +580,12 @@ func validateConfig(cfg Config) error {
 	if cfg.Issuer.IsZero() {
 		return fmt.Errorf("issuer: config: issuer is required")
 	}
+	// OpenID4VCI §12.2.1: an identifier with "no query or fragment
+	// components". Wallets build the metadata URL from it (§12.2.2),
+	// which a query would land in the middle of.
+	if u := cfg.Issuer.URL(); u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
+		return fmt.Errorf("issuer: config: issuer must have no query or fragment (OpenID4VCI §12.2.1)")
+	}
 	if err := validateAuthorizationServers(cfg.AuthorizationServers); err != nil {
 		return err
 	}
