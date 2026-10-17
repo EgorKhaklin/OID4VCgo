@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"encoding/json"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"slices"
 	"time"
 
@@ -231,7 +232,7 @@ func (iss *Issuer) resolveProofKey(ctx context.Context, header map[string]any) (
 	if iss.deps.ProofBindingKeys == nil {
 		return nil, "", fmt.Errorf("kid/x5c-based key resolution is not supported; use jwk")
 	}
-	pub, alg, err := iss.deps.ProofBindingKeys.ResolveProofBindingKey(ctx, header)
+	pub, alg, err := iss.deps.ProofBindingKeys.ResolveProofBindingKey(certchain.WithTime(ctx, iss.deps.Clock.Now()), header)
 	if err != nil {
 		return nil, "", fmt.Errorf("resolve proof binding key: %w", err)
 	}
@@ -332,7 +333,7 @@ func (iss *Issuer) verifyOneAttestation(ctx context.Context, raw string, i int, 
 	if err != nil {
 		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d is malformed", i), err)
 	}
-	pub, alg, err := iss.deps.AttestationVerifier.ResolveAttestationKey(ctx, parsed)
+	pub, alg, err := iss.deps.AttestationVerifier.ResolveAttestationKey(certchain.WithTime(ctx, iss.deps.Clock.Now()), parsed)
 	if err != nil {
 		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: resolve trust key", i), err)
 	}
