@@ -51,6 +51,13 @@ type VerifyIssuedCredentialParams struct {
 	// §6.1.1). REQUIRED.
 	IssuerRoots *x509.CertPool
 
+	// IssuerLeafPolicy, if set, decides whether a certificate under
+	// IssuerRoots may sign credentials: an extended key usage or
+	// certificate policy the ecosystem marks its issuers' certificates
+	// with, so a certificate issued under the same roots for another
+	// role, such as a Verifier's, isn't taken for an issuer's.
+	IssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+
 	// RequireIssuerName refuses an SD-JWT VC whose iss its signing
 	// certificate doesn't name, as verifier.X5CIssuerKeyResolver's
 	// RequireIssuerName does. SD-JWT VC doesn't require them to
@@ -143,7 +150,7 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 	if err := certchain.CheckNoAnchor(chain); err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
-	leaf, err := certchain.VerifyLeaf(chain, p.IssuerRoots)
+	leaf, err := certchain.VerifyLeafWithPolicyAt(chain, p.IssuerRoots, p.IssuerLeafPolicy, now)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
@@ -182,11 +189,17 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 	}
 	verified := VerifiedIssuedCredential{IssuerCertificate: leaf, Claims: payload, ValidUntil: numericDate(payload["exp"])}
 	if status, ok := payload["status"].(map[string]any); ok {
-		ref, err := statuslist.ParseStatusClaim(status)
-		if err != nil {
-			return VerifiedIssuedCredential{}, fmt.Errorf("status: %w", err)
+		// Another status mechanism may sit beside, or instead of, a
+		// status list (draft-ietf-oauth-status-list §6.1: "Other members
+		// of the status object may be defined by other specifications"):
+		// only status_list is read, and its absence isn't an error.
+		if _, hasList := status["status_list"]; hasList {
+			ref, err := statuslist.ParseStatusClaim(status)
+			if err != nil {
+				return VerifiedIssuedCredential{}, fmt.Errorf("status: %w", err)
+			}
+			verified.StatusList = &ref
 		}
-		verified.StatusList = &ref
 	}
 	return verified, nil
 }
@@ -230,7 +243,7 @@ func verifyIssuedMdoc(p VerifyIssuedCredentialParams, now time.Time) (VerifiedIs
 		return VerifiedIssuedCredential{}, fmt.Errorf("decode issuerAuth: %w", err)
 	}
 	chain := cose.X5ChainOf(protected, unprotected)
-	leaf, err := certchain.VerifyLeaf(chain, p.IssuerRoots)
+	leaf, err := certchain.VerifyLeafWithPolicyAt(chain, p.IssuerRoots, p.IssuerLeafPolicy, now)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
