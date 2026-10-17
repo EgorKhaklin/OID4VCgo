@@ -81,6 +81,11 @@ type Disclosure struct {
 	// (wallet.PreviewedCredential.AlwaysDisclosed). Show them with
 	// Claims.
 	AlwaysDisclosed []dcql.Path
+	// Retained are the claims the Verifier says it intends to keep: an
+	// mdoc's elements its query marks intent_to_retain (OpenID4VP
+	// Appendix B.2.4). Show them to the holder with Claims, as ISO/IEC
+	// 18013-5 has a wallet show the reader's intent to retain.
+	Retained []dcql.Path
 }
 
 // Presented is what Respond or Decline sent.
@@ -301,7 +306,7 @@ func (p *Presentation) Preview(ctx context.Context, sel Selection) ([]Disclosure
 	ids := p.idsByCredential()
 	out := make([]Disclosure, 0, len(preview))
 	for _, c := range preview {
-		out = append(out, Disclosure{QueryID: c.QueryID, CredentialID: ids[c.Credential.Credential], Claims: c.Claims, AlwaysDisclosed: c.AlwaysDisclosed})
+		out = append(out, Disclosure{QueryID: c.QueryID, CredentialID: ids[c.Credential.Credential], Claims: c.Claims, AlwaysDisclosed: c.AlwaysDisclosed, Retained: c.Retained})
 	}
 	return out, nil
 }

@@ -186,11 +186,13 @@ func selection(selectionJSON string) (walletflow.Selection, error) {
 // Preview returns what responding with selectionJSON — {query ID:
 // [credential ID]}, the app's choice from Queries — would disclose:
 // {"abi", "disclosures": [{"query_id", "credential_id", "claims":
-// [claim path], "always_disclosed": [claim path]}]}, a claim path being
-// a JSON array of keys (and indexes, or null for every element).
-// always_disclosed are an SD-JWT VC's claims its issuer didn't make
-// selectively disclosable, disclosed whatever the selection: show them
-// with claims. A selection that doesn't answer the request as it asks
+// [claim path], "always_disclosed": [claim path], "retained": [claim
+// path]}]}, a claim path being a JSON array of keys (and indexes, or
+// null for every element). always_disclosed are an SD-JWT VC's claims
+// its issuer didn't make selectively disclosable, disclosed whatever
+// the selection: show them with claims. retained are the claims the
+// Verifier says it will keep (an mdoc's intent_to_retain): show that
+// with them. A selection that doesn't answer the request as it asks
 // is invalid_selection.
 func (p *Presentation) Preview(selectionJSON string) (string, error) {
 	sel, err := selection(selectionJSON)
@@ -206,6 +208,7 @@ func (p *Presentation) Preview(selectionJSON string) (string, error) {
 		CredentialID string      `json:"credential_id"`
 		Claims       []dcql.Path `json:"claims"`
 		Always       []dcql.Path `json:"always_disclosed"`
+		Retained     []dcql.Path `json:"retained"`
 	}
 	out := struct {
 		result
@@ -216,7 +219,11 @@ func (p *Presentation) Preview(selectionJSON string) (string, error) {
 		if always == nil {
 			always = []dcql.Path{}
 		}
-		out.Disclosures = append(out.Disclosures, disclosure{d.QueryID, d.CredentialID, d.Claims, always})
+		retained := d.Retained
+		if retained == nil {
+			retained = []dcql.Path{}
+		}
+		out.Disclosures = append(out.Disclosures, disclosure{d.QueryID, d.CredentialID, d.Claims, always, retained})
 	}
 	return marshal(out)
 }

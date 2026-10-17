@@ -917,7 +917,10 @@ public final class Presentation: @unchecked Sendable {
         /// disclosable: the Verifier receives them whatever the
         /// selection. Show them with `claims`.
         public let alwaysDisclosed: [[PathElement]]
-        enum CodingKeys: String, CodingKey { case queryID = "query_id", credentialID = "credential_id", claims, alwaysDisclosed = "always_disclosed" }
+        /// The claims the Verifier says it will keep (an mdoc query's
+        /// `intent_to_retain`): show that with them.
+        public let retained: [[PathElement]]
+        enum CodingKeys: String, CodingKey { case queryID = "query_id", credentialID = "credential_id", claims, alwaysDisclosed = "always_disclosed", retained }
     }
 
     /// What responding or declining sent.

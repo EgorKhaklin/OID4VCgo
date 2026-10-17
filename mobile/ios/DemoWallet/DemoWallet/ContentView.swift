@@ -714,7 +714,8 @@ struct RequestView: View {
                 Section {
                     ForEach(paths.indices, id: \.self) { i in
                         DisclosedRow(path: paths[i], claims: model.candidateClaims[d.credentialID],
-                                     unregistered: Self.isUnregistered(paths[i], query: d.queryID, in: p))
+                                     unregistered: Self.isUnregistered(paths[i], query: d.queryID, in: p),
+                                     retained: d.retained.contains(paths[i]))
                     }
                 } header: {
                     ShareHeader(holder: Holder(claims: model.candidateClaims[d.credentialID]),
@@ -882,6 +883,8 @@ struct DisclosedRow: View {
     let claims: JSONValue?
     /// Beyond the Verifier's registration.
     var unregistered = false
+    /// The Verifier says it will keep it.
+    var retained = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -889,6 +892,10 @@ struct DisclosedRow: View {
             if unregistered {
                 Text("Not in its registration").font(.caption2).foregroundStyle(.orange)
                     .accessibilityIdentifier("disclosed-unregistered")
+            }
+            if retained {
+                Text("The verifier will keep this").font(.caption2).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("disclosed-retained")
             }
         }
     }

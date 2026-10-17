@@ -938,6 +938,11 @@ public class Presentation internal constructor(private val handle: MobilePresent
          * Show them with [claims].
          */
         @SerialName("always_disclosed") val alwaysDisclosed: List<List<PathElement>> = emptyList(),
+        /**
+         * The claims the Verifier says it will keep (an mdoc query's
+         * `intent_to_retain`): show that with them.
+         */
+        val retained: List<List<PathElement>> = emptyList(),
     )
 
     /** What responding or declining sent. */
