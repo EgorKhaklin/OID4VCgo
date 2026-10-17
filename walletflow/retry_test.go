@@ -352,3 +352,40 @@ func TestDeferred_KeepsAnIssuedCredentialWhenStoringFails(t *testing.T) {
 		t.Fatalf("Poll again = %v, %v", stored, err)
 	}
 }
+
+// A Verifier that receives a presentation and answers with an error
+// still has it: the copy stays presented, and the presentation is
+// answered, so a later Verifier isn't given the same copy as unseen
+// (OpenID4VP §15.5 unlinkability).
+func TestRespond_VerifierRefusalStillDelivered(t *testing.T) {
+	f, v, _ := presentationFixture(t)
+	w, ft := faultyWallet(t, f, v, nil)
+	held := receive(t, f, w, walletflowtest.SDJWTConfigurationID)
+	ctx := context.Background()
+	_, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
+	p, err := w.StartPresentation(ctx, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ft.failNext("/response", 1, `{"error":"invalid_request"}`)
+	_, err = p.Respond(ctx, walletflow.Selection{"pid": {held[0].ID}})
+	if err == nil || errors.Is(err, walletflow.ErrDeliveryUnknown) {
+		t.Fatalf("Respond, refused = %v, want the refusal", err)
+	}
+	if _, err := p.Respond(ctx, walletflow.Selection{"pid": {held[0].ID}}); !errors.Is(err, walletflow.ErrWrongStep) {
+		t.Errorf("Respond again = %v, want ErrWrongStep", err)
+	}
+	stored, err := f.store.Get(ctx, held[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	presented := 0
+	for _, c := range stored.Copies {
+		if c.Presented {
+			presented++
+		}
+	}
+	if presented != 1 {
+		t.Errorf("%d copies are presented after the Verifier received one and refused it, want 1", presented)
+	}
+}
