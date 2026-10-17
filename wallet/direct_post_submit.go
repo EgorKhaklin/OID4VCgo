@@ -3,6 +3,7 @@ package wallet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -43,6 +44,18 @@ type DirectPostRejectedError struct {
 	Description string
 }
 
+// Is reports a *DirectPostRejectedError as ErrResponseDelivered: the
+// Verifier replied, so it received the response.
+func (e *DirectPostRejectedError) Is(target error) bool { return target == ErrResponseDelivered }
+
+// ErrResponseDelivered is matched (errors.Is) by an error
+// SubmitDirectPostResponse returns after the Verifier replied, whatever
+// it replied: a refusal, a redirect, a reply from elsewhere, or one it
+// can't read. The response reached response_uri, so a caller treats it
+// as presented: sending the same credential again, or another of its
+// copies as unseen, would be linkable.
+var ErrResponseDelivered = errors.New("the response reached the Verifier")
+
 func (e *DirectPostRejectedError) Error() string {
 	return fmt.Sprintf("wallet: verifier rejected the authorization response: status %d %s %s", e.StatusCode, e.Code, e.Description)
 }
@@ -73,12 +86,26 @@ func SubmitDirectPostResponse(ctx context.Context, client fapihttp.HTTPClient, r
 		return DirectPostResult{}, fmt.Errorf("wallet: submit direct_post response: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	result, err := readDirectPostReply(resp)
+	if err != nil {
+		var rejected *DirectPostRejectedError
+		if errors.As(err, &rejected) {
+			return DirectPostResult{}, err
+		}
+		return DirectPostResult{}, fmt.Errorf("wallet: submit direct_post response: %w: %w", ErrResponseDelivered, err)
+	}
+	return result, nil
+}
+
+// readDirectPostReply reads the Verifier's reply to a direct_post
+// response (§8.2).
+func readDirectPostReply(resp *http.Response) (DirectPostResult, error) {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDirectPostReplyBytes+1))
 	if err != nil {
-		return DirectPostResult{}, fmt.Errorf("wallet: submit direct_post response: read reply: %w", err)
+		return DirectPostResult{}, fmt.Errorf("read reply: %w", err)
 	}
 	if len(body) > maxDirectPostReplyBytes {
-		return DirectPostResult{}, fmt.Errorf("wallet: submit direct_post response: reply exceeds %d bytes", maxDirectPostReplyBytes)
+		return DirectPostResult{}, fmt.Errorf("reply exceeds %d bytes", maxDirectPostReplyBytes)
 	}
 
 	isJSON := false
@@ -107,13 +134,13 @@ func SubmitDirectPostResponse(ctx context.Context, client fapihttp.HTTPClient, r
 		RedirectURI string `json:"redirect_uri"`
 	}
 	if err := json.Unmarshal(body, &reply); err != nil {
-		return DirectPostResult{}, fmt.Errorf("wallet: submit direct_post response: parse reply: %w", err)
+		return DirectPostResult{}, fmt.Errorf("parse reply: %w", err)
 	}
 	if reply.RedirectURI == "" {
 		return DirectPostResult{}, nil
 	}
 	if u, err := url.Parse(reply.RedirectURI); err != nil || u.Scheme != "https" || u.Host == "" {
-		return DirectPostResult{}, fmt.Errorf("wallet: submit direct_post response: redirect_uri %q isn't an absolute https URL", reply.RedirectURI)
+		return DirectPostResult{}, fmt.Errorf("redirect_uri %q isn't an absolute https URL", reply.RedirectURI)
 	}
 	return DirectPostResult{RedirectURI: reply.RedirectURI}, nil
 }
@@ -155,10 +182,10 @@ func doWithoutRedirects(client fapihttp.HTTPClient, req *http.Request) (*http.Re
 	switch {
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("response_uri answered with a redirect (status %d), which isn't followed", resp.StatusCode)
+		return nil, fmt.Errorf("%w: response_uri answered with a redirect (status %d), which isn't followed", ErrResponseDelivered, resp.StatusCode)
 	case resp.Request != nil && resp.Request.URL.String() != req.URL.String():
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("the reply came from %q, not response_uri", resp.Request.URL.Redacted())
+		return nil, fmt.Errorf("%w: the reply came from %q, not response_uri", ErrResponseDelivered, resp.Request.URL.Redacted())
 	}
 	return resp, nil
 }

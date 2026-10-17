@@ -314,6 +314,12 @@ func (p *Presentation) Respond(ctx context.Context, sel Selection) (Presented, e
 		p.answered = true
 		return Presented{}, fmt.Errorf("walletflow: respond: %w: %w", ErrDeliveryUnknown, err)
 	}
+	if errors.Is(err, wallet.ErrResponseDelivered) {
+		// The Verifier replied, so it has the presentation, whatever it
+		// replied: its copies stay presented, and it isn't sent again.
+		p.answered = true
+		return Presented{}, fmt.Errorf("walletflow: respond: %w", err)
+	}
 	if err != nil {
 		// Not sent: the copies weren't seen.
 		p.release(ctx, reserved)
