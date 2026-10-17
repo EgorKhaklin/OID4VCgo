@@ -415,7 +415,9 @@ func PresentSDJWTVCSelective(held HeldCredential, aud, nonce string, requiredPat
 // PresentCredentials uses so its own vp_token is §6.4.1-compliant by
 // construction, unlike calling PresentSDJWTVC directly.
 func presentSDJWTVCSelectively(held HeldCredential, cq dcql.CredentialQuery, aud, nonce string) (string, error) {
-	held.withoutKeyBinding = held.HolderKey == nil && !cq.RequiresCryptographicHolderBinding()
+	// A credential bound to a key (cnf) always carries a KB-JWT (HAIP
+	// 1.0 §6.1.1.1), so only an unbound one is presented without.
+	held.withoutKeyBinding = held.HolderKey == nil && !cq.RequiresCryptographicHolderBinding() && !sdjwtvcBound(held.Credential)
 	paths, err := selectedClaimPaths(held, cq)
 	if err != nil {
 		return "", fmt.Errorf("wallet: present sd-jwt vc: %w", err)
@@ -483,6 +485,26 @@ func sdjwtvcDisclosurePaths(paths []dcql.Path) [][]any {
 		out = append(out, components)
 	}
 	return out
+}
+
+// sdjwtvcBound reports whether credential, a "dc+sd-jwt" SD-JWT, names
+// a holder key in cnf. One that can't be read counts as bound, so it's
+// never presented without a KB-JWT on that account.
+func sdjwtvcBound(credential string) bool {
+	pres, err := sdjwtvc.Parse(credential)
+	if err != nil {
+		return true
+	}
+	_, raw, err := jose.DecodeUnverified(pres.IssuerJWT)
+	if err != nil {
+		return true
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return true
+	}
+	_, bound := payload["cnf"]
+	return bound
 }
 
 // signAndCompactSDJWTVCPresentation builds a fresh Key Binding JWT

@@ -1,6 +1,9 @@
 package wallet_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -11,6 +14,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -54,6 +58,27 @@ func TestPresentCredentials_WithoutHolderKey(t *testing.T) {
 	}
 	if _, err := present(query(""), held); !errors.Is(err, wallet.ErrNoMatchingCredential) {
 		t.Errorf("a credential without cnf under a query requiring holder binding: %v, want ErrNoMatchingCredential", err)
+	}
+
+	// One bound to a key (cnf) always carries a KB-JWT (HAIP 1.0
+	// §6.1.1.1): without its holder key it isn't presented, even where
+	// the query doesn't require holder binding.
+	holder, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holderJWK, err := jwk.Marshal(&holder.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, _, err := sdjwtvc.Issue(leafKey, jose.ES256, sdjwtvc.Claims{
+		VCT: "urn:eudi:pid:1", Exp: &exp, CNF: map[string]any{"jwk": holderJWK}, Additional: map[string]any{"given_name": sdjwtvc.SD("Alice")},
+	}, sdjwtvc.IssueOptions{IssuerCertificate: leaf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vp, err := present(query(`"require_cryptographic_holder_binding":false,`), wallet.HeldCredential{Format: sdjwtvc.CredentialFormat, Credential: bound}); err == nil {
+		t.Errorf("presented a cnf-bound credential without a KB-JWT: %v", vp)
 	}
 
 	m := heldMdoc(t, testmdoc.Issue(t))
