@@ -99,3 +99,32 @@ func TestX5CIssuerKeyResolver_IssNotBoundByDefault(t *testing.T) {
 		}
 	}
 }
+
+// ResolveIssuerChains gives the verified path from the x5c leaf to
+// Roots: a certificate the header appends that isn't on it, another
+// authority's CA, isn't in it, so IssuerAuthorized and
+// trusted_authorities checks never see it.
+func TestX5CIssuerKeyResolver_ResolveIssuerChainsIsTheVerifiedPath(t *testing.T) {
+	ca, caKey := testcert.CA(t, "issuer root")
+	unrelated, _ := testcert.CA(t, "another authority")
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	leaf := issuerLeaf(t, ca, caKey, nil, nil)
+	header := map[string]any{"x5c": []any{
+		base64.StdEncoding.EncodeToString(leaf.Raw), base64.StdEncoding.EncodeToString(unrelated.Raw),
+	}}
+	chains, err := verifier.X5CIssuerKeyResolver{Roots: roots}.ResolveIssuerChains(context.Background(), header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, chain := range chains {
+		for _, cert := range chain {
+			if cert.Equal(unrelated) {
+				t.Errorf("a verified path includes the unrelated CA the header appended")
+			}
+		}
+		if len(chain) != 2 || !chain[0].Equal(leaf) || !chain[1].Equal(ca) {
+			t.Errorf("path = %d certificates, want leaf → root", len(chain))
+		}
+	}
+}

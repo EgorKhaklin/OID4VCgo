@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"time"
 
@@ -314,6 +315,11 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	if req.ExpectedNonce == "" {
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: expected_nonce is required")
 	}
+	if req.Origin != "" {
+		if err := checkSerializedOrigin(req.Origin); err != nil {
+			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
+		}
+	}
 	if req.Origin != "" && !slices.Contains(req.ExpectedOrigins, req.Origin) {
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: origin %q isn't one of the request's expected_origins %v", req.Origin, req.ExpectedOrigins)
 	}
@@ -429,6 +435,12 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 	if len(presentations) > 1 && !cq.Multiple {
 		return nil, nil, newError(ReasonMalformed, "multiple presentations were returned but multiple is not requested", nil)
 	}
+	if len(presentations) > MaxPresentationsPerQuery {
+		// Each is a chain and signatures to verify: anyone holding the
+		// public Request Object could otherwise make one POST cost
+		// hundreds of them.
+		return nil, nil, newError(ReasonMalformed, fmt.Sprintf("%d presentations for one credential query, over the %d accepted", len(presentations), MaxPresentationsPerQuery), nil)
+	}
 	var discarded []DiscardedPresentation
 	var firstErr error
 
@@ -448,6 +460,13 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 		}
 		if err == nil {
 			err = authorizeIssuer(ctx, req, cq, claims, chain)
+		}
+		if errors.Is(err, errNotThisRequest) {
+			// A presentation made for another request, or replayed: the
+			// whole response is refused, not just it (§14.1.2: "If any
+			// Verifiable Presentation in the response does not contain
+			// the correct nonce value, the response MUST be rejected").
+			return nil, nil, err
 		}
 		var failed *Error
 		if errors.As(err, &failed) {
@@ -530,6 +549,9 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		if errors.Is(err, sdjwtvc.ErrKeyBinding) {
 			reason = ReasonHolderBinding
 		}
+		if errors.Is(err, sdjwtvc.ErrNotThisRequest) {
+			return nil, nil, newError(reason, "verify", fmt.Errorf("%w: %w", errNotThisRequest, err))
+		}
 		return nil, nil, newError(reason, "verify", err)
 	}
 
@@ -537,10 +559,21 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		return nil, nil, newError(ReasonNotAnswered, "satisfied by sdjwtvc claims", err)
 	}
 
-	// The header's chain only where it's the key that verified the
-	// credential: a header can carry anyone's public chain.
-	headerChain, _ := certchain.X5CDERsFromHeader(header)
-	chain := keyBoundChain(headerChain, issuerPub)
+	// The resolver's verified path, where it gives one: the header's x5c
+	// can carry certificates that aren't on it. Otherwise the header's
+	// chain, and only where it's the key that verified the credential: a
+	// header can carry anyone's public chain.
+	var chain [][]byte
+	if chainResolver, ok := req.IssuerKeys.(SDJWTVCIssuerChainResolver); ok {
+		chains, err := chainResolver.ResolveIssuerChains(ctx, header)
+		if err != nil {
+			return nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer chain", err)
+		}
+		chain = verifiedPath(chains, issuerPub)
+	} else {
+		headerChain, _ := certchain.X5CDERsFromHeader(header)
+		chain = keyBoundChain(headerChain, issuerPub)
+	}
 	if len(cq.TrustedAuthorities) > 0 {
 		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, chain); err != nil {
 			return nil, nil, newError(ReasonUntrustedIssuer, errCategoryTrustedAuthorities, err)
@@ -622,7 +655,10 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 		return nil, nil, nil, newError(ReasonHolderBinding, "device key", err)
 	}
 	if err := mdoc.VerifyDeviceSignature(doc.DeviceSigned, verified.DeviceKey, deviceAlg, sessionTranscriptBytes, doc.DocType); err != nil {
-		return nil, nil, nil, newError(ReasonHolderBinding, "verify device signature", err)
+		// The device signature is over a SessionTranscript carrying this
+		// request's nonce and client_id (or origin): one that doesn't
+		// verify was made for another request, or was tampered with.
+		return nil, nil, nil, newError(ReasonHolderBinding, "verify device signature", fmt.Errorf("%w: %w", errNotThisRequest, err))
 	}
 
 	if err := mdoc.CheckKeyAuthorizations(doc.DeviceSigned.NameSpaces, verified.KeyAuthorizations); err != nil {
@@ -721,4 +757,30 @@ func sdjwtvcAlgForKey(pub crypto.PublicKey) (jose.Alg, error) {
 	default:
 		return "", fmt.Errorf("unsupported public key type %T", pub)
 	}
+}
+
+// errNotThisRequest marks a presentation that isn't bound to this
+// request's nonce and audience, which refuses the whole response
+// (§14.1.2), not just it.
+var errNotThisRequest = errors.New("a presentation isn't bound to this request")
+
+// MaxPresentationsPerQuery bounds how many presentations a response may
+// carry for one credential query, under multiple.
+const MaxPresentationsPerQuery = 32
+
+// checkSerializedOrigin checks origin is a serialized web origin
+// (scheme, host and optional port, no trailing slash), as the browser
+// gives it and as the Wallet binds a DC API response to (OpenID4VP 1.0
+// Appendix A.2, A.4): anything else would never match it.
+func checkSerializedOrigin(origin string) error {
+	u, err := url.Parse(origin)
+	switch {
+	case err != nil:
+		return fmt.Errorf("origin %q isn't a URL: %w", origin, err)
+	case u.Scheme == "" || u.Host == "":
+		return fmt.Errorf("origin %q needs a scheme and a host", origin)
+	case u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || u.Opaque != "" || u.ForceQuery:
+		return fmt.Errorf("origin %q must be a scheme, host and optional port only (no trailing slash)", origin)
+	}
+	return nil
 }
