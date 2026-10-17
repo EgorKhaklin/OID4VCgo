@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
@@ -47,9 +48,22 @@ func TestRefuse_SendsTheErrorResponse(t *testing.T) {
 		t.Errorf("the Verifier got %v", got)
 	}
 
-	// With nowhere to send it, the refusal stays local, and says so.
-	err = w.refuse(context.Background(), &wallet.RequestRejectedError{Code: "invalid_request"})
-	if !errors.As(err, &refused) || refused.sendErr == nil {
-		t.Errorf("refuse without a response_uri = %v", err)
+	if msg := err.Error(); !strings.Contains(msg, "invalid_transaction_data: unsupported") || strings.Contains(msg, "wasn't told") {
+		t.Errorf("Error() = %q", msg)
+	}
+
+	// With nowhere to send it, a key it can't encrypt to, or a
+	// response_uri that can't be reached, the refusal stays local, and
+	// says so.
+	ts.Close()
+	for name, r := range map[string]*wallet.RequestRejectedError{
+		"no response_uri": {Code: "invalid_request"},
+		"bad enc":         {Code: "invalid_request", ResponseURI: ts.URL, ResponseEncryptionKey: &key.PublicKey, ResponseEncryptionEnc: "none"},
+		"unreachable":     {Code: "invalid_request", ResponseURI: ts.URL, ResponseEncryptionKey: &key.PublicKey, ResponseEncryptionEnc: "A128GCM"},
+	} {
+		err := w.refuse(context.Background(), r)
+		if !errors.As(err, &refused) || refused.sendErr == nil || !errors.Is(err, ErrRequestRefused) || !errors.Is(err, refused.sendErr) || !strings.Contains(err.Error(), "wasn't told") {
+			t.Errorf("%s: refuse = %v", name, err)
+		}
 	}
 }
