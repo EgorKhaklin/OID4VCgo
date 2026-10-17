@@ -332,12 +332,14 @@ func (w *Wallet) planGrant(ctx context.Context, g RefreshGrant, configID string)
 	if err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("walletflow: issuer metadata: %w", err)
 	}
-	offer := oid4vci.CredentialOffer{
-		CredentialIssuer: g.CredentialIssuer, CredentialConfigurationIDs: []string{configID},
-		Grants: &oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{AuthorizationServer: g.AuthorizationServer}},
-	}
-	if _, err := wallet.PlanAuthorization(offer, metadata); err != nil {
+	// The grant exists already: what matters is that the issuer still
+	// names its Authorization Server and publishes its configuration,
+	// not whether that has a scope, which a pre-authorized code's needn't.
+	if _, err := wallet.AuthorizationServerFor(g.CredentialIssuer, metadata, g.AuthorizationServer); err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("walletflow: refresh credential: the issuer no longer names its authorization server: %w: %w", ErrReissueRequired, err)
+	}
+	if _, ok := metadata.CredentialConfigurationsSupported[configID]; !ok {
+		return oid4vci.Metadata{}, fmt.Errorf("walletflow: refresh credential: the issuer no longer publishes credential %q: %w", configID, ErrReissueRequired)
 	}
 	return metadata, nil
 }

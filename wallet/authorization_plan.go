@@ -208,3 +208,15 @@ func (m AuthorizationServerMetadata) TokenClientEndpoints(opts ...fapi.URLOption
 	}
 	return issuer, endpoints, nil
 }
+
+// AuthorizationServerFor is the Authorization Server a grant from
+// issuer naming named ("" for none) uses, as PlanAuthorization selects
+// it from metadata, the issuer's own (OID4VCI 1.0 §12.2.4, §4.1.1): for
+// a grant that already exists, such as a refresh token's, whose
+// configuration needn't have a scope.
+func AuthorizationServerFor(issuer string, metadata oid4vci.Metadata, named string) (string, error) {
+	if metadata.CredentialIssuer.String() != issuer {
+		return "", fmt.Errorf("wallet: metadata is for issuer %q, not %q", metadata.CredentialIssuer.String(), issuer)
+	}
+	return selectAuthorizationServer(issuer, named, metadata.AuthorizationServers)
+}
