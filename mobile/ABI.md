@@ -195,7 +195,7 @@ library's an `IOException`.
 {"client_id": "…", "redirect_uri": "…",
  "issuer_roots": "<PEM>", "verifier_roots": "<PEM>", "registrar_roots": "<PEM>",
  "mdoc_reader_roots": "<PEM>", "mdoc_reader_require_eku": false, "require_trusted_mdoc_reader": false,
- "verifier_require_eku": "", "registrar_require_eku": "",
+ "verifier_require_eku": "", "registrar_require_eku": "", "issuer_require_eku": "",
  "require_signed_dcapi_requests": false,
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci",
@@ -225,18 +225,20 @@ Verifiers the wallet checks (OpenID4VP `verifier_info`, OID4VCgo's
 `registration` format); without them, registrations are ignored.
 `mdoc_reader_roots`, if set, are the mdoc readers recognized when one
 signs an `org-iso-mdoc` request (see MdocPresentation); without them,
-every such request is shown by its origin. `verifier_require_eku` and
-`registrar_require_eku`, dotted object identifiers, recognize only
-certificates under `verifier_roots` and `registrar_roots` whose
-extended key usage extension lists that OID: the one an ecosystem marks
-its Verifiers' or registrars' certificates with (OpenID4VP and HAIP
-define none). Outside `development`, each is required when its roots
-share a certificate with another role's (`issuer_roots`,
-`verifier_roots`, `registrar_roots`, or `mdoc_reader_roots` without
-`mdoc_reader_require_eku`): otherwise an issuer's signing certificate
-would be taken for a trusted Verifier, or a Verifier's second
-certificate for a registrar, and `NewWallet` fails with
-`invalid_input`. Both were added within ABI version 12.
+every such request is shown by its origin. `verifier_require_eku`,
+`registrar_require_eku` and `issuer_require_eku`, dotted object
+identifiers, recognize only certificates under `verifier_roots`,
+`registrar_roots` and `issuer_roots` whose extended key usage extension
+lists that OID: the one an ecosystem marks its Verifiers', registrars'
+or issuers' certificates with (OpenID4VP and HAIP define none). Outside
+`development`, each, and `mdoc_reader_require_eku` for
+`mdoc_reader_roots`, is required when its roots share a certificate
+with another role's: otherwise an issuer's signing certificate would be
+taken for a trusted Verifier, a Verifier's for an issuer, or a
+Verifier's second certificate for a registrar, and `NewWallet` fails
+with `invalid_input`. All three were added within ABI version 12; `issuer_require_eku`
+came later, when the check began to apply to `issuer_roots` and
+`mdoc_reader_roots` too.
 `mdoc_reader_require_eku`
 recognizes only reader certificates with the ISO/IEC 18013-5 reader
 authentication extended key usage (1.0.18013.5.1.6), and
