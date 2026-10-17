@@ -2,6 +2,7 @@ package issuer
 
 import (
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"slices"
 
 	"github.com/idfoundry/oid4vcgo"
@@ -151,6 +152,18 @@ func (c CredentialConfiguration) validateBindingAndProofTypes() error {
 	for id, p := range c.ProofTypesSupported {
 		if err := p.Validate(); err != nil {
 			return fmt.Errorf("proof_types_supported[%q]: %w", id, err)
+		}
+		// Advertised is what's verified (§12.2.4): an algorithm this
+		// issuer can't verify would only ever fail as invalid_proof. The
+		// jwt and attestation proof types are signed with JOSE
+		// algorithms; another type names its own.
+		if id != oid4vci.ProofTypeJWT && id != oid4vci.ProofTypeAttestation {
+			continue
+		}
+		for _, alg := range p.ProofSigningAlgValuesSupported {
+			if !jose.IsSupported(jose.Alg(alg)) {
+				return fmt.Errorf("proof_types_supported[%q]: proof_signing_alg_values_supported lists %q, which this issuer can't verify", id, alg)
+			}
 		}
 	}
 	return nil

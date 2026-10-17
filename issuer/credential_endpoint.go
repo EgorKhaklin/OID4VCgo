@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"slices"
 
 	"github.com/idfoundry/oid4vcgo"
@@ -365,7 +366,7 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	}
 
 	var notificationID string
-	if iss.deps.Notifications != nil {
+	if !iss.cfg.Endpoints.Notification.IsZero() {
 		notificationID, err = iss.IssueNotificationID(ctx, auth)
 		if err != nil {
 			return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: %w", err)
@@ -471,7 +472,7 @@ func authorizeCredentialConfigurationID(auth AuthorizedRequest, id string, cc Cr
 	if cc.Scope != "" && slices.Contains(auth.Scopes, cc.Scope) {
 		return nil
 	}
-	return newError(ErrorInvalidCredentialRequest, 400,
+	return newError(ErrorInsufficientScope, 403,
 		"access token does not authorize this credential_configuration_id (by its scope or an authorization_details entry)", nil)
 }
 
@@ -516,14 +517,35 @@ func singleProofType(proofs map[string][]string, cc CredentialConfiguration) (pr
 func (iss *Issuer) resolveProofKeys(
 	ctx context.Context, auth AuthorizedRequest, proofType string, values []string, ptc oid4vci.ProofTypeConfiguration,
 ) ([]resolvedKey, error) {
+	var keys []resolvedKey
+	var err error
 	switch proofType {
 	case oid4vci.ProofTypeJWT:
-		return iss.resolveJWTProofKeys(ctx, auth, values, ptc)
+		keys, err = iss.resolveJWTProofKeys(ctx, auth, values, ptc)
 	case oid4vci.ProofTypeAttestation:
-		return iss.resolveAttestationProofKeys(ctx, values, ptc)
+		keys, err = iss.resolveAttestationProofKeys(ctx, values, ptc)
 	default:
 		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof type %q is not supported", proofType), nil)
 	}
+	if err != nil {
+		return nil, err
+	}
+	return keys, checkDistinctKeys(keys)
+}
+
+// checkDistinctKeys refuses a batch that proves one key twice: "Each key
+// provided by the Wallet is used to bind to, at most, one Credential"
+// (OpenID4VCI §8.3), or the batch's copies, meant to be unlinkable,
+// would share a holder key.
+func checkDistinctKeys(keys []resolvedKey) error {
+	for i := range keys {
+		for j := range i {
+			if certchain.SameKey(keys[i].Public, keys[j].Public) {
+				return newError(ErrorInvalidProof, 400, fmt.Sprintf("proofs %d and %d are for the same key: each key binds at most one credential", j, i), nil)
+			}
+		}
+	}
+	return nil
 }
 
 // issueBatch issues one Credential per key, each from its own copy of

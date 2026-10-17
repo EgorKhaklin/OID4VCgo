@@ -125,7 +125,7 @@ func (iss *Issuer) issueDeferredCredential(ctx context.Context, transactionID st
 		return record.ClientID, err
 	}
 	var notificationID string
-	if iss.deps.Notifications != nil {
+	if !iss.cfg.Endpoints.Notification.IsZero() {
 		if notificationID, err = iss.IssueNotificationID(ctx, deferredClient(record)); err != nil {
 			return record.ClientID, fmt.Errorf("issuer: issue deferred credential: %w", err)
 		}
