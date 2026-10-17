@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/idfoundry/oid4vcgo/statuslist"
+	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
 func TestJSONClaims(t *testing.T) {
@@ -46,6 +49,35 @@ func TestRecordWithoutClaims(t *testing.T) {
 	}
 	if _, err := (credentialRecord{Claims: json.RawMessage(`[1]`)}).stored(); err == nil {
 		t.Error("a record whose claims aren't an object loaded")
+	}
+}
+
+// TestRecordCopyStatus: each copy's own status list entry and expiry
+// survive a record round trip.
+func TestRecordCopyStatus(t *testing.T) {
+	until := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
+	c := walletflow.StoredCredential{ID: "a", Format: "dc+sd-jwt", Copies: []walletflow.CredentialCopy{
+		{Credential: "x", HolderKeyID: "k1", StatusList: &statuslist.StatusListRef{Idx: 7, URI: "https://status.example/1"}, ValidUntil: until},
+		{Credential: "y", HolderKeyID: "k2"},
+	}}
+	r, err := recordOf(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back credentialRecord
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	got, err := back.stored()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Copies, c.Copies) {
+		t.Errorf("copies = %+v\nwant     %+v", got.Copies, c.Copies)
 	}
 }
 

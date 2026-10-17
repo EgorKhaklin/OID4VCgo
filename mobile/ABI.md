@@ -134,8 +134,9 @@ A record is JSON the app needn't read: `id`, `credential_issuer`,
 `configuration_id`, `format`, `vct`, `doctype`, `credential`,
 `holder_key_id`, `received_at`, `claims`, `display`, `valid_until`,
 `status_list`, `status_list_cwt`, `status` and `grant_id`, and `copies`
-(each copy's `credential`, `holder_key_id`, `presented` and
-`shown_to`). A record written before a field was kept lacks it.
+(each copy's `credential`, `holder_key_id`, `presented`, `shown_to`,
+and its own `status_list` and `valid_until`). A record written before a
+field was kept lacks it.
 
 The store also keeps each **pending deferred credential**, under the ID
 `deferred-<id>`, as a record with `"kind": "deferred"`. The record holds

@@ -1087,9 +1087,14 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		}
 		keyID := key.ID()
 		unbound = slices.DeleteFunc(unbound, func(k Key) bool { return k.ID() == keyID })
-		copies = append(copies, CredentialCopy{Credential: ic.Credential, HolderKeyID: keyID})
+		copies = append(copies, CredentialCopy{Credential: ic.Credential, HolderKeyID: keyID, StatusList: verified.StatusList, ValidUntil: verified.ValidUntil})
 		if i == 0 {
 			first = verified
+		} else if (verified.StatusList == nil) != (first.StatusList == nil) {
+			// A copy without a status the others have couldn't be
+			// revoked with them.
+			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential's copies differ")
+			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: copy %d's status differs from copy 0's", c.configID, errInvalidCredential, i)
 		} else if !sameHolderClaims(first.Claims, verified.Claims) {
 			// The holder sees copy 0's claims, and DCQL chooses per copy:
 			// copies that differ would present what the holder didn't see.
@@ -1109,7 +1114,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		Format: conf.Format, VCT: conf.VCT, DocType: conf.DocType,
 		Credential: copies[0].Credential, HolderKeyID: copies[0].HolderKeyID, Copies: copies,
 		ReceivedAt: now.UTC(), Claims: first.Claims,
-		Display: displayFor(c.metadata, c.configID, w.cfg.Locales), ValidUntil: first.ValidUntil,
+		Display: displayFor(c.metadata, c.configID, w.cfg.Locales), ValidUntil: earliestExpiry(copies),
 		StatusList: first.StatusList, StatusListCWT: first.StatusListCWT, GrantID: c.grantID,
 	}
 	if err := w.store(ctx, stored, c); err != nil {
@@ -1233,4 +1238,16 @@ func sameHolderClaims(a, b map[string]any) bool {
 		return out
 	}
 	return reflect.DeepEqual(strip(a), strip(b))
+}
+
+// earliestExpiry is when the first of copies expires, zero when none
+// says.
+func earliestExpiry(copies []CredentialCopy) time.Time {
+	var earliest time.Time
+	for _, cp := range copies {
+		if !cp.ValidUntil.IsZero() && (earliest.IsZero() || cp.ValidUntil.Before(earliest)) {
+			earliest = cp.ValidUntil
+		}
+	}
+	return earliest
 }

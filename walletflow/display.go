@@ -9,7 +9,9 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"math"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -139,10 +141,8 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	if err != nil {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential: %w", err)
 	}
-	if c.StatusList == nil {
-		return c, nil
-	}
-	if !c.ValidUntil.IsZero() && !w.deps.Clock().Before(c.ValidUntil) {
+	live := liveStatusRefs(c, w.deps.Clock())
+	if len(live) == 0 {
 		return c, nil
 	}
 	checker := statuslist.Checker{
@@ -160,7 +160,7 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 		iss, _ := c.Claims["iss"].(string)
 		checker.Options = statusOptionsFor(checker.Options, iss, signerKey(c.Credential), w.cfg.StatusIssuers[iss])
 	}
-	status, _, err := checker.Check(ctx, *c.StatusList, c.StatusListCWT)
+	status, err := checkCopies(ctx, checker, live, c.StatusListCWT)
 	if err != nil {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
 	}
@@ -173,7 +173,7 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	if err != nil {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential: %w", err)
 	}
-	if cur.StatusList == nil || *cur.StatusList != *c.StatusList {
+	if !slices.Equal(statusRefs(cur), statusRefs(c)) {
 		return cur, nil
 	}
 	cur.Status = CredentialStatus{Value: statusValue(status), CheckedAt: w.deps.Clock().UTC()}
@@ -181,6 +181,91 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 		return StoredCredential{}, fmt.Errorf("walletflow: store credential %q's status: %w", id, err)
 	}
 	return cur, nil
+}
+
+// statusRef is the status list entry copy cp of c references, nil for
+// none: its own, or for a copy stored before copies kept theirs, c's.
+func statusRef(c StoredCredential, cp CredentialCopy) *statuslist.StatusListRef {
+	if cp.StatusList != nil {
+		return cp.StatusList
+	}
+	return c.StatusList
+}
+
+// statusRefs are the status list entries c's copies reference.
+func statusRefs(c StoredCredential) []statuslist.StatusListRef {
+	var refs []statuslist.StatusListRef
+	for _, cp := range c.AllCopies() {
+		if ref := statusRef(c, cp); ref != nil {
+			refs = append(refs, *ref)
+		}
+	}
+	return refs
+}
+
+// liveStatusRefs are the distinct status list entries of c's copies
+// not yet expired at now: an expired copy's status no longer matters.
+func liveStatusRefs(c StoredCredential, now time.Time) []statuslist.StatusListRef {
+	var refs []statuslist.StatusListRef
+	for _, cp := range c.AllCopies() {
+		until := cp.ValidUntil
+		if until.IsZero() {
+			until = c.ValidUntil
+		}
+		ref := statusRef(c, cp)
+		if ref == nil || (!until.IsZero() && !now.Before(until)) || slices.Contains(refs, *ref) {
+			continue
+		}
+		refs = append(refs, *ref)
+	}
+	return refs
+}
+
+// checkCopies is the status of the copies whose entries are refs: the
+// most severe among them, as the holder would want to know a copy was
+// revoked even while the others aren't. A list several copies share is
+// fetched and verified once.
+func checkCopies(ctx context.Context, checker statuslist.Checker, refs []statuslist.StatusListRef, cwt bool) (statuslist.StatusType, error) {
+	worst := statuslist.StatusValid
+	lists := map[string]statuslist.StatusList{}
+	for _, ref := range refs {
+		var status statuslist.StatusType
+		if list, ok := lists[ref.URI]; ok {
+			if ref.Idx > math.MaxInt {
+				return 0, fmt.Errorf("statuslist: index %d is out of bounds", ref.Idx)
+			}
+			v, err := list.Status(int(ref.Idx))
+			if err != nil {
+				return 0, err
+			}
+			status = statuslist.StatusType(v)
+		} else {
+			s, claims, err := checker.Check(ctx, ref, cwt)
+			if err != nil {
+				return 0, err
+			}
+			status, lists[ref.URI] = s, claims.StatusList
+		}
+		if severity(status) > severity(worst) {
+			worst = status
+		}
+	}
+	return worst, nil
+}
+
+// severity orders statuses by how much they matter to the holder:
+// revoked, then suspended, then an application-specific value, then
+// valid.
+func severity(s statuslist.StatusType) int {
+	switch s {
+	case statuslist.StatusValid:
+		return 0
+	case statuslist.StatusInvalid:
+		return 3
+	case statuslist.StatusSuspended:
+		return 2
+	}
+	return 1
 }
 
 func statusValue(s statuslist.StatusType) string {

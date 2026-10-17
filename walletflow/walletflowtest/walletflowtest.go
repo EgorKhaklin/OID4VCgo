@@ -632,6 +632,15 @@ func (e *Env) Revoke() {
 	e.publisher.Invalidate()
 }
 
+// RevokeEntry revokes the one credential whose status list entry is
+// idx, as the issuer revoking a single copy of a batch would.
+func (e *Env) RevokeEntry(idx uint64) {
+	e.mu.Lock()
+	e.revoked[idx] = uint8(statuslist.StatusInvalid)
+	e.mu.Unlock()
+	e.publisher.Invalidate()
+}
+
 // Notifications returns the events wallets have reported, in order.
 func (e *Env) Notifications() []oid4vci.NotificationEvent {
 	e.mu.Lock()
