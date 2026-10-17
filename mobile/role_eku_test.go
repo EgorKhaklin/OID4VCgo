@@ -66,8 +66,8 @@ func TestRequireEKU(t *testing.T) {
 	}
 }
 
-// Outside development, verifier or registrar roots sharing an anchor
-// with another role's need that role's EKU.
+// Outside development, any role's roots sharing an anchor with another
+// role's need that role's EKU, the issuer's and mdoc reader's included.
 func TestCheckRoleRoots(t *testing.T) {
 	shared := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ekuCert(t, nil, nil).Raw}))
 	other := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ekuCert(t, nil, nil).Raw}))
@@ -79,6 +79,10 @@ func TestCheckRoleRoots(t *testing.T) {
 		"verifier shares with issuer":    {cfg: config{IssuerRoots: shared, VerifierRoots: shared}, refused: "verifier_require_eku"},
 		"registrar shares with verifier": {cfg: config{VerifierRoots: shared, VerifierRequireEKU: "1.2.3", RegistrarRoots: shared}, refused: "registrar_require_eku"},
 		"both have EKUs":                 {cfg: config{VerifierRoots: shared, VerifierRequireEKU: "1.2.3", RegistrarRoots: shared, RegistrarRequireEKU: "1.2.4"}},
+		"issuer shares with verifier":    {cfg: config{IssuerRoots: shared, VerifierRoots: shared, VerifierRequireEKU: "1.2.3"}, refused: "issuer_require_eku"},
+		"issuer and verifier have EKUs":  {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.5", VerifierRoots: shared, VerifierRequireEKU: "1.2.3"}},
+		"mdoc reader shares with issuer": {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.5", MdocReaderRoots: shared}, refused: "mdoc_reader_require_eku"},
+		"mdoc reader has its EKU":        {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.5", MdocReaderRoots: shared, MdocReaderRequireEKU: true}},
 		"development":                    {cfg: config{IssuerRoots: shared, VerifierRoots: shared, Development: true}},
 	} {
 		err := checkRoleRoots(tc.cfg)

@@ -36,6 +36,11 @@ type Config struct {
 	// credential must be signed by a certificate chaining to one of
 	// them, or it's refused. REQUIRED for StartIssuance.
 	IssuerRoots *x509.CertPool
+	// IssuerLeafPolicy, if set, decides whether a certificate under
+	// IssuerRoots may sign credentials
+	// (wallet.VerifyIssuedCredentialParams.IssuerLeafPolicy): set it
+	// where IssuerRoots also anchor another role, such as Verifiers.
+	IssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	// StatusIssuers are the Status Issuers that may sign a credential
 	// issuer's status lists on its behalf (draft-ietf-oauth-status-list):

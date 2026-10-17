@@ -43,15 +43,17 @@ type config struct {
 	// RequireTrustedMdocReader refuses a request no recognized reader
 	// signed (walletflow.Config.RequireTrustedMdocReader).
 	MdocReaderRequireEKU bool `json:"mdoc_reader_require_eku,omitempty"`
-	// VerifierRequireEKU and RegistrarRequireEKU, dotted object
-	// identifiers, recognize only certificates under VerifierRoots and
-	// RegistrarRoots with that extended key usage, the one an ecosystem
-	// marks its verifiers' or registrars' certificates with. Outside
-	// development, each is required when its roots share a trust anchor
-	// with another role's, which would otherwise take that role's
-	// certificates for its own.
+	// VerifierRequireEKU, RegistrarRequireEKU and IssuerRequireEKU,
+	// dotted object identifiers, recognize only certificates under
+	// VerifierRoots, RegistrarRoots and IssuerRoots with that extended
+	// key usage, the one an ecosystem marks its verifiers', registrars'
+	// or issuers' certificates with. Outside development, each is
+	// required (MdocReaderRequireEKU for MdocReaderRoots) when its roots
+	// share a trust anchor with another role's, which would otherwise
+	// take that role's certificates for its own.
 	VerifierRequireEKU       string `json:"verifier_require_eku,omitempty"`
 	RegistrarRequireEKU      string `json:"registrar_require_eku,omitempty"`
+	IssuerRequireEKU         string `json:"issuer_require_eku,omitempty"`
 	RequireTrustedMdocReader bool   `json:"require_trusted_mdoc_reader,omitempty"`
 	// RequireSignedDCAPIRequests refuses an unsigned OpenID4VP request
 	// over the Digital Credentials API, as untrusted_verifier
@@ -268,6 +270,9 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 	}
 	if verifierRoots != nil {
 		wcfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: verifierRoots, LeafPolicy: verifierPolicy}
+	}
+	if wcfg.IssuerLeafPolicy, err = roleEKU("issuer_require_eku", cfg.IssuerRequireEKU); err != nil {
+		return walletflow.Config{}, err
 	}
 	if wcfg.RegistrarRoots, err = optionalCertPool("registrar_roots", cfg.RegistrarRoots); err != nil {
 		return walletflow.Config{}, err

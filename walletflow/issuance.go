@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"maps"
 	"net/url"
 	"reflect"
@@ -173,17 +175,7 @@ func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance,
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: issuer metadata: %w", err)
 	}
-	for _, id := range offer.CredentialConfigurationIDs {
-		conf, ok := metadata.CredentialConfigurationsSupported[id]
-		if !ok {
-			// §4.1.1: each identifies one of credential_configurations_supported.
-			return nil, fmt.Errorf("walletflow: credential %q isn't in the issuer's metadata", id)
-		}
-		if err := checkBindable(conf); err != nil {
-			return nil, fmt.Errorf("walletflow: credential %q: %w", id, err)
-		}
-	}
-	if err := w.checkProfile(metadata, offer.CredentialConfigurationIDs); err != nil {
+	if err := w.checkOffered(metadata, offer.CredentialConfigurationIDs); err != nil {
 		return nil, err
 	}
 	s := &Issuance{w: w, offer: offer, metadata: metadata}
@@ -282,6 +274,47 @@ func (s *Issuance) planGrant(ctx context.Context, grant Grant) error {
 // could present it, and an mdoc's MSO always names a device key, so one
 // the wallet didn't prove would be someone else's — or one bound by a
 // method the wallet lacks.
+// checkOffered checks every configuration ids names is one the issuer
+// publishes, that this wallet can bind to a key and verify when it
+// arrives, and that the issuer follows the wallet's profile: before the
+// holder authenticates or enters a code, not once the credential is
+// issued.
+func (w *Wallet) checkOffered(metadata oid4vci.Metadata, ids []string) error {
+	for _, id := range ids {
+		conf, ok := metadata.CredentialConfigurationsSupported[id]
+		if !ok {
+			// §4.1.1: each identifies one of credential_configurations_supported.
+			return fmt.Errorf("walletflow: credential %q isn't in the issuer's metadata", id)
+		}
+		if err := checkBindable(conf); err != nil {
+			return fmt.Errorf("walletflow: credential %q: %w", id, err)
+		}
+		if err := checkReceivable(conf); err != nil {
+			return fmt.Errorf("walletflow: credential %q: %w", id, err)
+		}
+	}
+	return w.checkProfile(metadata, ids)
+}
+
+// checkReceivable refuses a configuration whose credential the wallet
+// couldn't verify when it arrives: a format it doesn't support, or one
+// with no vct or doctype to check the credential against.
+func checkReceivable(conf oid4vci.CredentialConfigurationMetadata) error {
+	switch conf.Format {
+	case sdjwtvc.CredentialFormat:
+		if conf.VCT == "" {
+			return fmt.Errorf("%w: it names no vct", ErrFormatUnsupported)
+		}
+	case mdoc.CredentialFormat:
+		if conf.DocType == "" {
+			return fmt.Errorf("%w: it names no doctype", ErrFormatUnsupported)
+		}
+	default:
+		return fmt.Errorf("%w: format %q", ErrFormatUnsupported, conf.Format)
+	}
+	return nil
+}
+
 func checkBindable(conf oid4vci.CredentialConfigurationMetadata) error {
 	if len(conf.CryptographicBindingMethodsSupported) == 0 {
 		return fmt.Errorf("%w: it's bound to no key", ErrProofUnsupported)
@@ -1054,9 +1087,14 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		}
 		keyID := key.ID()
 		unbound = slices.DeleteFunc(unbound, func(k Key) bool { return k.ID() == keyID })
-		copies = append(copies, CredentialCopy{Credential: ic.Credential, HolderKeyID: keyID})
+		copies = append(copies, CredentialCopy{Credential: ic.Credential, HolderKeyID: keyID, StatusList: verified.StatusList, ValidUntil: verified.ValidUntil})
 		if i == 0 {
 			first = verified
+		} else if (verified.StatusList == nil) != (first.StatusList == nil) {
+			// A copy without a status the others have couldn't be
+			// revoked with them.
+			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential's copies differ")
+			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: copy %d's status differs from copy 0's", c.configID, errInvalidCredential, i)
 		} else if !sameHolderClaims(first.Claims, verified.Claims) {
 			// The holder sees copy 0's claims, and DCQL chooses per copy:
 			// copies that differ would present what the holder didn't see.
@@ -1076,7 +1114,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		Format: conf.Format, VCT: conf.VCT, DocType: conf.DocType,
 		Credential: copies[0].Credential, HolderKeyID: copies[0].HolderKeyID, Copies: copies,
 		ReceivedAt: now.UTC(), Claims: first.Claims,
-		Display: displayFor(c.metadata, c.configID, w.cfg.Locales), ValidUntil: first.ValidUntil,
+		Display: displayFor(c.metadata, c.configID, w.cfg.Locales), ValidUntil: earliestExpiry(copies),
 		StatusList: first.StatusList, StatusListCWT: first.StatusListCWT, GrantID: c.grantID,
 	}
 	if err := w.store(ctx, stored, c); err != nil {
@@ -1109,7 +1147,7 @@ func (w *Wallet) verifyCopy(ctx context.Context, conf oid4vci.CredentialConfigur
 	for _, k := range keys {
 		verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
 			Configuration: conf, Credential: credential, HolderKey: k.Public(),
-			IssuerRoots: w.cfg.IssuerRoots, Now: now, RequireIssuerName: w.cfg.RequireIssuerName,
+			IssuerRoots: w.cfg.IssuerRoots, IssuerLeafPolicy: w.cfg.IssuerLeafPolicy, Now: now, RequireIssuerName: w.cfg.RequireIssuerName,
 		})
 		if err == nil {
 			return verified, k, nil
@@ -1200,4 +1238,16 @@ func sameHolderClaims(a, b map[string]any) bool {
 		return out
 	}
 	return reflect.DeepEqual(strip(a), strip(b))
+}
+
+// earliestExpiry is when the first of copies expires, zero when none
+// says.
+func earliestExpiry(copies []CredentialCopy) time.Time {
+	var earliest time.Time
+	for _, cp := range copies {
+		if !cp.ValidUntil.IsZero() && (earliest.IsZero() || cp.ValidUntil.Before(earliest)) {
+			earliest = cp.ValidUntil
+		}
+	}
+	return earliest
 }

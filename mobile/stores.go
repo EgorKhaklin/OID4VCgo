@@ -88,6 +88,32 @@ type copyJSON struct {
 	HolderKeyID string   `json:"holder_key_id"`
 	Presented   bool     `json:"presented,omitempty"`
 	ShownTo     []string `json:"shown_to,omitempty"`
+	// StatusList and ValidUntil: the copy's own, absent from a record
+	// written before they were kept.
+	StatusList *statusListJSON `json:"status_list,omitempty"`
+	ValidUntil *time.Time      `json:"valid_until,omitempty"`
+}
+
+func copyOf(cp walletflow.CredentialCopy) copyJSON {
+	r := copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo}
+	if cp.StatusList != nil {
+		r.StatusList = &statusListJSON{Idx: cp.StatusList.Idx, URI: cp.StatusList.URI}
+	}
+	if !cp.ValidUntil.IsZero() {
+		r.ValidUntil = &cp.ValidUntil
+	}
+	return r
+}
+
+func (r copyJSON) copy() walletflow.CredentialCopy {
+	cp := walletflow.CredentialCopy{Credential: r.Credential, HolderKeyID: r.HolderKeyID, Presented: r.Presented, ShownTo: r.ShownTo}
+	if r.StatusList != nil {
+		cp.StatusList = &statuslist.StatusListRef{Idx: r.StatusList.Idx, URI: r.StatusList.URI}
+	}
+	if r.ValidUntil != nil {
+		cp.ValidUntil = *r.ValidUntil
+	}
+	return cp
 }
 
 // logoJSON is a walletflow.Logo.
@@ -160,7 +186,7 @@ func recordOf(c walletflow.StoredCredential) (credentialRecord, error) {
 		Display: displayOf(c.Display), StatusListCWT: c.StatusListCWT, GrantID: c.GrantID,
 	}
 	for _, cp := range c.Copies {
-		r.Copies = append(r.Copies, copyJSON{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo})
+		r.Copies = append(r.Copies, copyOf(cp))
 	}
 	if !c.ValidUntil.IsZero() {
 		r.ValidUntil = &c.ValidUntil
@@ -188,7 +214,7 @@ func (r credentialRecord) stored() (walletflow.StoredCredential, error) {
 		Display: r.Display.display(), StatusListCWT: r.StatusListCWT, GrantID: r.GrantID,
 	}
 	for _, cp := range r.Copies {
-		c.Copies = append(c.Copies, walletflow.CredentialCopy{Credential: cp.Credential, HolderKeyID: cp.HolderKeyID, Presented: cp.Presented, ShownTo: cp.ShownTo})
+		c.Copies = append(c.Copies, cp.copy())
 	}
 	if r.ValidUntil != nil {
 		c.ValidUntil = *r.ValidUntil

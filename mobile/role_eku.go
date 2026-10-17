@@ -70,11 +70,12 @@ func pemCertificates(pemText string) [][]byte {
 	}
 }
 
-// checkRoleRoots refuses, outside development, verifier or registrar
-// roots that share a trust anchor with another role's without an
-// extended key usage to tell that role's certificates apart: otherwise
-// an issuer's signing certificate, say, would be taken for a trusted
-// Verifier, or a Verifier's second certificate for a registrar.
+// checkRoleRoots refuses, outside development, any role's roots that
+// share a trust anchor with another role's without an extended key
+// usage to tell that role's certificates apart: otherwise an issuer's
+// signing certificate, say, would be taken for a trusted Verifier, a
+// Verifier's for an issuer able to issue credentials, or a Verifier's
+// second certificate for a registrar.
 func checkRoleRoots(cfg config) error {
 	if cfg.Development {
 		return nil
@@ -85,10 +86,10 @@ func checkRoleRoots(cfg config) error {
 	}{
 		{"verifier_roots", cfg.VerifierRoots, cfg.VerifierRequireEKU},
 		{"registrar_roots", cfg.RegistrarRoots, cfg.RegistrarRequireEKU},
-		{"issuer_roots", cfg.IssuerRoots, "-"},
+		{"issuer_roots", cfg.IssuerRoots, cfg.IssuerRequireEKU},
 		{"mdoc_reader_roots", cfg.MdocReaderRoots, boolEKU(cfg.MdocReaderRequireEKU)},
 	}
-	for i, a := range roles[:2] {
+	for i, a := range roles {
 		if a.eku != "" {
 			continue
 		}

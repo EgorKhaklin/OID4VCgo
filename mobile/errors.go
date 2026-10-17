@@ -82,7 +82,7 @@ func classify(err error) error {
 		return newError(CodeProfileViolation, err)
 	case errors.Is(err, walletflow.ErrClientAuthUnsupported):
 		return newError(CodeClientAuthUnsupported, err)
-	case errors.Is(err, walletflow.ErrProofUnsupported):
+	case errors.Is(err, walletflow.ErrProofUnsupported), errors.Is(err, walletflow.ErrFormatUnsupported):
 		return newError(CodeProofUnsupported, err)
 	case errors.As(err, &protocol):
 		return refused(protocol.HTTPStatus, protocol.Code, "the issuer or authorization server")

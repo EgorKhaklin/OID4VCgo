@@ -52,7 +52,8 @@ type StoredCredential struct {
 	// when it was received.
 	Display Display
 	// ValidUntil is when the credential expires, or zero when it doesn't
-	// say.
+	// say: the earliest of its copies' (CredentialCopy.ValidUntil), so a
+	// copy the wallet may present is never past it.
 	ValidUntil time.Time
 	// StatusList is where the issuer publishes the credential's
 	// revocation status, nil when it has none; StatusListCWT is whether
@@ -83,6 +84,13 @@ type CredentialCopy struct {
 	// Verifier's is public — finds which ones are there. Protect the
 	// store as the credentials beside it already need.
 	ShownTo []string
+
+	// StatusList is where the issuer publishes this copy's status, and
+	// ValidUntil when it expires (zero when it doesn't say): each copy
+	// of a batch has its own (HAIP 1.0 §6.1), and a copy stored before
+	// they were kept has neither, the credential's own applying.
+	StatusList *statuslist.StatusListRef
+	ValidUntil time.Time
 }
 
 // VerifierHash is how a CredentialCopy's ShownTo records the Verifier

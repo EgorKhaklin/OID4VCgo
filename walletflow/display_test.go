@@ -103,6 +103,9 @@ func TestCheckStatus_SkipsAnExpiredCredential(t *testing.T) {
 	c := receive(t, f, f.w, walletflowtest.SDJWTConfigurationID)[0]
 	ctx := context.Background()
 	c.ValidUntil = time.Now().Add(-time.Minute)
+	for i := range c.Copies {
+		c.Copies[i].ValidUntil = c.ValidUntil
+	}
 	if err := f.store.Put(ctx, c); err != nil {
 		t.Fatal(err)
 	}
@@ -140,5 +143,40 @@ func TestStartIssuance_RequireSignedIssuerMetadata(t *testing.T) {
 		if !require && err != nil {
 			t.Errorf("not required: %v", err)
 		}
+	}
+}
+
+// Each copy of a batch has its own status list entry (HAIP 1.0 §6.1):
+// CheckStatus checks them all, and reports a copy's revocation even
+// while the others are valid. A copy that has expired isn't checked.
+func TestCheckStatus_EveryCopy(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 3})
+	c := receive(t, f, f.w, walletflowtest.SDJWTConfigurationID)[0]
+	ctx := context.Background()
+	if len(c.Copies) != 3 {
+		t.Fatalf("copies = %d, want 3", len(c.Copies))
+	}
+	seen := map[uint64]bool{}
+	for i, cp := range c.Copies {
+		if cp.StatusList == nil || cp.ValidUntil.IsZero() || seen[cp.StatusList.Idx] {
+			t.Fatalf("copy %d: status %v, valid until %v; want its own entry and expiry", i, cp.StatusList, cp.ValidUntil)
+		}
+		seen[cp.StatusList.Idx] = true
+		if c.ValidUntil.After(cp.ValidUntil) {
+			t.Errorf("ValidUntil %v is after copy %d's %v", c.ValidUntil, i, cp.ValidUntil)
+		}
+	}
+	f.env.RevokeEntry(c.Copies[2].StatusList.Idx)
+	checked, err := f.w.CheckStatus(ctx, c.ID)
+	if err != nil || checked.Status.Value != walletflow.StatusInvalid {
+		t.Fatalf("one copy revoked: CheckStatus = %+v, %v; want invalid", checked.Status, err)
+	}
+
+	checked.Copies[2].ValidUntil = time.Now().Add(-time.Minute)
+	if err := f.store.Put(ctx, checked); err != nil {
+		t.Fatal(err)
+	}
+	if checked, err = f.w.CheckStatus(ctx, c.ID); err != nil || checked.Status.Value != walletflow.StatusValid {
+		t.Errorf("the revoked copy expired: CheckStatus = %+v, %v; want valid", checked.Status, err)
 	}
 }

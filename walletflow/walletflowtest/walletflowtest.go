@@ -148,6 +148,11 @@ type Options struct {
 	// of the EU reference PID: an iss its certificate doesn't name, and
 	// a status list signed with the same key.
 	SDJWTIss string
+
+	// MdocUnscoped publishes the mdoc configuration without a scope, as
+	// OpenID4VCI allows one only issued through a pre-authorized code or
+	// authorization_details to be.
+	MdocUnscoped bool
 	// NoNonceEndpoint has the issuer publish no nonce endpoint: its
 	// proofs then carry no c_nonce, and iat dates them (OpenID4VCI 1.0
 	// §7, Appendix F.4).
@@ -342,7 +347,7 @@ func New(opts Options) (env *Env, err error) {
 				CredentialMetadata: credentialDisplay(SDJWTName, SDJWTNameDE),
 			},
 			MdocConfigurationID: {
-				Format: mdoc.CredentialFormat, DocType: DocType, Scope: MdocConfigurationID,
+				Format: mdoc.CredentialFormat, DocType: DocType, Scope: mdocScope(opts),
 				CryptographicBindingMethodsSupported: []string{"cose_key"}, ProofTypesSupported: proofTypes,
 				CredentialMetadata: credentialDisplay(MdocName),
 			},
@@ -623,6 +628,15 @@ func (e *Env) Revoke() {
 	for i := range e.revoked {
 		e.revoked[i] = uint8(statuslist.StatusInvalid)
 	}
+	e.mu.Unlock()
+	e.publisher.Invalidate()
+}
+
+// RevokeEntry revokes the one credential whose status list entry is
+// idx, as the issuer revoking a single copy of a batch would.
+func (e *Env) RevokeEntry(idx uint64) {
+	e.mu.Lock()
+	e.revoked[idx] = uint8(statuslist.StatusInvalid)
 	e.mu.Unlock()
 	e.publisher.Invalidate()
 }
@@ -1126,4 +1140,11 @@ func batchIssuance(size int) *oid4vci.BatchCredentialIssuance {
 		return nil
 	}
 	return &oid4vci.BatchCredentialIssuance{BatchSize: size}
+}
+
+func mdocScope(opts Options) string {
+	if opts.MdocUnscoped {
+		return ""
+	}
+	return MdocConfigurationID
 }

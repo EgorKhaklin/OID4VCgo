@@ -289,3 +289,20 @@ func TestRefreshCredential_WithoutProvider(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// A credential issued without a scope, through a pre-authorized code, is
+// refreshed: the grant already exists, so only its Authorization Server
+// and configuration are checked, not a scope only an authorization
+// request needs.
+func TestRefreshCredential_UnscopedConfiguration(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, walletflowtest.Options{Anonymous: true, AnonymousRefresh: true, MdocUnscoped: true})
+	w := f.anonymousWallet(t, walletflow.ProfileOpenID4VCI, walletflow.NewMemoryGrantStore())
+	c := receivePreAuthorized(t, f, w, walletflowtest.MdocConfigurationID)[0]
+	if c.GrantID == "" {
+		t.Fatal("the credential isn't refreshable")
+	}
+	if refreshed, _, err := w.RefreshCredential(ctx, c.ID); err != nil || refreshed.ID != c.ID {
+		t.Fatalf("RefreshCredential = %+v, %v", refreshed, err)
+	}
+}

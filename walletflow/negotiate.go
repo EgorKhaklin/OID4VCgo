@@ -68,6 +68,12 @@ var (
 	// can give: none signed with ES256, or a key attestation without
 	// Dependencies.Provider.
 	ErrProofUnsupported = errors.New("walletflow: the issuer takes no proof the wallet can give")
+
+	// ErrFormatUnsupported is wrapped by StartIssuance and ResumeIssuance
+	// for a credential the wallet couldn't verify when it arrives: a
+	// format other than dc+sd-jwt or mso_mdoc, or one whose configuration
+	// names no vct or doctype.
+	ErrFormatUnsupported = errors.New("walletflow: the wallet can't receive this credential's format")
 )
 
 // clientAuth is how a token request authenticates the wallet.
