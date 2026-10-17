@@ -251,6 +251,12 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueO
 	if err != nil {
 		return "", nil, fmt.Errorf("sdjwtvc: sign issuer JWT: %w", err)
 	}
+	// Verify bounds the issuer JWT at jose.MaxCompactBytes, and Parse
+	// the whole SD-JWT at MaxBytes: issuing past either would sign a
+	// credential no holder or Verifier of this package accepts.
+	if len(issuerJWT) > jose.MaxCompactBytes {
+		return "", nil, fmt.Errorf("sdjwtvc: the issuer JWT is %d bytes, over the %d Verify accepts: fewer claims or decoys", len(issuerJWT), jose.MaxCompactBytes)
+	}
 
 	out := issuerJWT + "~"
 	for _, d := range disclosures {
@@ -259,6 +265,9 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueO
 			return "", nil, err
 		}
 		out += enc + "~"
+	}
+	if len(out) > MaxBytes {
+		return "", nil, fmt.Errorf("sdjwtvc: the SD-JWT is %d bytes, over the %d Parse accepts", len(out), MaxBytes)
 	}
 	return out, disclosures, nil
 }
