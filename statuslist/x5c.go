@@ -54,6 +54,12 @@ func signerChain(signer crypto.Signer, chain []*x509.Certificate) ([][]byte, err
 	if !ok || !pub.Equal(signer.Public()) {
 		return nil, fmt.Errorf("statuslist: the chain's first certificate isn't the signer's")
 	}
+	// HAIP 1.0 §6.1: the signing certificate "MUST NOT be self-signed",
+	// and the trust anchor "MUST NOT be included in the x5c" of the
+	// token; each certificate must sign the one before it.
+	if err := certchain.CheckPresentedChain(chain[0], chain[1:]); err != nil {
+		return nil, fmt.Errorf("statuslist: %w", err)
+	}
 	ders := make([][]byte, len(chain))
 	for i, c := range chain {
 		ders[i] = c.Raw

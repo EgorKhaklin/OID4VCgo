@@ -5,6 +5,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"math/big"
 	"net/url"
@@ -83,7 +84,11 @@ func TestX5C_Rejects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selfJWT, err := IssueTokenX5C(selfSignedKey, jose.ES256, claims, []*x509.Certificate{selfSigned})
+	// IssueTokenX5C won't sign with a self-signed certificate, so the
+	// token is signed directly.
+	selfJWT, err := issueToken(selfSignedKey, jose.ES256, claims, map[string]any{
+		"typ": TokenTyp, "x5c": []any{base64.StdEncoding.EncodeToString(selfSigned.Raw)},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,5 +235,27 @@ func TestX5C_SignerHoldsTheIssuersKey(t *testing.T) {
 	}
 	if _, _, err := CheckX5C(token(otherKey), roots, ref, opts); err == nil {
 		t.Error("accepted a list signed by another key whose certificate names no one")
+	}
+}
+
+// The publisher won't sign with a chain HAIP 1.0 §6.1 forbids: a
+// self-signed signing certificate, or one that carries its trust anchor.
+func TestIssueTokenX5C_RefusesForbiddenChains(t *testing.T) {
+	ca, caKey := testcert.CA(t, "status CA")
+	leaf, leafKey := testcert.Leaf(t, "status signer", ca, caKey)
+	selfSigned, selfKey := testcert.SelfSignedLeaf(t, "self-signed signer")
+	sl, err := New(Bits1, []uint8{0}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := TokenClaims{Sub: x5cTestURI, Iat: time.Now().Unix(), StatusList: sl}
+	if _, err := IssueTokenX5C(leafKey, jose.ES256, claims, []*x509.Certificate{leaf}); err != nil {
+		t.Errorf("a CA-issued signer: %v", err)
+	}
+	if _, err := IssueTokenX5C(leafKey, jose.ES256, claims, []*x509.Certificate{leaf, ca}); err == nil {
+		t.Error("signed with the trust anchor in x5c")
+	}
+	if _, err := IssueTokenX5C(selfKey, jose.ES256, claims, []*x509.Certificate{selfSigned}); err == nil {
+		t.Error("signed with a self-signed certificate")
 	}
 }
