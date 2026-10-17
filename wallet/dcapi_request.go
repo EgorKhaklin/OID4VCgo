@@ -125,10 +125,18 @@ func finishDCAPIRequest(wire wireRequestObjectPayload, origin string, cert *x509
 			op: dcAPIParseOp,
 		}
 	}
+	formats, err := parseVPFormats(wire.ClientMetadata)
+	if err != nil {
+		return AuthorizationRequest{}, &RequestRejectedError{
+			Code: "invalid_request", Description: err.Error(),
+			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+			op: dcAPIParseOp,
+		}
+	}
 	return AuthorizationRequest{
 		ClientID: clientID, Nonce: wire.Nonce, Query: wire.DCQLQuery, VerifierCertificate: cert,
 		ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
-		Origin: origin, VerifierInfo: info,
+		Origin: origin, VerifierInfo: info, VPFormats: formats,
 	}, nil
 }
 

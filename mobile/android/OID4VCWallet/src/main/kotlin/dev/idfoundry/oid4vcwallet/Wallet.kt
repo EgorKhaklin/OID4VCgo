@@ -610,6 +610,14 @@ public class Wallet(
         Presentation(OID4VC.cancellable { op -> handle.startPresentation(op, request) })
 
     /**
+     * Where the Verifier asked to take the holder after the wallet
+     * refused its request: when [startPresentation] throws
+     * [WalletException.Code.requestRefused], open this URL, if any, as
+     * OpenID4VP §8.2 has a wallet do. It's returned once.
+     */
+    public fun takeRefusalRedirect(): String? = handle.takeRefusalRedirect().ifEmpty { null }
+
+    /**
      * Parses an OpenID4VP request delivered through the Digital
      * Credentials API (OpenID4VP 1.0 Appendix A), as Credential Manager
      * hands it over: [protocol] (`openid4vp-v1-unsigned`, `-signed` or

@@ -73,6 +73,8 @@ type DeferredCredentialResult struct {
 func (r DeferredCredentialResult) WriteJSON(w http.ResponseWriter) {
 	status, body := r.wire()
 	w.Header().Set("Content-Type", "application/json")
+	// It carries a credential, or a transaction still pending.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
 }

@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -332,5 +333,21 @@ func TestNewRejectsMissingDependencies(t *testing.T) {
 				t.Fatalf("New(%s) = nil error, want error", name)
 			}
 		})
+	}
+}
+
+// The Credential Issuer Identifier has no query or fragment (OpenID4VCI
+// §12.2.1), however the URL was built.
+func TestNew_RefusesAnIssuerWithAQuery(t *testing.T) {
+	for _, raw := range []string{testIssuer + "?tenant=a", testIssuer + "?"} {
+		u, err := fapi.ParseEndpointURL(raw)
+		if err != nil {
+			continue // refused already when parsed
+		}
+		cfg := validConfig(t)
+		cfg.Issuer = u
+		if _, err := issuer.New(cfg, validDependencies(t)); err == nil || !strings.Contains(err.Error(), "query") {
+			t.Errorf("%s: %v, want refused", raw, err)
+		}
 	}
 }

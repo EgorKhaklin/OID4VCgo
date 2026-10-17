@@ -88,7 +88,10 @@ type IssuanceResult struct {
 // obtain for good.
 type FailedCredential struct {
 	ConfigurationID string
-	Err             error
+	// CredentialIdentifier is the credential_identifier it was requested
+	// by, "" when it was requested by its configuration ID.
+	CredentialIdentifier string
+	Err                  error
 }
 
 type issuanceStep int
@@ -127,11 +130,12 @@ type Issuance struct {
 	accessExpiresAt time.Time
 	// identifiers are the credential_identifiers the Token Response
 	// granted for each configuration, in its authorization_details:
-	// a configuration listed here is requested by one of them, never by
-	// its configuration ID (OpenID4VCI 1.0 §8.2).
+	// a configuration listed here is requested by each of them, one
+	// Credential Dataset apiece (OpenID4VCI 1.0 §3.3, §6.2), never by
+	// its configuration ID (§8.2).
 	identifiers map[string][]string
 	// obtained is what RequestCredentials has obtained so far, and
-	// handled the configurations it has requested successfully.
+	// handled the requests (requestUnit.key) it has made successfully.
 	obtained IssuanceResult
 	handled  map[string]bool
 	// grant is the grant that redeems the offer, authorizationServer
@@ -781,20 +785,20 @@ func (s *Issuance) RequestCredentials(ctx context.Context) (IssuanceResult, erro
 	if s.handled == nil {
 		s.handled = map[string]bool{}
 	}
-	for _, id := range s.offer.CredentialConfigurationIDs {
-		if s.handled[id] {
+	for _, u := range s.requestUnits() {
+		if s.handled[u.key()] {
 			continue
 		}
-		stored, deferred, err := s.request(ctx, id, requestEnc, responseEnc)
+		stored, deferred, err := s.request(ctx, u.configID, u.identifier, requestEnc, responseEnc)
 		if err != nil && permanent(err) {
-			s.handled[id] = true
-			s.obtained.Failed = append(s.obtained.Failed, FailedCredential{ConfigurationID: id, Err: err})
+			s.handled[u.key()] = true
+			s.obtained.Failed = append(s.obtained.Failed, FailedCredential{ConfigurationID: u.configID, CredentialIdentifier: u.identifier, Err: err})
 			continue
 		}
 		if err != nil {
 			return s.obtained, err
 		}
-		s.handled[id] = true
+		s.handled[u.key()] = true
 		if deferred != nil {
 			s.obtained.Deferred = append(s.obtained.Deferred, deferred)
 			continue
@@ -807,6 +811,41 @@ func (s *Issuance) RequestCredentials(ctx context.Context) (IssuanceResult, erro
 		return s.obtained, s.obtained.Failed[0].Err
 	}
 	return s.obtained, nil
+}
+
+// requestUnit is one Credential Request: a configuration, by one of
+// the credential_identifiers the token granted for it, or by its ID
+// ("" identifier) where it granted none.
+type requestUnit struct{ configID, identifier string }
+
+func (u requestUnit) key() string { return u.configID + "\x00" + u.identifier }
+
+// requestUnits are the offer's Credential Requests: one for each
+// credential_identifier granted for a configuration, each a separate
+// Credential Dataset (OpenID4VCI 1.0 §3.3, §6.2), else one by its ID.
+func (s *Issuance) requestUnits() []requestUnit {
+	var out []requestUnit
+	for _, id := range s.offer.CredentialConfigurationIDs {
+		ids := s.identifiers[id]
+		if len(ids) == 0 {
+			out = append(out, requestUnit{configID: id})
+			continue
+		}
+		for _, identifier := range ids {
+			out = append(out, requestUnit{configID: id, identifier: identifier})
+		}
+	}
+	return out
+}
+
+// firstIdentifier is a credential_identifier granted for configID, ""
+// for none: a refresh can't tell which dataset the credential it
+// replaces came from, so it asks for the first.
+func (s *Issuance) firstIdentifier(configID string) string {
+	if ids := s.identifiers[configID]; len(ids) > 0 {
+		return ids[0]
+	}
+	return ""
 }
 
 // permanent reports whether err, requesting one credential, won't go
@@ -828,7 +867,7 @@ func permanent(err error) bool {
 	return true
 }
 
-func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wallet.RequestEncryption, responseEnc *wallet.ResponseEncryption) (StoredCredential, *Deferred, error) {
+func (s *Issuance) request(ctx context.Context, configID, identifier string, requestEnc *wallet.RequestEncryption, responseEnc *wallet.ResponseEncryption) (StoredCredential, *Deferred, error) {
 	plan, err := s.w.chooseProof(s.metadata.CredentialConfigurationsSupported[configID])
 	if err != nil {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: credential %q: %w", configID, err)
@@ -842,7 +881,7 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 		}
 	}()
 	var result wallet.CredentialResult
-	if holders, result, err = s.sendCredentialRequest(ctx, configID, plan, requestEnc, responseEnc); err != nil {
+	if holders, result, err = s.sendCredentialRequest(ctx, configID, identifier, plan, requestEnc, responseEnc); err != nil {
 		return StoredCredential{}, nil, err
 	}
 	if result.TransactionID != "" {
@@ -876,7 +915,7 @@ func (s *Issuance) request(ctx context.Context, configID string, requestEnc *wal
 // and a fresh nonce (OpenID4VCI 1.0 §8.3.1.2): the issuer may expire a
 // nonce before it's used. An issuer with no nonce endpoint has none to
 // renew.
-func (s *Issuance) sendCredentialRequest(ctx context.Context, configID string, plan proofPlan, requestEnc *wallet.RequestEncryption, responseEnc *wallet.ResponseEncryption) ([]Key, wallet.CredentialResult, error) {
+func (s *Issuance) sendCredentialRequest(ctx context.Context, configID, identifier string, plan proofPlan, requestEnc *wallet.RequestEncryption, responseEnc *wallet.ResponseEncryption) ([]Key, wallet.CredentialResult, error) {
 	var holders []Key
 	for attempt := 0; ; attempt++ {
 		s.w.deleteKeys(context.WithoutCancel(ctx), holders)
@@ -888,8 +927,8 @@ func (s *Issuance) sendCredentialRequest(ctx context.Context, configID string, p
 			return holders, wallet.CredentialResult{}, err
 		}
 		req.RequestEncryption, req.ResponseEncryption = requestEnc, responseEnc
-		if ids := s.identifiers[configID]; len(ids) > 0 {
-			req.CredentialIdentifier = ids[0]
+		if identifier != "" {
+			req.CredentialIdentifier = identifier
 		} else {
 			req.CredentialConfigurationID = configID
 		}

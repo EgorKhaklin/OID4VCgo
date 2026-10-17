@@ -65,7 +65,7 @@ format or error code below changes incompatibly.
 | `profile_violation` | under `"issuance_profile": "haip"`, the issuer doesn't follow HAIP 1.0: it's refused |
 | `client_auth_unsupported` | the offer's Authorization Server takes no client authentication the wallet can give: a Wallet Attestation needs a provider and `client_id` |
 | `proof_unsupported` | the wallet can't hold an offered credential, or the issuer takes no proof it can give: one bound to no key (which the wallet doesn't receive) or by a method other than `jwk`/`cose_key`, both refused before the holder sees the offer; or, when the credentials are requested, no proof type signed with ES256, or a key attestation without a provider |
-| `request_refused` | the wallet refused an authentic presentation request it must not answer (`transaction_data` it doesn't support, or a parameter OpenID4VP forbids), and sent the Verifier the error OpenID4VP requires: the detail is that error code, such as `invalid_transaction_data`. For a DC API request, the start call's error is what goes back to the platform. A `redirect_uri` the Verifier answers a redirect request's error with isn't followed |
+| `request_refused` | the wallet refused an authentic presentation request it must not answer (`transaction_data` it doesn't support, or a parameter OpenID4VP forbids), and sent the Verifier the error OpenID4VP requires: the detail is that error code, such as `invalid_transaction_data`. For a DC API request, the start call's error is what goes back to the platform. For a redirect request, `TakeRefusalRedirect` returns the `redirect_uri` the Verifier answered with, to open |
 | `protocol` | an issuer, Authorization Server or Verifier answered with an error, or with something the wallet refuses |
 | `internal` | a bug |
 
@@ -341,6 +341,7 @@ Provider, are the app's to pin.
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
 | `StartPresentation(op, requestLink)` | a `Presentation` |
+| `TakeRefusalRedirect()` | once, the `redirect_uri` the Verifier answered the latest `request_refused` with, `""` for none: open it (OpenID4VP §8.2). Added within ABI 12 |
 
 A credential **summary** is `{"id", "credential_issuer",
 "configuration_id", "format", "vct", "doctype", "received_at",

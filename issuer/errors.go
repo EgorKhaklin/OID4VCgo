@@ -166,6 +166,10 @@ func (e *Error) WriteJSON(w http.ResponseWriter) {
 		w.Header().Add("WWW-Authenticate", `Bearer error="insufficient_scope"`)
 	}
 	w.Header().Set("Content-Type", "application/json")
+	// RFC 6749 §5.2 has a Token Endpoint's error responses, which
+	// ExchangePreAuthorizedCode's are, marked no-store; the Credential
+	// Endpoint's answer one request, so they're marked alike.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(e.httpStatus)
 	_ = json.NewEncoder(w).Encode(struct {
 		Error            string `json:"error"`

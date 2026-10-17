@@ -189,8 +189,14 @@ func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRe
 	byCredential := make(map[string]StoredCredential, len(stored))
 	for _, c := range stored {
 		p.byID[c.ID] = c
+		h := heldCredential(c, nil)
+		// Only what the Verifier says it can verify is offered
+		// (vp_formats_supported, OpenID4VP 1.0 §11.1).
+		if !req.VPFormats.Accepts(h) {
+			continue
+		}
 		byCredential[c.Credential] = c
-		held = append(held, heldCredential(c, nil))
+		held = append(held, h)
 	}
 	// Each Credential Query, in the request's order, with every
 	// credential that can answer it on its own: the holder, or the
@@ -424,6 +430,23 @@ func (p *Presentation) Decline(ctx context.Context) (Presented, error) {
 	return Presented{RedirectURI: reply.RedirectURI}, nil
 }
 
+// checkSelectable is checkShape, and refuses a credential the Verifier
+// can't take: one its vp_formats_supported doesn't accept, which the
+// queries didn't offer.
+func (p *Presentation) checkSelectable(sel Selection) error {
+	if err := checkShape(sel); err != nil {
+		return err
+	}
+	for q, ids := range sel {
+		for _, id := range ids {
+			if c, ok := p.byID[id]; ok && !p.req.VPFormats.Accepts(heldCredential(c, nil)) {
+				return fmt.Errorf("walletflow: %w: query %q: the Verifier doesn't accept credential %q's format or algorithms", ErrInvalidSelection, q, id)
+			}
+		}
+	}
+	return nil
+}
+
 // checkShape refuses a selection that names nothing, a query with no
 // credential, or one credential twice for the same query.
 func checkShape(sel Selection) error {
@@ -449,7 +472,7 @@ func checkShape(sel Selection) error {
 // selection; whether each answers its query is the wallet package's to
 // check.
 func (p *Presentation) held(_ context.Context, sel Selection) (map[string][]wallet.HeldCredential, error) {
-	if err := checkShape(sel); err != nil {
+	if err := p.checkSelectable(sel); err != nil {
 		return nil, err
 	}
 	out := make(map[string][]wallet.HeldCredential, len(sel))
@@ -495,7 +518,7 @@ type reservedCopy struct {
 // Credentials deleted since the request arrived are an invalid
 // selection.
 func (p *Presentation) reserve(ctx context.Context, sel Selection) ([]reservedCopy, error) {
-	if err := checkShape(sel); err != nil {
+	if err := p.checkSelectable(sel); err != nil {
 		return nil, err
 	}
 	return p.w.reserve(ctx, sel, p.verifier(), p.Linkable, p.byID)

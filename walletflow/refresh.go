@@ -279,7 +279,7 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	if err != nil {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: %w", err)
 	}
-	stored, deferred, err := s.request(ctx, old.ConfigurationID, requestEnc, responseEnc)
+	stored, deferred, err := s.request(ctx, old.ConfigurationID, s.firstIdentifier(old.ConfigurationID), requestEnc, responseEnc)
 	if err != nil {
 		return StoredCredential{}, nil, err
 	}

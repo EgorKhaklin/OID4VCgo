@@ -1,7 +1,9 @@
 package walletflow
 
 import (
+	"github.com/idfoundry/oid4vcgo"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -25,5 +27,22 @@ func TestCredentialIdentifiers(t *testing.T) {
 	}
 	if _, err := credentialIdentifiers([]byte(`{"type":"openid_credential"}`)); err == nil {
 		t.Error("authorization_details that isn't an array accepted")
+	}
+}
+
+// Each credential_identifier granted for a configuration is its own
+// Credential Request, one Credential Dataset apiece (OpenID4VCI 1.0
+// §3.3, §6.2); a configuration granted none is requested by its ID.
+func TestRequestUnits(t *testing.T) {
+	s := &Issuance{
+		offer:       oid4vci.CredentialOffer{CredentialConfigurationIDs: []string{"pid", "mdl"}},
+		identifiers: map[string][]string{"pid": {"pid-alice", "pid-bob"}},
+	}
+	want := []requestUnit{{"pid", "pid-alice"}, {"pid", "pid-bob"}, {"mdl", ""}}
+	if got := s.requestUnits(); !slices.Equal(got, want) {
+		t.Errorf("requestUnits = %v, want %v", got, want)
+	}
+	if want[0].key() == want[1].key() || s.firstIdentifier("pid") != "pid-alice" || s.firstIdentifier("mdl") != "" {
+		t.Error("keys or first identifier wrong")
 	}
 }
