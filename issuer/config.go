@@ -280,6 +280,12 @@ func (s *SDJWTSigner) validate(assurance AssuranceLevel) error {
 		if len(s.IssuerIntermediates) > 0 {
 			return fmt.Errorf("sdjwt_signer.issuer_intermediates needs issuer_certificate")
 		}
+		if assurance == AssuranceProduction {
+			// HAIP 1.0 §6.1.1: "The SD-JWT VC MUST contain the credential
+			// issuer's signing certificate along with a trust chain in the
+			// x5c JOSE header".
+			return fmt.Errorf("sdjwt_signer.issuer_certificate is required under AssuranceProduction (HAIP 1.0 §6.1.1)")
+		}
 		return nil
 	}
 	if err := checkSignerCertificate("sdjwt_signer", s.Signer, s.IssuerCertificate, s.IssuerIntermediates, assurance); err != nil {

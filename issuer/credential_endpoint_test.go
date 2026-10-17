@@ -579,7 +579,7 @@ func TestRequestCredential_RejectsMissingScope(t *testing.T) {
 		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
 		SDJWTClaims:               testSDJWTClaims(),
 	})
-	assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
+	assertIssuerError(t, err, issuer.ErrorInsufficientScope)
 }
 
 // TestRequestCredential_CredentialConfigurationIDAuthorization checks a
@@ -596,17 +596,17 @@ func TestRequestCredential_CredentialConfigurationIDAuthorization(t *testing.T) 
 	for name, tc := range map[string]struct {
 		configID string
 		auth     issuer.AuthorizedRequest
-		wantErr  bool
+		wantErr  issuer.ErrorCode
 	}{
-		"scoped, scope granted":                      {testSDJWTConfigID, issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, false},
-		"scoped, other scope":                        {testSDJWTConfigID, issuer.AuthorizedRequest{Scopes: []string{"other_scope"}}, true},
-		"scoped, granted by detail":                  {testSDJWTConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testSDJWTConfigID)}}, false},
-		"scope-less, granted by detail":              {testMdocConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testMdocConfigID)}}, false},
-		"scope-less, token for another scope":        {testMdocConfigID, issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, true},
-		"scope-less, token for another detail":       {testMdocConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testSDJWTConfigID)}}, true},
-		"scope-less, no grant at all":                {testMdocConfigID, issuer.AuthorizedRequest{}, true},
-		"granted through credential_identifiers":     {testMdocConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testMdocConfigID, "mdl-1")}}, true},
-		"scope granted, but identifiers were issued": {testSDJWTConfigID, issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}, AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testSDJWTConfigID, "pid-1")}}, true},
+		"scoped, scope granted":                      {testSDJWTConfigID, issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, ""},
+		"scoped, other scope":                        {testSDJWTConfigID, issuer.AuthorizedRequest{Scopes: []string{"other_scope"}}, issuer.ErrorInsufficientScope},
+		"scoped, granted by detail":                  {testSDJWTConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testSDJWTConfigID)}}, ""},
+		"scope-less, granted by detail":              {testMdocConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testMdocConfigID)}}, ""},
+		"scope-less, token for another scope":        {testMdocConfigID, issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}}, issuer.ErrorInsufficientScope},
+		"scope-less, token for another detail":       {testMdocConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testSDJWTConfigID)}}, issuer.ErrorInsufficientScope},
+		"scope-less, no grant at all":                {testMdocConfigID, issuer.AuthorizedRequest{}, issuer.ErrorInsufficientScope},
+		"granted through credential_identifiers":     {testMdocConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testMdocConfigID, "mdl-1")}}, issuer.ErrorInvalidCredentialRequest},
+		"scope granted, but identifiers were issued": {testSDJWTConfigID, issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}, AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testSDJWTConfigID, "pid-1")}}, issuer.ErrorInvalidCredentialRequest},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCredentialEndpointFixture(t)
@@ -622,8 +622,8 @@ func TestRequestCredential_CredentialConfigurationIDAuthorization(t *testing.T) 
 				req.SDJWTClaims = testSDJWTClaims()
 			}
 			_, err := f.iss.RequestCredential(context.Background(), tc.auth, req)
-			if tc.wantErr {
-				assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
+			if tc.wantErr != "" {
+				assertIssuerError(t, err, tc.wantErr)
 				return
 			}
 			if err != nil {
@@ -932,7 +932,7 @@ func TestRequestCredential_RejectsUnboundConfig(t *testing.T) {
 		CredentialConfigurationID: "UnboundCredential",
 		SDJWTClaims:               testSDJWTClaims(),
 	})
-	assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
+	assertIssuerError(t, err, issuer.ErrorInsufficientScope)
 }
 
 func TestRequestCredential_RejectsUnsupportedFormat(t *testing.T) {

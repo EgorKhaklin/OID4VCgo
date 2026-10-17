@@ -53,13 +53,13 @@ type X5CAttestationVerifier struct {
 }
 
 // ResolveAttestationKey implements AttestationVerifier.
-func (v X5CAttestationVerifier) ResolveAttestationKey(_ context.Context, a attestation.KeyAttestation) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
+func (v X5CAttestationVerifier) ResolveAttestationKey(ctx context.Context, a attestation.KeyAttestation) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
 	x5c := a.X5C()
 	entries := make([]any, len(x5c))
 	for i, s := range x5c {
 		entries[i] = s
 	}
-	leaf, err := resolveX5CLeaf(entries, v.Roots, v.LeafPolicy)
+	leaf, err := resolveX5CLeaf(ctx, entries, v.Roots, v.LeafPolicy)
 	if err != nil {
 		return nil, "", err
 	}

@@ -1,6 +1,7 @@
 package issuer
 
 import (
+	"context"
 	"crypto/x509"
 	"fmt"
 
@@ -13,7 +14,11 @@ import (
 // X5CAttestationVerifier and X5CProofBindingKeyResolver, which differ
 // only in how they got x5c from their own caller's own wire shape (a
 // KeyAttestation's own []string vs a raw JOSE header's own []any).
-func resolveX5CLeaf(x5c []any, roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error) (*x509.Certificate, error) {
+//
+// The trust anchor must not be in x5c (HAIP 1.0 §4.5.1, for a key
+// attestation), and the chain is checked at the verification time ctx
+// carries (the Issuer's Clock), as the rest of the request is.
+func resolveX5CLeaf(ctx context.Context, x5c []any, roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error) (*x509.Certificate, error) {
 	if len(x5c) == 0 {
 		return nil, fmt.Errorf("issuer: x5c must be a non-empty array")
 	}
@@ -21,5 +26,8 @@ func resolveX5CLeaf(x5c []any, roots *x509.CertPool, policy func(*x509.Certifica
 	if err != nil {
 		return nil, fmt.Errorf("issuer: %w", err)
 	}
-	return certchain.VerifyLeafWithPolicy(ders, roots, policy)
+	if err := certchain.CheckNoAnchor(ders); err != nil {
+		return nil, fmt.Errorf("issuer: %w", err)
+	}
+	return certchain.VerifyLeafWithPolicyAt(ders, roots, policy, certchain.TimeFrom(ctx))
 }

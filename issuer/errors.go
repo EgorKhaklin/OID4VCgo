@@ -75,6 +75,14 @@ const (
 	// ErrorInvalidDPoPProof indicates a DPoP proof presented to
 	// ExchangePreAuthorizedCode that doesn't verify (RFC 9449 §5).
 	ErrorInvalidDPoPProof ErrorCode = "invalid_dpop_proof"
+
+	// ErrorInsufficientScope is the Credential Endpoint's answer to an
+	// access token that doesn't authorize the requested Credential
+	// Configuration: OpenID4VCI §8.3.1.1 has it return "an
+	// authorization error response such as defined in Section 3 of
+	// [RFC6750]", which is 403 insufficient_scope with a
+	// WWW-Authenticate challenge (RFC 6750 §3.1; RFC 9449 §7.1 for DPoP).
+	ErrorInsufficientScope ErrorCode = "insufficient_scope"
 )
 
 // Error is the error type RequestCredential returns for a Credential
@@ -150,6 +158,12 @@ func (e *Error) Unwrap() error { return e.cause }
 func (e *Error) WriteJSON(w http.ResponseWriter) {
 	if e.nonce != "" {
 		w.Header().Set("DPoP-Nonce", e.nonce)
+	}
+	if e.code == ErrorInsufficientScope {
+		// The token may be DPoP-bound or, outside HAIP, a Bearer token:
+		// the challenge names both schemes.
+		w.Header().Add("WWW-Authenticate", `DPoP error="insufficient_scope"`)
+		w.Header().Add("WWW-Authenticate", `Bearer error="insufficient_scope"`)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(e.httpStatus)

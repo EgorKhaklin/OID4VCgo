@@ -41,7 +41,7 @@ type X5CProofBindingKeyResolver struct {
 }
 
 // ResolveProofBindingKey implements ProofBindingKeyResolver.
-func (r X5CProofBindingKeyResolver) ResolveProofBindingKey(_ context.Context, header map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
+func (r X5CProofBindingKeyResolver) ResolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
 	raw, ok := header["x5c"]
 	if !ok {
 		return nil, "", fmt.Errorf("issuer: proof header has no x5c")
@@ -50,7 +50,7 @@ func (r X5CProofBindingKeyResolver) ResolveProofBindingKey(_ context.Context, he
 	if !ok {
 		return nil, "", fmt.Errorf("issuer: proof x5c header is not an array")
 	}
-	leaf, err := resolveX5CLeaf(entries, r.Roots, r.LeafPolicy)
+	leaf, err := resolveX5CLeaf(ctx, entries, r.Roots, r.LeafPolicy)
 	if err != nil {
 		return nil, "", err
 	}

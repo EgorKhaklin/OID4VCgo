@@ -80,13 +80,13 @@ func validConfig(t testing.TB) issuer.Config {
 	}
 }
 
+// testSDJWTSigner is an SD-JWT VC signer with a certificate a test CA
+// issued, as AssuranceProduction requires (HAIP 1.0 §6.1.1).
 func testSDJWTSigner(t testing.TB) *issuer.SDJWTSigner {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	return &issuer.SDJWTSigner{Signer: key, Alg: jose.ES256}
+	ca, caKey := testcert.CA(t, "test issuer CA")
+	cert, key := testcert.Leaf(t, "test issuer", ca, caKey)
+	return &issuer.SDJWTSigner{Signer: key, Alg: jose.ES256, IssuerCertificate: cert}
 }
 
 func testMdocSigner(t testing.TB) *issuer.MdocSigner {
