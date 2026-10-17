@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.46.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.45.0...v0.46.0) (2026-10-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **issuer:** New refuses a Config.Issuer with a query or fragment.
+* **walletflow:** StartPresentation returns a *RequestRefusedError (errors.Is ErrRequestRefused), no longer wrapping the *wallet.RequestRejectedError, for an authentic request the wallet refuses, after sending the Verifier the error response. StartDCAPIPresentation returns it, not ErrMalformedRequest, for such a request. On mobile, these are request_refused, not invalid_input.
+* VerifyResponseRequest.MaxKeyBindingAge (and Transactions' Verify.MaxKeyBindingAge) is required for every dc+sd-jwt credential query, not only those requiring holder binding. A presentation of a cnf-bound credential without a valid KB-JWT is refused even where the query doesn't require holder binding.
+* **mobile:** outside development, NewWallet refuses issuer_roots sharing a trust anchor with another role's unless issuer_require_eku is set, and mdoc_reader_roots sharing one unless mdoc_reader_require_eku is set.
+* **walletflow:** StartIssuance and ResumeIssuance refuse a credential configuration whose format the wallet can't verify, or that names no vct or doctype, with an error wrapping ErrFormatUnsupported. ResumeIssuance applies the issuance profile, so a resumed issuance can now fail with ErrProfileViolation.
+* **issuer:** an access token that doesn't authorize the requested Credential Configuration is answered 403 insufficient_scope, not 400 invalid_credential_request. AssuranceProduction requires SDJWTSigner.IssuerCertificate. A batch proving one key twice is refused. No notification_id is issued without Endpoints.Notification. New refuses proof signing algorithms it can't verify.
+* **verifier:** VerifyResponse refuses a whole response in which any presentation is bound to another nonce or audience, rather than discarding that presentation. It also refuses more than 32 presentations for one credential query, and an Origin that isn't a serialized origin. BuildDCAPIAuthorizationRequest refuses such an expected_origins entry.
+* **issuer:** RequestCredential refuses claims whose vct (or aka_vcts) or docType isn't the resolved Credential Configuration's, where it signed them before. Build claims for CredentialRequest.ResolvedConfigurationID.
+* **statuslist:** a status list for an SD-JWT VC without an issuer name must now be signed with the credential's own key, or by a Status Issuer a StatusIssuerPolicy accepts. An mdoc's revocation list must chain to the Certificate its MSO's status names, or else to the CA that signed its document signer; one signed under another trusted CA is refused unless a StatusIssuerPolicy accepts it.
+* **verifier:** verifier.IssuerAuthorization.Issuer is empty unless the issuer key resolver checked iss against the certificate (X5CIssuerKeyResolver.RequireIssuerName). A hook allowing issuers by name sees "" and refuses until that's set. Use ClaimedIssuer for the unchecked value, and IssuerChain to decide from the certificate.
+
+### Features
+
+* **mobile:** an issuer EKU, and the shared-anchor check for every role ([97fccd4](https://github.com/IDFoundry/OID4VCgo/commit/97fccd4284ffb973ed0888b30bfa686fee7c5b79))
+* **wallet:** bind signed issuer metadata to the issuer, and bound its age ([78d75d8](https://github.com/IDFoundry/OID4VCgo/commit/78d75d8d6573ef54140a2c77433c32ce8dbfc26e))
+* **walletflow:** issuer trust options: signed issuer metadata and the iss check ([18cc625](https://github.com/IDFoundry/OID4VCgo/commit/18cc62533bd8425d62a7a3a97468c360846542a5))
+* **walletflow:** show the holder which claims the Verifier will keep ([8c6d61d](https://github.com/IDFoundry/OID4VCgo/commit/8c6d61d0c081aff1ab832037c206edbd66257df3))
+* **wallet:** honor the Verifier's vp_formats_supported ([a0ee614](https://github.com/IDFoundry/OID4VCgo/commit/a0ee61400d5189e93807651a3345d85b1c1d3272))
+
+
+### Bug Fixes
+
+* a key-bound SD-JWT VC is always presented with a KB-JWT, and it's always checked ([e7c52b4](https://github.com/IDFoundry/OID4VCgo/commit/e7c52b4ed9ef67a54147060e8dc85b95f41b3091))
+* a Status List Token or key attestation is expired at its exp ([492dee9](https://github.com/IDFoundry/OID4VCgo/commit/492dee9ad24c903ae800ce906c1e544683bedab7))
+* **certchain:** refuse a signing leaf whose key usage doesn't allow signatures ([85b5717](https://github.com/IDFoundry/OID4VCgo/commit/85b57178a08f608d000bf97ed74ff883355980a7))
+* **cose:** accept alg -9 (ESP256) as ES256 when verifying ([f72f49c](https://github.com/IDFoundry/OID4VCgo/commit/f72f49c9bf26fcbfa02c55957f15aa7bf3cc595c))
+* **dcql:** check trusted_authorities chains at the verification time ([cd20e80](https://github.com/IDFoundry/OID4VCgo/commit/cd20e80db624556559c9eda1750277349e7fff92))
+* **deps:** pin FAPIgo v0.57.1 ([3e9c5dc](https://github.com/IDFoundry/OID4VCgo/commit/3e9c5dc3e16eb41d33ed70617930b88e495e7847))
+* **ecdsafixed:** refuse an out-of-range signature instead of panicking ([0fa73ae](https://github.com/IDFoundry/OID4VCgo/commit/0fa73ae1570b168b476642bdd4d57019ee3838c4))
+* **issuer:** mark error and Deferred Credential Responses no-store ([d3aaefd](https://github.com/IDFoundry/OID4VCgo/commit/d3aaefdcba10c9d741cc337e1e1c59b898c62dc2))
+* **issuer:** OpenID4VCI and HAIP conformance at the credential endpoint ([6c77c01](https://github.com/IDFoundry/OID4VCgo/commit/6c77c0174906b15d3dba7cea2c0c1d5b7265a0fa))
+* **issuer:** refuse a Credential Issuer Identifier with a query or fragment ([5469d34](https://github.com/IDFoundry/OID4VCgo/commit/5469d34444cef3129031bac7f796b96824d1c104))
+* **issuer:** refuse a trust anchor in a key attestation's x5c, and check it at the issuer's clock ([ee536e5](https://github.com/IDFoundry/OID4VCgo/commit/ee536e5663ce68d10b9a2090941276ad621f9b51))
+* **issuer:** sign only credentials of the configuration the token authorized ([822c6be](https://github.com/IDFoundry/OID4VCgo/commit/822c6be8144fd40eca480f5317f913787097c9a5))
+* match JSON and CBOR member names exactly, and refuse duplicate CWT claims ([77a09b0](https://github.com/IDFoundry/OID4VCgo/commit/77a09b0bde0f90eae8191b8d42d7fb5b777da5e0))
+* **registration:** check the registrar's certificate at the verification time ([e33cec0](https://github.com/IDFoundry/OID4VCgo/commit/e33cec0ae3b92b929e885e79152acc1f0c3da2c6))
+* **sdjwtvc:** a disclosure's form by its arity, a non-string _sd_alg, and what Issue can sign ([d5ea252](https://github.com/IDFoundry/OID4VCgo/commit/d5ea252e9a1dbcf94a9506d6142aa7e6275b13ec))
+* **sdjwtvc:** seal SD markers inside typed containers, and refuse the ones it can't ([abc68c1](https://github.com/IDFoundry/OID4VCgo/commit/abc68c1f674dd7a53927f21e41682e5ed7a6612c))
+* **statuslist:** bind a status list's signer whenever the credential's issuer is known ([8c74352](https://github.com/IDFoundry/OID4VCgo/commit/8c743527d08fd64c8a39be0af9a38d6b8df1f595))
+* **statuslist:** refuse to publish with a chain HAIP forbids ([2cbb71c](https://github.com/IDFoundry/OID4VCgo/commit/2cbb71c9bc9ffc8d06c84233377491038f88a9a1))
+* **verifier:** answer same-device declines with a redirect_uri, and acknowledge unencrypted error responses ([0327719](https://github.com/IDFoundry/OID4VCgo/commit/0327719885bfdfecbcee573f044cc2c65def2198))
+* **verifier:** give IssuerAuthorized a checked issuer name only ([547c4fd](https://github.com/IDFoundry/OID4VCgo/commit/547c4fdad6b13e3834f5ae477204ebe51be4df69))
+* **verifier:** refuse a response carrying another request's presentation, and tighten what a response may carry ([6c5f397](https://github.com/IDFoundry/OID4VCgo/commit/6c5f397a543d77d0de52b30e2d2a3153039d8786))
+* **wallet:** check an issued credential's certificate at its own time, and read only the status list ([45c9ed4](https://github.com/IDFoundry/OID4VCgo/commit/45c9ed42ba90bacf7818ae368732216c50a38636))
+* **walletflow:** keep a presentation's copies presented once the Verifier has replied ([ed12e57](https://github.com/IDFoundry/OID4VCgo/commit/ed12e578dac6df38be8439be929d884281d7600b))
+* **walletflow:** refresh and revoke credentials whose configuration has no scope ([e8f8a45](https://github.com/IDFoundry/OID4VCgo/commit/e8f8a45f2fd496d8c5019e184b4a7b2c56f652d2))
+* **walletflow:** refuse a credential the wallet can't receive, and recheck a resumed issuance ([f15209d](https://github.com/IDFoundry/OID4VCgo/commit/f15209dc7e677bb53132bb2a615ce568595035d7))
+* **walletflow:** request every credential_identifier the token grants ([1208b10](https://github.com/IDFoundry/OID4VCgo/commit/1208b102dc002413d460c9366ab04e485de74128))
+* **walletflow:** sanitize the issuer's display text and colors ([5d2a66d](https://github.com/IDFoundry/OID4VCgo/commit/5d2a66df7930dd4aaed234c0a483132a4129606e))
+* **walletflow:** tell the Verifier when the wallet refuses its request ([21ff492](https://github.com/IDFoundry/OID4VCgo/commit/21ff49292f7ca8e6319899576a5546b50add35ed))
+* **walletflow:** track each copy's own status and expiry ([947a9f5](https://github.com/IDFoundry/OID4VCgo/commit/947a9f5d93493e97798af692efeda3a717137659))
+
 ## [0.45.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.44.0...v0.45.0) (2026-10-16)
 
 
