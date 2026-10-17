@@ -146,6 +146,9 @@ var decMode = func() cbor.DecMode {
 		MaxArrayElements: mdoc.MaxCBORContainerItems,
 		MaxMapPairs:      mdoc.MaxCBORContainerItems,
 		DupMapKey:        cbor.DupMapKeyEnforcedAPF,
+		// A struct field matches only its exact key: "DocType" isn't
+		// "docType".
+		FieldNameMatching: cbor.FieldNameMatchingCaseSensitive,
 	}.DecMode()
 	if err != nil {
 		panic("oid4vpmdoc: build CBOR decoder: " + err.Error())

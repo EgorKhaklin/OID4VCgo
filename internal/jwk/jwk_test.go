@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 )
@@ -380,5 +381,42 @@ func TestSetEntryRoundTrip(t *testing.T) {
 	ecPub, ok := roundTripped.(*ecdsa.PublicKey)
 	if !ok || !ecPub.Equal(&key.PublicKey) {
 		t.Errorf("PublicKey() = %v, want %v", roundTripped, &key.PublicKey)
+	}
+}
+
+// A JWK compared with a key, or parsed as one, must be public, and must
+// name its members exactly.
+func TestMatches_RefusesAPrivateOrMiscasedJWK(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := Marshal(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := json.Marshal(k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := Matches(pub, &key.PublicKey); err != nil || !ok {
+		t.Fatalf("Matches(its own JWK) = %v, %v", ok, err)
+	}
+	var m map[string]any
+	_ = json.Unmarshal(pub, &m)
+	scalar, err := key.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m["d"] = base64.RawURLEncoding.EncodeToString(scalar)
+	private, _ := json.Marshal(m)
+	if _, err := Matches(private, &key.PublicKey); err == nil {
+		t.Error("Matches accepted a JWK carrying d")
+	}
+	delete(m, "d")
+	m["X"] = m["x"]
+	miscased, _ := json.Marshal(m)
+	if _, err := ParsePublicKey(miscased); err == nil {
+		t.Error("ParsePublicKey accepted a JWK with both x and X")
 	}
 }

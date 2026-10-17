@@ -7,8 +7,8 @@ import (
 	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 var b64 = base64.RawURLEncoding
@@ -147,7 +147,7 @@ func (k JWK) PublicKey() (crypto.PublicKey, error) {
 // §3.2).
 func ParsePublicKey(raw []byte) (crypto.PublicKey, error) {
 	var k JWK
-	if err := json.Unmarshal(raw, &k); err != nil {
+	if err := strictjson.Unmarshal(raw, &k); err != nil {
 		return nil, fmt.Errorf("jwk: unmarshal: %w", err)
 	}
 	if k.D != "" {
@@ -157,15 +157,21 @@ func ParsePublicKey(raw []byte) (crypto.PublicKey, error) {
 }
 
 // Matches reports whether raw (a JSON-encoded JWK) encodes the same
-// public key as pub.
+// public key as pub. raw carrying a private key ("d") is an error, as
+// for ParsePublicKey.
 func Matches(raw []byte, pub crypto.PublicKey) (bool, error) {
 	candidate, err := Marshal(pub)
 	if err != nil {
 		return false, err
 	}
 	var want JWK
-	if err := json.Unmarshal(raw, &want); err != nil {
+	if err := strictjson.Unmarshal(raw, &want); err != nil {
 		return false, fmt.Errorf("jwk: unmarshal: %w", err)
+	}
+	// A JWK naming the key it's compared with must be public, as
+	// ParsePublicKey's must: one carrying "d" has disclosed its key.
+	if want.D != "" {
+		return false, fmt.Errorf("jwk: a public key was expected, but the JWK carries a private key")
 	}
 	// Compared as re-encoded from the parsed key: the same key can be
 	// written in more than one base64url form.

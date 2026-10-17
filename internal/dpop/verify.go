@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"net/url"
 	"strings"
 	"time"
@@ -113,7 +114,7 @@ func Verify(ctx context.Context, req VerifyRequest) (VerifiedProof, error) {
 	}
 
 	var claims dpopClaims
-	if err := json.Unmarshal(payload, &claims); err != nil {
+	if err := strictjson.Unmarshal(payload, &claims); err != nil {
 		return VerifiedProof{}, fmt.Errorf("dpop: unmarshal claims: %w", err)
 	}
 	iat, err := validateDPoPClaims(claims, req)
@@ -170,7 +171,7 @@ func resolveDPoPProofKey(header map[string]any) (crypto.PublicKey, jwk.JWK, erro
 		return nil, jwk.JWK{}, fmt.Errorf("dpop: marshal jwk header: %w", err)
 	}
 	var parsedJWK jwk.JWK
-	if err := json.Unmarshal(jwkRaw, &parsedJWK); err != nil {
+	if err := strictjson.Unmarshal(jwkRaw, &parsedJWK); err != nil {
 		return nil, jwk.JWK{}, fmt.Errorf("dpop: unmarshal jwk header: %w", err)
 	}
 	// RFC 9449 §4.3: "the jwk JOSE Header Parameter does not contain a

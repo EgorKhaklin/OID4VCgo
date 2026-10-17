@@ -2,9 +2,9 @@ package verifier
 
 import (
 	"crypto/ecdsa"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
@@ -103,7 +103,7 @@ func (v *Verifier) ParseDirectPostJWTResponse(responseJWE string, decryptionKey 
 		Error            string              `json:"error"`
 		ErrorDescription string              `json:"error_description"`
 	}
-	if err := json.Unmarshal(plaintext, &wire); err != nil {
+	if err := strictjson.Unmarshal(plaintext, &wire); err != nil {
 		return ParsedResponse{}, newError(ReasonMalformed, "parse direct_post.jwt response: unmarshal", err)
 	}
 	if wire.Error != "" {

@@ -1,8 +1,8 @@
 package verifier
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"slices"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -69,7 +69,7 @@ func checkCarriedRegistrations(infos []VerifierInfo, clientID string) error {
 		var claims struct {
 			Sub string `json:"sub"`
 		}
-		if err := json.Unmarshal(payload, &claims); err != nil {
+		if err := strictjson.Unmarshal(payload, &claims); err != nil {
 			return fmt.Errorf("verifier_info[%d]: the registration is malformed: %w", i, err)
 		}
 		if claims.Sub != clientID {

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"net/url"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -249,7 +250,7 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 	}
 
 	var wire wireRequestObjectPayload
-	if err := json.Unmarshal(payload, &wire); err != nil {
+	if err := strictjson.Unmarshal(payload, &wire); err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: parse payload: %w", err)
 	}
 	if wire.ClientID != params.ClientID {
