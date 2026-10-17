@@ -79,6 +79,12 @@ const (
 	// for a credential: a key attestation needs a WalletProvider
 	// (walletflow.ErrProofUnsupported).
 	CodeProofUnsupported = "proof_unsupported"
+	// CodeRequestRefused: the wallet refused an authentic presentation
+	// request it must not answer — transaction_data it doesn't support,
+	// or a parameter OpenID4VP forbids — and told the Verifier
+	// (walletflow.ErrRequestRefused). Detail is the OpenID4VP error code
+	// sent, such as invalid_transaction_data.
+	CodeRequestRefused = "request_refused"
 	// CodeProtocol: an issuer, Authorization Server or Verifier answered
 	// with an error, or with something the wallet refuses.
 	CodeProtocol = "protocol"

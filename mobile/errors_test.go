@@ -100,6 +100,16 @@ func TestClassify_DeliveryUnknown(t *testing.T) {
 	}
 }
 
+// A refused request is request_refused with the OpenID4VP error code
+// sent as its detail, and none of the Verifier's own description.
+func TestClassify_RequestRefused(t *testing.T) {
+	err := classify(&walletflow.RequestRefusedError{Code: "invalid_transaction_data", Description: "the verifier's own words"})
+	var e *Error
+	if !errors.As(err, &e) || e.Code != CodeRequestRefused || e.Detail != "invalid_transaction_data" || strings.Contains(e.Message, "verifier's own words") {
+		t.Errorf("classify = %#v", err)
+	}
+}
+
 // A Wallet Provider callback's network failure, marked by the Swift
 // adapter, is network; another failure is platform.
 func TestProviderError(t *testing.T) {

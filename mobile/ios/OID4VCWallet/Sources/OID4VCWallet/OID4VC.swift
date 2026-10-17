@@ -71,6 +71,11 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// issuer takes no proof it can give: a key attestation needs a
         /// `WalletProvider`.
         public static let proofUnsupported = Code(rawValue: MobileCodeProofUnsupported)
+        /// The wallet refused a Verifier's request it must not answer —
+        /// `transaction_data` it doesn't support, or a parameter
+        /// OpenID4VP forbids — and told the Verifier.
+        /// `WalletError.protocolError` is the error code it sent.
+        public static let requestRefused = Code(rawValue: MobileCodeRequestRefused)
         /// An issuer, Authorization Server or Verifier answered with an error,
         /// or with something the wallet refuses. `WalletError.protocolError`
         /// carries its OAuth error code, when it gave one.
@@ -120,6 +125,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         case .reissueRequired: "This credential can't be refreshed. Receive it again from the issuer."
         case .deliveryUnknown: "Your response may not have reached the verifier. Check with them before sharing again."
         case .untrustedVerifier: "This verifier isn't one your wallet trusts, so its request wasn't opened."
+        case .requestRefused: "This verifier's request asks for something this wallet doesn't support, so it was refused."
         case .profileViolation, .clientAuthUnsupported, .proofUnsupported: "This wallet can't receive credentials from this issuer."
         case .protocolError where protocolError == "invalid_grant": "That code or PIN wasn't accepted."
         case .protocolError: "The service refused the request."

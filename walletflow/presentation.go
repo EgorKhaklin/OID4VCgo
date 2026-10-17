@@ -136,10 +136,41 @@ func (w *Wallet) StartPresentation(ctx context.Context, requestLink string) (*Pr
 	// Object's signature, and that client_id is bound to that
 	// certificate.
 	req, err := w.core.FetchAuthorizationRequest(ctx, link.RequestURI, link.ClientID)
+	var rejected *wallet.RequestRejectedError
+	if errors.As(err, &rejected) {
+		return nil, w.refuse(ctx, rejected)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: presentation request: %w", err)
 	}
 	return w.newPresentation(ctx, req)
+}
+
+// refuse tells the Verifier its authentic request r is refused, by an
+// error response to its response_uri (OpenID4VP §8.5), and returns
+// the *RequestRefusedError. A request with nowhere to send it, or no
+// key to encrypt it to, is refused locally.
+func (w *Wallet) refuse(ctx context.Context, r *wallet.RequestRejectedError) error {
+	refused := &RequestRefusedError{Code: r.Code, Description: r.Description}
+	if r.ResponseURI == "" || r.ResponseEncryptionKey == nil {
+		refused.sendErr = errors.New("the request names no response_uri or encryption key")
+		return refused
+	}
+	responseJWE, err := wallet.BuildDirectPostErrorResponse(wallet.BuildDirectPostErrorResponseParams{
+		Error: r.Code, ErrorDescription: r.Description, State: r.State,
+		EncryptionKey: r.ResponseEncryptionKey, EncryptionKeyID: r.ResponseEncryptionKeyID, EncryptionEnc: r.ResponseEncryptionEnc,
+	})
+	if err != nil {
+		refused.sendErr = err
+		return refused
+	}
+	reply, err := wallet.SubmitDirectPostResponse(ctx, w.deps.HTTP, r.ResponseURI, responseJWE)
+	if err != nil {
+		refused.sendErr = err
+		return refused
+	}
+	refused.RedirectURI = reply.RedirectURI
+	return refused
 }
 
 func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRequest) (*Presentation, error) {
