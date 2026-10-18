@@ -116,8 +116,10 @@ func (r ExchangePreAuthorizedCodeResult) WriteJSON(w http.ResponseWriter) {
 	if r.NextDPoPNonce != "" {
 		w.Header().Set("DPoP-Nonce", r.NextDPoPNonce)
 	}
-	// It carries tokens: never cached (RFC 6749 §5.1).
+	// It carries tokens: never cached. RFC 6749 §5.1 requires both
+	// headers, Pragma for HTTP/1.0 caches.
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(struct { //nolint:gosec // the actual §6.2 Token Response body, meant to carry this
