@@ -347,7 +347,8 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	}
 	ptc, ok := cc.ProofTypesSupported[proofType]
 	if !ok {
-		return oid4vci.CredentialResponse{}, newError(ErrorInvalidProof, 400,
+		// An unsupported parameter value (§8.3.1.2), not an invalid proof.
+		return oid4vci.CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
 			fmt.Sprintf("proof type %q is not supported for this credential_configuration_id", proofType), nil)
 	}
 
@@ -513,12 +514,17 @@ func singleProofType(proofs map[string][]string, cc CredentialConfiguration) (pr
 		return "", nil, newError(ErrorInvalidCredentialRequest, 400,
 			"this credential_configuration_id requires no cryptographic binding, which is not supported", nil)
 	}
-	if len(proofs) != 1 {
-		return "", nil, newError(ErrorInvalidProof, 400, "proofs must contain exactly one proof type", nil)
+	// A missing proofs is invalid_proof; a malformed one is
+	// invalid_credential_request (§8.3.1.2).
+	switch {
+	case len(proofs) == 0:
+		return "", nil, newError(ErrorInvalidProof, 400, "proofs is required", nil)
+	case len(proofs) > 1:
+		return "", nil, newError(ErrorInvalidCredentialRequest, 400, "proofs must contain exactly one proof type", nil)
 	}
 	for pt, v := range proofs {
 		if len(v) == 0 {
-			return "", nil, newError(ErrorInvalidProof, 400, "proofs value must be a non-empty array", nil)
+			return "", nil, newError(ErrorInvalidCredentialRequest, 400, "proofs value must be a non-empty array", nil)
 		}
 		proofType, values = pt, v
 	}
@@ -586,7 +592,11 @@ func (iss *Issuer) issueBatch(ctx context.Context, cc CredentialConfiguration, r
 		}
 		credential, err := iss.issueInstance(cc, instance, key)
 		if err != nil {
-			return nil, newError(ErrorCredentialRequestDenied, 400, "credential issuance failed", err)
+			// The signer's failure, or claims the deployment built that
+			// can't be signed: a server error the Wallet may retry, not
+			// credential_request_denied, which it SHOULD treat as
+			// unrecoverable (§8.3.1.2).
+			return nil, fmt.Errorf("issuer: credential issuance failed: %w", err)
 		}
 		credentials = append(credentials, oid4vci.IssuedCredential{Credential: credential})
 	}

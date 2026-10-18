@@ -663,7 +663,7 @@ func TestRequestCredential_RejectsWrongNumberOfProofTypes(t *testing.T) {
 			},
 			SDJWTClaims: testSDJWTClaims(),
 		})
-		assertIssuerError(t, err, issuer.ErrorInvalidProof)
+		assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
 	})
 
 	t.Run("empty proof array", func(t *testing.T) {
@@ -672,14 +672,14 @@ func TestRequestCredential_RejectsWrongNumberOfProofTypes(t *testing.T) {
 			Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {}},
 			SDJWTClaims:               testSDJWTClaims(),
 		})
-		assertIssuerError(t, err, issuer.ErrorInvalidProof)
+		assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
 	})
 }
 
 func TestRequestCredential_RejectsUnsupportedProofType(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	_, err := requestSDJWTWithProof(f, "di_vp", "whatever")
-	assertIssuerError(t, err, issuer.ErrorInvalidProof)
+	assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
 }
 
 func TestRequestCredential_RejectsWrongAud(t *testing.T) {
@@ -1008,7 +1008,7 @@ func TestRequestCredential_RejectsExpiredNonce(t *testing.T) {
 func TestRequestCredential_RejectsEmptyAttestationArray(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeAttestation)
-	assertIssuerError(t, err, issuer.ErrorInvalidProof)
+	assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
 }
 
 func TestRequestCredential_RejectsAttestationProofTypeWhenUnconfigured(t *testing.T) {
@@ -1020,7 +1020,7 @@ func TestRequestCredential_RejectsAttestationProofTypeWhenUnconfigured(t *testin
 		Proofs:                    map[string][]string{oid4vci.ProofTypeAttestation: {att}},
 		MdocClaims:                testMdocClaims(t),
 	})
-	assertIssuerError(t, err, issuer.ErrorInvalidProof)
+	assertIssuerError(t, err, issuer.ErrorInvalidCredentialRequest)
 }
 
 func TestRequestCredential_RejectsProofTypeThisPackageDoesNotImplement(t *testing.T) {
