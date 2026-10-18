@@ -425,3 +425,27 @@ func TestDeviceSignedMapValuedElementVerifiesReliably(t *testing.T) {
 		}
 	}
 }
+
+// §12.4's DeviceAuth is one of deviceSignature and deviceMac: one
+// carrying both is refused, rather than silently read as a signature.
+func TestUnmarshalDeviceSignedRejectsBothAuths(t *testing.T) {
+	signed := DeviceSigned{NameSpaces: testDeviceNameSpaces(), DeviceAuth: []byte{0x80}, AuthType: DeviceAuthSignature}
+	nameSpaces, err := signed.deviceNameSpacesBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	both, err := encMode.Marshal(wireDeviceSigned{NameSpaces: nameSpaces, DeviceAuth: wireDeviceAuth{DeviceSignature: []byte{0x80}, DeviceMac: []byte{0x80}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UnmarshalDeviceSigned(both); err == nil {
+		t.Error("a DeviceAuth with both deviceSignature and deviceMac was accepted")
+	}
+	one, err := signed.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UnmarshalDeviceSigned(one); err != nil {
+		t.Errorf("a DeviceAuth with only deviceSignature: %v", err)
+	}
+}
