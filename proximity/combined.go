@@ -16,8 +16,8 @@ type CombinedOptions struct {
 
 // CombinedDeviceSession owns two independent ephemeral keys and transcripts.
 // Like DeviceSession, callers must serialize its methods and access to its
-// offers. Platform code selects QR after BLE connection, or NFC on application
-// selection, before handing any session message to the selected offer.
+// offers. Platform code selects QR after BLE connection, or NFC after the full
+// Hs read for BLE or the NFC data application SELECT, before session messages.
 type CombinedDeviceSession struct {
 	qr, nfc  *DeviceSession
 	selected string

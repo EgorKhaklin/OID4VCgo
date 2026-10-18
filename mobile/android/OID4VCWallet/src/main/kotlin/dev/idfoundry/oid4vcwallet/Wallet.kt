@@ -702,7 +702,8 @@ public class Wallet(
 
     /**
      * Offers QR/BLE and NFC with independent keys and one consent flow. A valid
-     * NFC application SELECT or a completed QR BLE connection wins permanently.
+     * NFC-to-BLE handover (full Hs read), NFC data application SELECT, or a
+     * completed QR BLE connection wins permanently. Type 4 discovery keeps QR available.
      * NFC-only remains available without Bluetooth permission; then QR is omitted.
      * Closing a previous app-level NFC/combined owner finishes before replacement.
      */

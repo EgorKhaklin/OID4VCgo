@@ -211,6 +211,20 @@ class ProximityTest {
                 assertTrue(combined.qrCode.startsWith("mdoc:"))
                 val reader: ProximityReaderSession
                 if (!nfcWins) {
+                    // A static-only reader abandons TNEP, or drops out during a static Hs.
+                    fun apdu(command: ByteArray): ByteArray {
+                        val response = checkNotNull(combined.owner.process(command))
+                        assertTrue(response.takeLast(2).toByteArray().contentEquals(nfcResponse(0x9000)))
+                        return response.copyOf(response.size - 2)
+                    }
+                    apdu(byteArrayOf(0,0xa4.toByte(),4,0,7) + NfcType4.AID + byteArrayOf(0))
+                    apdu(byteArrayOf(0,0xa4.toByte(),0,0x0c,2,0xe1.toByte(),4))
+                    val length = apdu(byteArrayOf(0,0xb0.toByte(),0,0,2))
+                    val count = if (negotiated) ((length[0].toInt() and 255) shl 8) or (length[1].toInt() and 255) else 1
+                    apdu(byteArrayOf(0,0xb0.toByte(),0,2,count.toByte()))
+                    assertEquals(null, combined.selectedEngagement.value)
+                    combined.owner.deactivate()
+                    assertEquals(ProximityPresentation.State.WaitingForReader, combined.state.value)
                     reader = s.reader.startWith(combined.qrCode, DOC_TYPE, mapOf(NAMESPACE to listOf("family_name")), timeouts, qrReader)
                     awaitRequest(combined.owner.presentation)
                     val select = byteArrayOf(0, 0xa4.toByte(), 4, 0x0c, 7) + NfcType4.AID
@@ -221,6 +235,7 @@ class ProximityTest {
                     val modes = "[\"${selectedMode.rawValue}\"]"
                     val hr = if (nfcData) Mobile.newNFCHandoverRequestWithNFCData(modes,255,256) else Mobile.newNFCHandoverRequest(modes)
                     val hs = NfcType4Reader({ checkNotNull(combined.owner.process(it)) }, 128).read(hr)
+                    assertEquals(if (nfcData) null else SelectedEngagement.NFC_BLE, combined.selectedEngagement.value)
                     val transport = if (nfcData) {
                         val parameters = decode<NfcDataParametersJSON>(Mobile.parseNfcDataParameters(hs))
                         NfcDataReaderTransport({ command ->

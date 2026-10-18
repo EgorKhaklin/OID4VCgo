@@ -245,12 +245,45 @@ instructions and the QR alternative if present. Do not force a different wallet'
 routing. Pausing releases preference; explicitly close on screen exit.
 
 QR BLE advertising/scanning starts immediately. A completed QR BLE connection
-(the State-start handshake) or an accepted Type 4 NFC application SELECT claims
-the presentation. The losing offer can never attach or be revived by field loss.
+(the State-start handshake), a complete NFC-to-BLE Hs read, or an NFC data
+application SELECT after handover claims the presentation. Type 4 discovery,
+reading TNEP parameters, and preparing Hr/Hs do not withdraw QR. Field loss
+before Hs creation resets an uncommitted attempt for another tap; QR stays
+available. Static partial reads also reset. Once negotiated Hs is produced,
+field loss before its full read cancels the presentation to keep Hr/Hs frozen,
+unless QR already won. A losing NFC field loss never cancels the winning QR
+session. The losing offer cannot attach or be revived after commitment.
 After QR wins, further NFC APDUs return `6985`. After NFC wins, QR tasks stop and
 their BLE resources close before any NFC BLE transport is created. NFC BLE still
 waits until the complete Hs has been read. There are never two offer advertisers
 running together. For NFC data, keep the devices together through consent.
+
+Use static handover (`NfcEngagementOptions()`, or `negotiated = false`) for
+unknown readers; this is already the combined API default. Negotiated mode
+requires a TNEP-capable reader to select the handover service and write Hr.
+A reader that only reads the initial NDEF gets service parameters, not Hs;
+there is no automatic switch to a different static transcript. Its incomplete
+tap leaves QR available, but cannot establish NFC retrieval. To use such a
+reader over NFC, close this owner and create a static presentation.
+
+ISO/IEC 18013-5:2021's published sample, §6.3.2.3, permits a holder to offer
+either handover method or both; it requires both on the reader. See the
+[ISO-authored sample](https://standards.theiteh.com/catalog/standards/iso/8b349f37-4a4d-4379-9feb-0061079dba81/iso-iec-18013-5-2021)
+and NFC Forum's [CH overview](https://nfc-forum.org/build/specifications/connection-handover-technical-specification/).
+These support explicit mode selection, not a mandatory silent fallback.
+Detailed licensed review of §8.2.2.1, CH 1.5 and TNEP 1.0 remains an open
+conformance gate; public overviews do not replace those normative texts.
+
+For opt-in Android lifecycle diagnostics:
+
+```kotlin
+ProximityDiagnostics.enabled = true // Turn off again after troubleshooting.
+```
+
+Filter logcat by `OID4VCProximity`. Events distinguish Type 4 discovery,
+commitment, gate completion, NFC BLE startup with its modes, QR withdrawal
+and cleanup, and an aborted attempt that retains QR. Payloads and credentials
+are not logged. The default is disabled; existing app behavior is unchanged.
 
 The offers have independent ephemeral keys, DeviceEngagements and service UUIDs.
 QR uses a null Handover; NFC uses exactly `[Hs, null]` (static) or `[Hs, Hr]`

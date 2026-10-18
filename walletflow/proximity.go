@@ -149,7 +149,8 @@ func (p *ProximityPresentation) Engagement() ProximityEngagement {
 }
 
 // HandleHandoverRequest selects the negotiated carrier while the
-// presentation is waiting. It does not start a radio transport.
+// presentation is waiting. In a combined presentation this prepares the NFC
+// offer without claiming it or changing the QR offer. It does not start a radio.
 func (p *ProximityPresentation) HandleHandoverRequest(hr []byte) ([]byte, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -157,9 +158,10 @@ func (p *ProximityPresentation) HandleHandoverRequest(hr []byte) ([]byte, error)
 		return nil, fmt.Errorf("walletflow: no NFC handover pending: %w", proximity.ErrSessionClosed)
 	}
 	if p.combined != nil {
-		if p.combined.SelectedEngagement() != "nfc_ble" && p.combined.SelectedEngagement() != "nfc_data" {
-			return nil, fmt.Errorf("walletflow: NFC not selected: %w", proximity.ErrSessionClosed)
+		if p.combined.SelectedEngagement() == "qr" {
+			return nil, fmt.Errorf("walletflow: QR already selected: %w", proximity.ErrSessionClosed)
 		}
+		return p.combined.NFCOffer().HandleHandoverRequest(hr)
 	}
 	return p.s.HandleHandoverRequest(hr)
 }

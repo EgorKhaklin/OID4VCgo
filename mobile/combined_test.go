@@ -3,6 +3,7 @@
 package mobile
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 	"testing"
@@ -10,6 +11,65 @@ import (
 	"github.com/idfoundry/oid4vcgo/proximity"
 	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
+
+func TestCombinedNegotiationBeforeSelection(t *testing.T) {
+	h := newHarness(t, false)
+	h.receive(t)
+	for _, data := range []bool{false, true} {
+		for _, nfcWins := range []bool{false, true} {
+			t.Run(fmt.Sprintf("data=%t/nfc=%t", data, nfcWins), func(t *testing.T) {
+				p, err := h.w.StartCombinedProximityPresentation(`["peripheral_server"]`, true, data, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before := p.Engagement()
+				hr, err := NewNFCHandoverRequestWithNFCData(`["peripheral_server"]`, 255, 256)
+				if err != nil {
+					t.Fatal(err)
+				}
+				hs, err := p.HandleHandoverRequest(hr)
+				if err != nil {
+					t.Fatalf("prepare NFC without committing: %v", err)
+				}
+				if p.SelectedEngagement() != "" || p.Engagement() != before {
+					t.Fatal("negotiation withdrew or changed QR offer")
+				}
+				repeated, err := p.HandleHandoverRequest(hr)
+				if err != nil || !bytes.Equal(hs, repeated) {
+					t.Fatal("frozen handover changed")
+				}
+				if err := p.SelectEngagement(nfcWins); err != nil {
+					t.Fatal(err)
+				}
+				var r *proximity.ReaderSession
+				if !nfcWins {
+					eng := decode[struct {
+						QRCode string `json:"qr_code"`
+					}](t, before)
+					r, err = proximity.NewReaderSession(eng.QRCode)
+					if _, rejected := p.HandleHandoverRequest(hr); rejected == nil {
+						t.Fatal("QR winner accepted NFC negotiation")
+					}
+				} else if data {
+					r, err = proximity.NewNFCNegotiatedDataReaderSession(hs, hr)
+				} else {
+					r, err = proximity.NewNFCNegotiatedReaderSession(hs, hr)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				message, err := r.Establishment(walletflowtest.DocType, map[string][]string{walletflowtest.NameSpace: {"family_name"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if event := decode[proximityEvent](t, p.HandleMessage(NewOperation(0), message)); event.Event != "request" {
+					t.Fatalf("wrong winning transcript: %+v", event)
+				}
+				p.Terminate()
+			})
+		}
+	}
+}
 
 func TestCombinedBindings(t *testing.T) {
 	h := newHarness(t, false)

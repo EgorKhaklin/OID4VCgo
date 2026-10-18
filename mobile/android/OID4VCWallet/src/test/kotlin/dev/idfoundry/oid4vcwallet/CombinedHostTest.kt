@@ -14,6 +14,13 @@ import kotlin.concurrent.thread
 
 class CombinedHostTest {
     private val select = NfcCommand.parse(byteArrayOf(0, 0xa4.toByte(), 4, 0x0c, 7) + NfcType4.AID)!!
+    @Test fun type4SelectKeepsQrAvailableUntilHandover() {
+        val arbiter = CombinedEngagementArbiter(false) {}
+        assertTrue(arbiter.acceptNfc(select, false))
+        assertNull("Type 4 discovery must not commit NFC", arbiter.state.value)
+        assertTrue("QR cannot win after an incomplete tap", arbiter.select(false))
+    }
+
     private class Fake(private val connecting: suspend () -> Unit) : ProximityTransport {
         var closed = false
         override suspend fun connect() = connecting()
@@ -35,7 +42,7 @@ class CombinedHostTest {
         assertFalse(arbiter.select(false))
     }
 
-    @Test fun nfcSelectStopsQrBeforeNfcConnect(): Unit = runBlocking {
+    @Test fun nfcHandoverStopsQrBeforeNfcConnect(): Unit = runBlocking {
         val started = CompletableDeferred<Unit>()
         val cancelled = CompletableDeferred<Unit>()
         val arbiter = CombinedEngagementArbiter(false) {}
@@ -45,6 +52,8 @@ class CombinedHostTest {
         val connecting = async { combined.connect() }
         started.await()
         assertTrue(arbiter.acceptNfc(select, false))
+        assertNull(arbiter.state.value)
+        assertTrue(arbiter.select(true)) // The complete Hs has now been read.
         withTimeout(1000) { connecting.await() }
         assertFalse(arbiter.select(false))
         assertEquals(SelectedEngagement.NFC_BLE, arbiter.state.value)
@@ -60,7 +69,7 @@ class CombinedHostTest {
             var qr = false
             var nfc = false
             val a = thread { start.await(); qr = arbiter.select(false) }
-            val b = thread { start.await(); nfc = arbiter.acceptNfc(select, false) }
+            val b = thread { start.await(); nfc = arbiter.select(true) }
             start.countDown(); a.join(); b.join()
             assertTrue(qr.xor(nfc)); assertEquals(1, claims)
         }
@@ -85,6 +94,7 @@ class CombinedHostTest {
             val job = launch { combined.connect() }
             started.await()
             if (index % 3 != 0) arbiter.acceptNfc(select, false)
+            if (index % 3 == 2) arbiter.select(true)
             job.cancelAndJoin()
             combined.close()
             assertTrue(qr.closed && nfc.closed)
@@ -98,6 +108,8 @@ class CombinedHostTest {
             val combined = CombinedTransport(arbiter, qr, Fake {})
             val job = async { combined.connect() }
             assertTrue(arbiter.acceptNfc(select, false))
+            assertNull(arbiter.state.value)
+            assertTrue(arbiter.acceptNfc(select.copy(p2 = 0, data = NfcData.aid), true))
             withTimeout(1000) { job.await() }
             assertEquals(SelectedEngagement.NFC_DATA, arbiter.state.value)
             combined.close()
@@ -148,6 +160,7 @@ class CombinedHostTest {
             started.await()
             arbiter.acceptNfc(select, false)
             if (readHs) {
+                assertTrue(arbiter.select(true))
                 gate.complete()
                 withTimeout(1000) { nfcStarted.await() }
                 assertEquals(1, created)

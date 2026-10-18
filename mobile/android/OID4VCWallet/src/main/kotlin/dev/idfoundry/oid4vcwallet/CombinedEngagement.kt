@@ -26,7 +26,7 @@ public enum class SelectedEngagement {
     NFC_DATA,
 }
 
-/** Serializes QR connection, NFC application selection, and cancellation. */
+/** Serializes QR connection, completed NFC handover/data selection, and cancellation. */
 internal class CombinedEngagementArbiter(
     private val nfcData: Boolean,
     private val claim: (Boolean) -> Unit,
@@ -43,6 +43,7 @@ internal class CombinedEngagementArbiter(
         claim(nfc)
         selected.value = path
         ready.complete(path)
+        ProximityDiagnostics.event("Engagement committed: $path")
         return true
     }
 
@@ -55,10 +56,10 @@ internal class CombinedEngagementArbiter(
             (command.p2 == 0 || command.p2 == 0x0c)
         if (!isSelect) return true
         if (command!!.data.contentEquals(NfcData.aid)) {
-            if (!nfcData || !dataReady) return false
+            if (!nfcData || !dataReady || command.p2 != 0) return false
             return select(true)
         }
-        return !command.data.contentEquals(NfcType4.AID) || select(true)
+        return true // Type 4 discovery does not commit a handover.
     }
 }
 
@@ -73,12 +74,14 @@ internal class CombinedTransport(
     override suspend fun connect(): Unit = coroutineScope {
         val qrJob = qr?.let { transport -> launch {
             try {
+                ProximityDiagnostics.event("QR offer starting")
                 transport.connect()
                 if (!arbiter.select(false)) transport.close()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (_: Exception) {
                 // A failed QR offer must not break NFC-only retrieval.
+                ProximityDiagnostics.event("QR offer failed; NFC remains available")
                 transport.close()
             }
         } }
@@ -87,8 +90,10 @@ internal class CombinedTransport(
                 qrJob?.join()
                 chosen = checkNotNull(qr)
             } else {
+                ProximityDiagnostics.event("Withdrawing QR offer after NFC commitment")
                 qrJob?.cancelAndJoin()
                 qr?.close()
+                ProximityDiagnostics.event("QR resources closed; NFC transport may start")
                 chosen = nfc
                 nfc.connect()
             }

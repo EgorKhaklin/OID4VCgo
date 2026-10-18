@@ -719,7 +719,10 @@ New methods on `ProximityPresentation`:
 For a combined presentation, initial `Engagement()` supplies QR transport
 metadata (or empty QR/BLE fields if omitted). After NFC selection it supplies
 the NFC carrier metadata. `HandoverSelect()` always addresses the NFC offer;
-`HandleHandoverRequest()` requires NFC selection first. Repeated winning claims
+`HandleHandoverRequest()` prepares the independent NFC offer before selection
+and is rejected once QR wins. It does not withdraw QR or switch its metadata.
+Commit NFC-to-BLE after the complete Hs read; commit NFC data on its data AID
+SELECT after handover. Repeated winning claims
 are idempotent while waiting for a request. Losing claims and claims after
 termination cannot replace keys or transcripts. `Terminate()` closes both offers.
 Existing JSON shapes and all existing call signatures are unchanged.

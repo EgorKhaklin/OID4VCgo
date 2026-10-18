@@ -29,23 +29,27 @@ public class NfcPresentation internal constructor(
     private val dataTransport: NfcDataHolderTransport? = null,
     transportFor: (HolderEngagement) -> ProximityTransport,
 ) {
-    private val gate = NfcHandoverGate()
     internal val combined: CombinedEngagementArbiter? = if (handle.isCombined())
         CombinedEngagementArbiter(dataTransport != null) { handle.selectEngagement(it) } else null
-    private val tnep = if (negotiated) NfcTnepHolder {
-        handle.handleHandoverRequest(it).also { hs ->
-            if (dataTransport != null) dataTransport.selectParameters(decode<NfcDataParametersJSON>(
-                dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile.parseNfcDataParameters(hs)))
-        }
-    } else null
-    private val type4 = NfcType4(
+    private val engagement = NfcEngagement(
         if (negotiated) NfcTnep.parameters else handle.handoverSelect(),
-        tnep?.let { it::transact },
-    ) { if (tnep == null || tnep.handoverReady) gate.complete() }
+        if (negotiated) { request ->
+            handle.handleHandoverRequest(request).also { hs ->
+                if (dataTransport != null) dataTransport.selectParameters(decode<NfcDataParametersJSON>(
+                    dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile.parseNfcDataParameters(hs)))
+            }
+        } else null,
+        dataTransport, combined,
+    ) { cancelCombined() }
 
     /** The consent flow and final result of this presentation. */
     public val presentation: ProximityPresentation = ProximityPresentation(handle, { initial ->
-        val nfc = gate.transport { dataTransport ?: transportFor(currentEngagement()) }
+        val nfc = engagement.gate.transport {
+            dataTransport ?: currentEngagement().let { offer ->
+                ProximityDiagnostics.event("NFC BLE transport starting: ${offer.modes.map { it.first }}")
+                transportFor(offer)
+            }
+        }
         combined?.let { arbiter ->
             val qr = if (initial.modes.isEmpty()) null else NfcHandoverGate().apply { complete() }.transport { transportFor(initial) }
             CombinedTransport(arbiter, qr, nfc)
@@ -54,27 +58,13 @@ public class NfcPresentation internal constructor(
 
     private fun currentEngagement(): HolderEngagement = presentation.currentHolderEngagement()
 
-    private var dataSelected = false
     @Synchronized internal fun process(command: ByteArray, respond: (ByteArray) -> Unit = {}): ByteArray? {
         if (presentation.state.value.isFinal) return nfcResponse(0x6985)
-        val c = NfcCommand.parse(command)
-        if (combined?.acceptNfc(c, gate.isComplete) == false) return nfcResponse(0x6985)
-        if (c?.ins == 0xa4 && c.p1 == 4) dataSelected = dataTransport != null && c.data.contentEquals(NfcData.aid)
-        return if (dataSelected) dataTransport!!.process(command, respond) else type4.process(command)
+        return engagement.process(command, respond)
     }
 
     @Synchronized internal fun deactivate() {
-        if (tnep != null && !gate.isComplete) {
-            if (tnep.handoverReady) {
-                presentation.cancel() // Frozen Hr/Hs cannot be replaced after an incomplete RF exchange.
-                type4.deactivate()
-            } else {
-                tnep.resetBeforeSelection()
-                type4.deactivate(NfcTnep.parameters)
-            }
-        } else type4.deactivate()
-        if (dataSelected) dataTransport?.deactivate()
-        dataSelected = false
+        engagement.deactivate()
     }
 
     /**
