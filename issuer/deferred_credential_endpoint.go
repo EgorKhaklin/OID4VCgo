@@ -151,6 +151,13 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 		// exists is none of this one's business.
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, errors.New("transaction_id was not issued to this access token's client and subject"))
 	}
+	// §9: the Access Token must be "valid for the issuance of the
+	// Credential(s) previously requested": the same client and subject
+	// aren't enough, if the token no longer grants that configuration (a
+	// narrower refreshed token, or one from another grant).
+	if record.CredentialConfigurationID != "" && !grantsConfiguration(auth, record.CredentialConfigurationID, iss.cfg.CredentialConfigurationsSupported[record.CredentialConfigurationID]) {
+		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, errors.New("the access token doesn't grant the transaction's credential configuration"))
+	}
 
 	switch record.Status {
 	case DeferredTransactionPending:

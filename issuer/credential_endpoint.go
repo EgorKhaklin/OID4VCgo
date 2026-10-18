@@ -458,6 +458,18 @@ func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 // authorization detail for id carries credential_identifiers, the
 // Wallet MUST use one of those instead (§8.2: credential_configuration_id
 // "MUST NOT be used otherwise").
+// grantsConfiguration reports whether auth grants configuration id at
+// all: through an authorization detail naming it, with or without
+// credential_identifiers, or cc's scope.
+func grantsConfiguration(auth AuthorizedRequest, id string, cc CredentialConfiguration) bool {
+	for _, d := range auth.AuthorizationDetails {
+		if d.Type == oid4vci.AuthorizationDetailsTypeOpenIDCredential && d.CredentialConfigurationID == id {
+			return true
+		}
+	}
+	return cc.Scope != "" && slices.Contains(auth.Scopes, cc.Scope)
+}
+
 func authorizeCredentialConfigurationID(auth AuthorizedRequest, id string, cc CredentialConfiguration) error {
 	for _, d := range auth.AuthorizationDetails {
 		if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential || d.CredentialConfigurationID != id {
