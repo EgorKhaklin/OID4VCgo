@@ -322,9 +322,8 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	if err := requireClientIdentityDecision(auth); err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
-	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
-		return oid4vci.CredentialResponse{}, newError(ErrorInvalidEncryptionParameters, 400,
-			"credential_response_encryption requires the request itself to be encrypted", nil)
+	if err := iss.requireRequestEncryption(req.RequestWasEncrypted, req.ResponseEncryption != nil); err != nil {
+		return oid4vci.CredentialResponse{}, err
 	}
 	if err := iss.requireResponseEncryption(req.ResponseEncryption); err != nil {
 		return oid4vci.CredentialResponse{}, err

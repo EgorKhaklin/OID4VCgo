@@ -1630,3 +1630,28 @@ func TestNewRefusesKeyAttestationsOnJWTProofType(t *testing.T) {
 		t.Errorf("New: %v, want key_attestations_required on jwt refused", err)
 	}
 }
+
+// An issuer whose request encryption is Required refuses a plaintext
+// Credential Request, whatever handler passes it to RequestCredential:
+// the metadata says encryption_required (§10).
+func TestRequestCredential_RequiredRequestEncryption(t *testing.T) {
+	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+		cfg.RequestEncryption = &issuer.RequestEncryptionSupport{
+			Keys:               []issuer.RequestDecryptionKey{{KeyID: "req-1", PrivateKey: testP256Key(t)}},
+			EncValuesSupported: []jwe.Enc{jwe.A128GCM}, Required: true,
+		}
+	})
+	request := func(encrypted bool) error {
+		_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+			CredentialConfigurationID: testSDJWTConfigID,
+			Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {buildJWTProof(t, testP256Key(t), testIssuer, f.issueNonce(t))}},
+			SDJWTClaims:               testSDJWTClaims(),
+			RequestWasEncrypted:       encrypted,
+		})
+		return err
+	}
+	assertIssuerError(t, request(false), issuer.ErrorInvalidEncryptionParameters)
+	if err := request(true); err != nil {
+		t.Errorf("an encrypted request: %v", err)
+	}
+}

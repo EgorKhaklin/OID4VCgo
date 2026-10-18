@@ -252,6 +252,26 @@ func (iss *Issuer) EncryptResponseBody(body []byte, req *ResponseEncryptionReque
 // this issuer can't encrypt to — checked before a nonce is consumed or
 // a deferred transaction invalidated, so a response that could never
 // be encrypted doesn't use either up.
+// requireRequestEncryption refuses a request that wasn't encrypted
+// when it had to be: always, when the metadata says
+// encryption_required (§10, RequestEncryptionSupport.Required), and
+// when it asks for an encrypted response (§8.2: "Credential Request
+// encryption MUST be used if the credential_response_encryption
+// parameter is included"). Checked here, not only in
+// DecryptRequestBody, so a handler of the deployment's own that calls
+// RequestCredential directly can't skip it.
+func (iss *Issuer) requireRequestEncryption(wasEncrypted, wantsEncryptedResponse bool) error {
+	switch {
+	case wasEncrypted:
+		return nil
+	case iss.cfg.RequestEncryption != nil && iss.cfg.RequestEncryption.Required:
+		return newError(ErrorInvalidEncryptionParameters, 400, "this issuer requires an encrypted request", nil)
+	case wantsEncryptedResponse:
+		return newError(ErrorInvalidEncryptionParameters, 400, "credential_response_encryption requires the request itself to be encrypted", nil)
+	}
+	return nil
+}
+
 func (iss *Issuer) requireResponseEncryption(req *ResponseEncryptionRequest) error {
 	if req == nil {
 		if iss.cfg.ResponseEncryption != nil && iss.cfg.ResponseEncryption.Required {

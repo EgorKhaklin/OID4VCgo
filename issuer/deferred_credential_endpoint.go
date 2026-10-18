@@ -105,9 +105,8 @@ func (iss *Issuer) checkDeferredCredentialRequest(auth AuthorizedRequest, req De
 	if req.TransactionID == "" {
 		return newError(ErrorInvalidCredentialRequest, 400, "transaction_id is required", nil)
 	}
-	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
-		return newError(ErrorInvalidEncryptionParameters, 400,
-			"credential_response_encryption requires the request itself to be encrypted", nil)
+	if err := iss.requireRequestEncryption(req.RequestWasEncrypted, req.ResponseEncryption != nil); err != nil {
+		return err
 	}
 	return iss.requireResponseEncryption(req.ResponseEncryption)
 }
