@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -140,5 +141,19 @@ func TestRequestNotification_PropagatesTransportError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("RequestNotification = nil error, want error")
+	}
+}
+
+// event_description is printable ASCII without " or \ (OpenID4VCI 1.0
+// §11.1): anything else is refused before it's sent.
+func TestRequestNotification_EventDescriptionCharacters(t *testing.T) {
+	w := newTestWallet(t, func(*http.Request) (*http.Response, error) { return nil, errors.New("no request expected") })
+	for _, desc := range []string{`a "quote"`, `back\slash`, "new\nline", "café"} {
+		err := w.RequestNotification(context.Background(), nil, fapi.URL{}, wallet.NotificationRequest{
+			NotificationID: "n", Event: oid4vci.NotificationEventCredentialFailure, EventDescription: desc,
+		})
+		if err == nil || !strings.Contains(err.Error(), "event_description") {
+			t.Errorf("%q: %v, want refused", desc, err)
+		}
 	}
 }

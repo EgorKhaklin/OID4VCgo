@@ -36,7 +36,8 @@ func (w *Wallet) FetchCredentialIssuerMetadata(ctx context.Context, issuerURL st
 	if err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: %w", err)
 	}
-	req := fapihttp.FetchRequest{URL: target, ExpectedContentType: "application/json", AlternateContentTypes: []string{"application/jwt"}}
+	// §12.2.2: "The Wallet is RECOMMENDED to send an Accept header".
+	req := fapihttp.FetchRequest{URL: target, ExpectedContentType: "application/json", AlternateContentTypes: []string{"application/jwt"}, Accept: "application/json"}
 	if w.cfg.IssuerMetadataRoots != nil {
 		req.Accept = acceptSignedMetadata
 	}

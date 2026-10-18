@@ -168,6 +168,12 @@ func (o CredentialOffer) Validate() error {
 	if o.CredentialIssuer == "" {
 		return fmt.Errorf("credential_issuer is required")
 	}
+	// §12.2.1: "no query or fragment components". The wallet builds the
+	// issuer's metadata URL from it (§12.2.2), which a query would land
+	// in the middle of.
+	if u, err := url.Parse(o.CredentialIssuer); err != nil || !u.IsAbs() || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(o.CredentialIssuer, "#") {
+		return fmt.Errorf("credential_issuer %q isn't an absolute URL without a query or fragment", o.CredentialIssuer)
+	}
 	if len(o.CredentialConfigurationIDs) == 0 {
 		return fmt.Errorf("credential_configuration_ids must not be empty")
 	}

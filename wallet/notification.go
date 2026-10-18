@@ -73,6 +73,13 @@ func (w *Wallet) RequestNotification(
 	default:
 		return fmt.Errorf("wallet: request notification: event must be credential_accepted, credential_failure, or credential_deleted")
 	}
+	// §11.1: event_description "MUST NOT include characters outside the
+	// set %x20-21 / %x23-5B / %x5D-7E": printable ASCII without " or \.
+	for _, r := range req.EventDescription {
+		if r < 0x20 || r > 0x7e || r == '"' || r == '\\' {
+			return fmt.Errorf("wallet: request notification: event_description has %q, outside the characters OpenID4VCI §11.1 allows", r)
+		}
+	}
 
 	body, err := json.Marshal(req)
 	if err != nil {
