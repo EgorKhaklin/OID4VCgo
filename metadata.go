@@ -3,6 +3,7 @@ package oid4vci
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	fapi "github.com/idfoundry/fapigo"
 
@@ -67,10 +68,9 @@ func (l Logo) Validate() error {
 }
 
 // Display is one entry in Metadata's own top-level "display" (§12.2.4)
-// — a Credential Issuer's own display properties for one language. At
-// most one Display per distinct Locale (including "") is meaningful;
-// this type doesn't reject a duplicate itself (§12.2.4 doesn't make it
-// a MUST either) — describing, not policing, every SHOULD.
+// — a Credential Issuer's own display properties for one language.
+// §12.2.4: "There MUST be only one object for each language
+// identifier"; ValidateDisplays checks a whole array for that.
 type Display struct {
 	// Name is OPTIONAL: a display name for the Credential Issuer.
 	Name string `json:"name,omitempty"`
@@ -218,17 +218,66 @@ type CredentialMetadata struct {
 	Claims  []ClaimsDescription `json:"claims,omitempty"`
 }
 
-// Validate checks cm's own structural requirements (Appendix A/B.2).
+// Validate checks cm's own structural requirements (Appendix A/B.2):
+// one display object per language identifier, in cm.Display and in each
+// claim's, and one description per claim path (B.3: "When a repeated or
+// contradictory claim description is provided, the processing MUST be
+// aborted").
 func (cm CredentialMetadata) Validate() error {
 	for i, d := range cm.Display {
 		if err := d.Validate(); err != nil {
 			return fmt.Errorf("display[%d]: %w", i, err)
 		}
 	}
+	if err := uniqueLocales(cm.Display, func(d CredentialDisplay) string { return d.Locale }); err != nil {
+		return fmt.Errorf("display: %w", err)
+	}
+	paths := map[string]bool{}
 	for i, c := range cm.Claims {
 		if err := c.Validate(); err != nil {
 			return fmt.Errorf("claims[%d]: %w", i, err)
 		}
+		if err := uniqueLocales(c.Display, func(d ClaimDisplay) string { return d.Locale }); err != nil {
+			return fmt.Errorf("claims[%d].display: %w", i, err)
+		}
+		key, err := json.Marshal(c.Path)
+		if err != nil {
+			return fmt.Errorf("claims[%d]: path: %w", i, err)
+		}
+		if paths[string(key)] {
+			return fmt.Errorf("claims[%d]: path %s is described twice (Appendix B.3)", i, key)
+		}
+		paths[string(key)] = true
+	}
+	return nil
+}
+
+// ValidateDisplays checks a Credential Issuer's "display" array
+// (§12.2.4): each entry, and one per language identifier.
+func ValidateDisplays(displays []Display) error {
+	for i, d := range displays {
+		if err := d.Validate(); err != nil {
+			return fmt.Errorf("display[%d]: %w", i, err)
+		}
+	}
+	if err := uniqueLocales(displays, func(d Display) string { return d.Locale }); err != nil {
+		return fmt.Errorf("display: %w", err)
+	}
+	return nil
+}
+
+// uniqueLocales refuses two items with one language identifier ("There
+// MUST be only one object for each language identifier", §12.2.4 and
+// Appendix B.2). BCP 47 tags compare case-insensitively (RFC 5646
+// §2.1.1); "" is an identifier like any other.
+func uniqueLocales[T any](items []T, locale func(T) string) error {
+	seen := map[string]bool{}
+	for i, item := range items {
+		l := strings.ToLower(locale(item))
+		if seen[l] {
+			return fmt.Errorf("[%d]: a second object for language %q", i, locale(item))
+		}
+		seen[l] = true
 	}
 	return nil
 }

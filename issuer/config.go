@@ -603,10 +603,8 @@ func validateConfig(cfg Config) error {
 			return fmt.Errorf("issuer: config: credential_configurations_supported[%q]: %w", id, err)
 		}
 	}
-	for i, d := range cfg.Display {
-		if err := d.Validate(); err != nil {
-			return fmt.Errorf("issuer: config: display[%d]: %w", i, err)
-		}
+	if err := oid4vci.ValidateDisplays(cfg.Display); err != nil {
+		return fmt.Errorf("issuer: config: %w", err)
 	}
 	if cfg.BatchCredentialIssuance != nil {
 		if err := cfg.BatchCredentialIssuance.Validate(); err != nil {
