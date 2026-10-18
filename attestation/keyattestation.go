@@ -9,6 +9,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // TypHeader is the required JOSE "typ" header of a Key Attestation JWT
@@ -153,7 +154,7 @@ func Parse(compact string) (KeyAttestation, error) {
 		return KeyAttestation{}, fmt.Errorf("attestation: %w", err)
 	}
 	var wire wireClaims
-	if err := json.Unmarshal(payload, &wire); err != nil {
+	if err := strictjson.Unmarshal(payload, &wire); err != nil {
 		return KeyAttestation{}, fmt.Errorf("attestation: unmarshal claims: %w", err)
 	}
 	if wire.IssuedAt == 0 {

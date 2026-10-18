@@ -13,6 +13,7 @@ import (
 	"errors"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1691,5 +1692,24 @@ func TestRequestCredential_ProofIatNumericDate(t *testing.T) {
 		t.Errorf("a fractional iat: %v", err)
 	}
 	_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof(1e300))
+	assertIssuerError(t, err, issuer.ErrorInvalidProof)
+}
+
+// A proof whose payload has members differing from aud only in case is
+// refused: encoding/json would read the last, an exact-match parser
+// "aud".
+func TestRequestCredential_ProofRefusesCaseVariantMembers(t *testing.T) {
+	f := newCredentialEndpointFixture(t)
+	key := testP256Key(t)
+	var jwkObj map[string]any
+	if err := json.Unmarshal(jwkJSON(t, &key.PublicKey), &jwkObj); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"aud":"https://elsewhere.example","AUD":"` + testIssuer + `","iat":` + strconv.FormatInt(time.Now().Unix(), 10) + `,"nonce":"` + f.issueNonce(t) + `"}`)
+	proof, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "openid4vci-proof+jwt", "jwk": jwkObj}, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }

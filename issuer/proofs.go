@@ -14,6 +14,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // resolveJWTProofKeys verifies every jwt-type key proof in values
@@ -126,7 +127,9 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 		Iat   *float64 `json:"iat"` // a NumericDate, which may be fractional (RFC 7519 §2)
 		Nonce string   `json:"nonce"`
 	}
-	if err := json.Unmarshal(payload, &body); err != nil {
+	// Exact member names (strictjson): of "aud" and "AUD", encoding/json
+	// would read the last, where an exact-match parser reads "aud".
+	if err := strictjson.Unmarshal(payload, &body); err != nil {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: unmarshal body", i), err)
 	}
 	if body.Aud != iss.cfg.Issuer.String() {
