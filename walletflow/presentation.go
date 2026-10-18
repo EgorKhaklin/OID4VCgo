@@ -253,7 +253,7 @@ func (p *Presentation) Linkable(id string) bool {
 // VerifierHash is verifier, under Config.CopyPolicy, would use a copy
 // another Verifier has seen.
 func (w *Wallet) linkable(c StoredCredential, verifier string) bool {
-	_, cp, _ := c.copyFor(w.cfg.CopyPolicy, verifier)
+	_, cp, _ := c.copyFor(w.cfg.CopyPolicy, verifier, w.deps.Clock())
 	return slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
 }
 
@@ -486,7 +486,7 @@ func (p *Presentation) held(_ context.Context, sel Selection) (map[string][]wall
 			// The copy Respond would present, under the copy policy: under
 			// CopyPerVerifier a returning Verifier gets the copy it saw,
 			// whose claims Preview must then show.
-			_, cp, _ := c.copyFor(p.w.cfg.CopyPolicy, p.verifier())
+			_, cp, _ := c.copyFor(p.w.cfg.CopyPolicy, p.verifier(), p.w.deps.Clock())
 			c.Credential = cp.Credential
 			out[q] = append(out[q], heldCredential(c, nil))
 		}
@@ -549,9 +549,21 @@ func (w *Wallet) reserve(ctx context.Context, sel Selection, verifier string, li
 	w.credMu.Lock()
 	defer w.credMu.Unlock()
 	current := map[string]StoredCredential{}
+	// One credential selected for several queries is presented with one
+	// copy throughout the response, as Preview showed: two copies would
+	// give the Verifier two holder keys and status entries of one
+	// credential, burning a copy and linking the two to one holder.
+	chosen := map[string]reservedCopy{}
 	var out []reservedCopy
 	for _, q := range sortedQueries(sel) {
 		for _, id := range sel[q] {
+			if prev, ok := chosen[id]; ok {
+				again := prev
+				// Released with the first: nothing to undo for this one.
+				again.query, again.reused = q, true
+				out = append(out, again)
+				continue
+			}
 			c, ok := current[id]
 			if !ok {
 				var err error
@@ -564,6 +576,7 @@ func (w *Wallet) reserve(ctx context.Context, sel Selection, verifier string, li
 				return nil, err
 			}
 			current[id] = c
+			chosen[id] = r
 			out = append(out, r)
 		}
 	}
@@ -593,7 +606,7 @@ func (w *Wallet) loadForReserve(ctx context.Context, id string) (StoredCredentia
 // Config.CopyPolicy, and marks it presented to verifier in c. toldLinkable
 // is whether the holder was told presenting it would be linkable.
 func (w *Wallet) reserveCopy(c *StoredCredential, q, id, verifier string, toldLinkable bool) (reservedCopy, error) {
-	i, cp, reused := c.copyFor(w.cfg.CopyPolicy, verifier)
+	i, cp, reused := c.copyFor(w.cfg.CopyPolicy, verifier, w.deps.Clock())
 	linkable := slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
 	if linkable && !toldLinkable {
 		// What the holder saw said otherwise: don't send it.

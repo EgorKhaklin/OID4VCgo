@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"maps"
 	"net/url"
 	"reflect"
@@ -1159,7 +1160,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 			// revoked with them.
 			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential's copies differ")
 			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: copy %d's status differs from copy 0's", c.configID, errInvalidCredential, i)
-		} else if !sameHolderClaims(first.Claims, verified.Claims) {
+		} else if !sameHolderClaims(first.Claims, verified.Claims) || !samePlaintext(c.result.Credentials[0].Credential, ic.Credential) {
 			// The holder sees copy 0's claims, and DCQL chooses per copy:
 			// copies that differ would present what the holder didn't see.
 			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential's copies differ")
@@ -1314,4 +1315,61 @@ func earliestExpiry(copies []CredentialCopy) time.Time {
 		}
 	}
 	return earliest
+}
+
+// samePlaintext reports whether two copies of an SD-JWT VC leave the
+// same claims plaintext, those that may differ per copy aside: the
+// preview the holder is shown is built from one copy, so another that
+// always discloses a claim the first made selectively disclosable
+// would send what the holder didn't see. Decoys may differ, so they
+// aren't compared; another format has no plaintext to compare.
+func samePlaintext(a, b string) bool {
+	pa, okA := plaintextPaths(a)
+	pb, okB := plaintextPaths(b)
+	return okA == okB && slices.Equal(pa, pb)
+}
+
+// plaintextPaths are credential's plaintext claim paths, sorted, as
+// "/"-joined keys ("[]" for an array element), for an SD-JWT VC; false
+// for anything else.
+func plaintextPaths(credential string) ([]string, bool) {
+	pres, err := sdjwtvc.Parse(credential)
+	if err != nil {
+		return nil, false
+	}
+	_, raw, err := jose.DecodeUnverified(pres.IssuerJWT)
+	if err != nil {
+		return nil, false
+	}
+	var payload map[string]any
+	if json.Unmarshal(raw, &payload) != nil {
+		return nil, false
+	}
+	for _, name := range perCopyClaims {
+		delete(payload, name)
+	}
+	var out []string
+	var walk func(prefix string, v any)
+	walk = func(prefix string, v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if _, digest := v["..."]; digest && len(v) == 1 {
+				return // a selectively disclosable array element
+			}
+			for k, child := range v {
+				if k == "_sd" || k == "_sd_alg" {
+					continue
+				}
+				out = append(out, prefix+"/"+k)
+				walk(prefix+"/"+k, child)
+			}
+		case []any:
+			for _, child := range v {
+				walk(prefix+"/[]", child)
+			}
+		}
+	}
+	walk("", payload)
+	slices.Sort(out)
+	return slices.Compact(out), true
 }
