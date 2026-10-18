@@ -955,8 +955,9 @@ public class Presentation internal constructor(private val handle: MobilePresent
         /** The claims it would disclose, as paths. */
         val claims: List<List<PathElement>>,
         /**
-         * An SD-JWT VC's claims its issuer didn't make selectively
-         * disclosable: the Verifier receives them whatever the selection.
+         * The SD-JWT VC claims the Verifier receives beyond [claims]:
+         * those its issuer didn't make selectively disclosable, and the
+         * plaintext members of a disclosed object a claim sits within.
          * Show them with [claims].
          */
         @SerialName("always_disclosed") val alwaysDisclosed: List<List<PathElement>> = emptyList(),

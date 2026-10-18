@@ -76,8 +76,9 @@ type Disclosure struct {
 	// Claims are the claim paths disclosed: ["family_name"] for an
 	// SD-JWT VC, [namespace, element] for an mdoc.
 	Claims []dcql.Path
-	// AlwaysDisclosed are an SD-JWT VC's claims the issuer didn't make
-	// selectively disclosable: disclosed too, whatever the selection
+	// AlwaysDisclosed are the SD-JWT VC claims disclosed beyond Claims:
+	// those the issuer didn't make selectively disclosable, and the
+	// plaintext members of a disclosed object a claim sits within
 	// (wallet.PreviewedCredential.AlwaysDisclosed). Show them with
 	// Claims.
 	AlwaysDisclosed []dcql.Path
