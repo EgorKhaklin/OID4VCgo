@@ -6,8 +6,10 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -513,6 +515,31 @@ func TestIssue_Decoys(t *testing.T) {
 		t.Fatalf("Verify: %v", err)
 	}
 	_ = payload
+}
+
+// An SD-JWT VC with no selectively disclosable claims "MUST NOT
+// contain the _sd claim" (draft-13 §3.2.2.4): Decoys adds none to it,
+// nor _sd_alg.
+func TestIssue_DecoysNeedADisclosure(t *testing.T) {
+	issuerKey := testKey(t)
+	sdjwt, _, err := Issue(issuerKey, jose.ES256, Claims{VCT: "vc-type", Additional: map[string]any{"a": "1"}}, IssueOptions{Decoys: 3})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	_, payload, err := jose.Verify(jose.ES256, &issuerKey.PublicKey, strings.SplitN(sdjwt, "~", 2)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := claims["_sd"]; ok {
+		t.Error("_sd present without a selectively disclosable claim")
+	}
+	if _, ok := claims["_sd_alg"]; ok {
+		t.Error("_sd_alg present without a selectively disclosable claim")
+	}
 }
 
 func TestIssue_IssuerCertificate_SetsX5CHeader(t *testing.T) {
