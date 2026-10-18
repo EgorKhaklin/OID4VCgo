@@ -111,3 +111,30 @@ func TestRequestCredential_EnforcesMandatoryClaims(t *testing.T) {
 		t.Errorf("an mdoc with the mandatory claim: %v", err)
 	}
 }
+
+// A status claim a Verifier would refuse isn't signed: HAIP 1.0 §6.1
+// "The status claim, if present, MUST contain status_list", with an idx
+// and a uri (Token Status List §6.2).
+func TestRequestCredential_RefusesInvalidStatusClaim(t *testing.T) {
+	request := func(status map[string]any) error {
+		f := newCredentialEndpointFixture(t)
+		_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+			CredentialConfigurationID: testSDJWTConfigID,
+			Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {buildJWTProof(t, testP256Key(t), testIssuer, f.issueNonce(t))}},
+			SDJWTClaims:               &sdjwtvc.Claims{VCT: testVCT, Status: status},
+		})
+		return err
+	}
+	if err := request(map[string]any{"status_list": map[string]any{"idx": 7, "uri": "https://issuer.example.com/statuslists/1"}}); err != nil {
+		t.Errorf("a valid status claim: %v", err)
+	}
+	for name, status := range map[string]map[string]any{
+		"no status_list": {"identifiers": map[string]any{}},
+		"no uri":         {"status_list": map[string]any{"idx": 7}},
+		"a negative idx": {"status_list": map[string]any{"idx": -1, "uri": "https://issuer.example.com/statuslists/1"}},
+	} {
+		if err := request(status); err == nil || !strings.Contains(err.Error(), "status") {
+			t.Errorf("%s: %v, want refused for its status claim", name, err)
+		}
+	}
+}

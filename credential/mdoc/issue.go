@@ -136,6 +136,9 @@ func validateClaims(claims Claims) error {
 	if !claims.ValidUntil.After(claims.ValidFrom) {
 		return fmt.Errorf("mdoc: Claims.ValidUntil must be after Claims.ValidFrom")
 	}
+	if claims.Status != nil && claims.Status.URI == "" {
+		return fmt.Errorf("mdoc: Claims.Status.URI is required")
+	}
 	if claims.Status != nil && claims.IdentifierList != nil {
 		return fmt.Errorf("mdoc: Claims.Status and Claims.IdentifierList must not both be set")
 	}

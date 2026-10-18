@@ -6,12 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"slices"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // jwtProofTyp is the required JOSE "typ" header of a jwt-type key proof
@@ -738,12 +739,37 @@ func checkInstanceType(cc CredentialConfiguration, instance CredentialInstance) 
 		if c.VCT != cc.VCT {
 			return fmt.Errorf("the credential's vct %q isn't the configuration's %q", c.VCT, cc.VCT)
 		}
+		if err := checkStatusClaim(c.Status); err != nil {
+			return err
+		}
 	case instance.MdocClaims != nil:
 		if instance.MdocClaims.DocType != cc.DocType {
 			return fmt.Errorf("the credential's docType %q isn't the configuration's %q", instance.MdocClaims.DocType, cc.DocType)
 		}
 	}
 	return checkMandatoryClaims(cc, instance)
+}
+
+// checkStatusClaim refuses a status claim a Wallet or Verifier would
+// refuse: HAIP 1.0 §6.1 "The status claim, if present, MUST contain
+// status_list", with the idx and uri a Token Status List reference
+// requires (draft-14 §6.2). It's read back from JSON, as they'd read it.
+func checkStatusClaim(status map[string]any) error {
+	if status == nil {
+		return nil
+	}
+	raw, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("status claim: %w", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return fmt.Errorf("status claim: %w", err)
+	}
+	if _, err := statuslist.ParseStatusClaim(decoded); err != nil {
+		return fmt.Errorf("status claim: %w", err)
+	}
+	return nil
 }
 
 // checkMandatoryClaims refuses a credential missing a claim cc's

@@ -587,3 +587,13 @@ func TestIssueNormalizesValidityTimes(t *testing.T) {
 		t.Error("validUntil within validFrom's second was accepted")
 	}
 }
+
+// A status reference without a uri can't be resolved: Issue refuses it.
+func TestIssueRefusesStatusWithoutURI(t *testing.T) {
+	f := newFixture(t)
+	claims := f.claims
+	claims.Status = &StatusListRef{Idx: 1}
+	if _, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}}); err == nil {
+		t.Error("issued a status reference without a uri")
+	}
+}
