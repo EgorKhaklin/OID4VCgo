@@ -97,7 +97,7 @@
 //   - BLE, NFC and Wi-Fi Aware transport code, and BLE L2CAP.
 //   - Platform Type 4 tag/APDU I/O and TNEP service state. NFC engagement
 //     constructors encode/parse static and negotiated Hs/Hr messages;
-//     the platform supplies complete NDEF messages and the BLE transport.
+//     the platform supplies complete NDEF messages and the BLE or NFC transport.
 //   - More than one request per session, and more than one document per
 //     response.
 //   - ISO/IEC 18013-7 (online presentation), OpenID4VP over the Digital
@@ -106,5 +106,5 @@
 // The mobile module wraps this package for apps (ProximityPresentation
 // and ProximityReader in the Swift and Kotlin libraries, through
 // walletflow.StartProximityPresentation on the holder's side), and they
-// carry the BLE GATT transport.
+// carry the BLE GATT transport and, on Android, NFC APDU transport.
 package proximity
