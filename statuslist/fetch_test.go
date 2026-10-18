@@ -100,20 +100,48 @@ func TestFetcher_Refuses(t *testing.T) {
 	defer srv.Close()
 	f := Fetcher{HTTP: srv.Client(), MaxBytes: 10, AllowLoopback: true}
 	for name, uri := range map[string]string{
-		"plain http":   plain.URL + "/x",
-		"redirect":     srv.URL + "/redirect",
-		"wrong type":   srv.URL + "/wrong-type",
-		"too big":      srv.URL + "/big",
-		"not found":    srv.URL + "/missing",
-		"not a URL":    "::",
-		"relative URL": "/statuslists/1",
+		"plain http":       plain.URL + "/x",
+		"redirect to http": srv.URL + "/redirect",
+		"wrong type":       srv.URL + "/wrong-type",
+		"too big":          srv.URL + "/big",
+		"not found":        srv.URL + "/missing",
+		"not a URL":        "::",
+		"relative URL":     "/statuslists/1",
 	} {
 		if _, err := f.Fetch(context.Background(), uri, TokenMediaType); err == nil {
 			t.Errorf("%s: fetched", name)
 		}
 	}
 	if followed {
-		t.Error("a redirect was followed")
+		t.Error("a redirect to http was followed")
+	}
+}
+
+// draft-14 §8.2: a 3xx "clients SHOULD follow". An https redirect is
+// followed, at most MaxStatusListRedirects deep; a Content-Type with
+// parameters, or in another case, is the media type.
+func TestFetcher_RedirectsAndContentType(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/moved":
+			http.Redirect(w, r, srv.URL+"/token", http.StatusFound)
+		case "/loop":
+			http.Redirect(w, r, srv.URL+"/loop", http.StatusFound)
+		case "/token":
+			w.Header().Set("Content-Type", "Application/StatusList+JWT; charset=utf-8")
+			_, _ = w.Write([]byte("token"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	f := Fetcher{HTTP: srv.Client(), AllowLoopback: true}
+	if got, err := f.Fetch(context.Background(), srv.URL+"/moved", TokenMediaType); err != nil || string(got) != "token" {
+		t.Errorf("an https redirect: %q, %v", got, err)
+	}
+	if _, err := f.Fetch(context.Background(), srv.URL+"/loop", TokenMediaType); err == nil {
+		t.Error("a redirect loop was fetched")
 	}
 }
 

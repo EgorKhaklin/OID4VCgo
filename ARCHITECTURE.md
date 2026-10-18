@@ -338,7 +338,7 @@ changes whether *every* bullet below is `(done)`.
   `credential/sdjwtvc`'s `Claims.Status` expects for JOSE, and covered by
   a test that wires the two packages together), and `Check`/`CheckCWT`,
   the §8.3 steps 3-7 orchestration for each. Around those, `Fetcher`
-  fetches a Status List Token over https (no redirects, content type
+  fetches a Status List Token over https (at most three https redirects, content type
   checked, size capped, and only from public addresses unless
   `AllowLoopback`/`AllowPrivate` is set, checked when the connection
   is dialled), `Checker` fetches and checks a Referenced Token's status
