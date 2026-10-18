@@ -698,3 +698,34 @@ wait on the network or the holder are `suspend` functions run on
 `protocolError` and `isRetryable`. In-person sessions add
 `ProximityException` for Bluetooth failures, and need the runtime
 permissions `ProximityPermissions` lists.
+
+## Combined engagement (additive, ABI 12)
+
+`Wallet.StartCombinedProximityPresentation(modesJSON string, negotiated,
+nfcData, omitQR bool) (*ProximityPresentation, error)` creates independent QR
+and NFC offers with one wallet consent state machine. Modes use the existing
+nonempty JSON array (`peripheral_server`, `central_client`). Classic NFC data
+uses command/response maxima 255/256. `omitQR` suppresses QR and BLE construction
+when the native application lacks Bluetooth permission for a data-only NFC path.
+
+New methods on `ProximityPresentation`:
+
+| Method | Meaning |
+| --- | --- |
+| `IsCombined() bool` | Native code must explicitly select an offer before messages. |
+| `SelectEngagement(nfc bool) error` | Atomically claim NFC (`true`) or QR (`false`); close the losing Go session. Wrong/closed steps return `wrong_step`. |
+| `SelectedEngagement() string` | Empty until selected; then `qr`, `nfc_ble`, or `nfc_data`. |
+
+For a combined presentation, initial `Engagement()` supplies QR transport
+metadata (or empty QR/BLE fields if omitted). After NFC selection it supplies
+the NFC carrier metadata. `HandoverSelect()` always addresses the NFC offer;
+`HandleHandoverRequest()` requires NFC selection first. Repeated winning claims
+are idempotent while waiting for a request. Losing claims and claims after
+termination cannot replace keys or transcripts. `Terminate()` closes both offers.
+Existing JSON shapes and all existing call signatures are unchanged.
+
+Android adds `Wallet.startCombinedPresentation(context, timeouts, modes, nfc)`
+and `NfcEngagementOptions(negotiated, nfcData)`. The returned
+`CombinedPresentation` exposes QR text, the existing state flow, respond,
+decline, cancel, selected-engagement flow, foreground preference and awaited
+close. See `android/docs/PresentingInPerson.md` for resume/pause/exit calls.

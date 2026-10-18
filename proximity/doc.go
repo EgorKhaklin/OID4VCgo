@@ -5,6 +5,10 @@
 // chunking over it — stays in the mobile app; it only carries the
 // messages this package builds and reads. See README.md for how a
 // Kotlin or Swift app drives it.
+// CombinedDeviceSession offers independent QR and NFC DeviceSessions. Native
+// code selects one at connection/application selection, withdraws the loser,
+// and drives only the selected session. QR's null handover and NFC's exact
+// static/negotiated handover never share a session key or transcript.
 //
 // It builds on credential/mdoc (IssuerSigned, the MSO, device
 // signature and MAC) and oid4vpmdoc (DeviceResponse encoding), and adds

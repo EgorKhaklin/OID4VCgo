@@ -216,3 +216,22 @@ onMessage { msg ->            // a reassembled Client2Server message
   }
 }
 ```
+
+## Combined QR and NFC offers
+
+`NewCombinedDeviceSession(random, CombinedOptions{Negotiated: false}, opts...)`
+prepares two independent `DeviceSession` offers. `QROffer()` supplies immediate
+QR/BLE metadata; `NFCOffer()` supplies Type 4/TNEP handover bytes. Serialize access
+as for `DeviceSession`. On a QR BLE connection call `Select(false)`; on valid NFC
+application selection call `Select(true)`. Drive only the returned session, stop
+the losing native transport, and call `Close()` on cancellation. A losing claim
+fails. QR omission is available for NFC data without Bluetooth permissions.
+
+Each offer has its own key and service UUIDs. QR binds null Handover; NFC binds
+the exact static `[Hs, null]` or negotiated `[Hs, Hr]`. No key-reuse exception is
+assumed. Annex D transcript tests remain unchanged; combined tests additionally
+verify signed round trips and reject device authentication with wrong handovers.
+Native Android serializes QR cleanup before NFC BLE creation and preserves the
+complete-Hs-read gate. `walletflow.StartCombinedProximityPresentation` and the
+additive gomobile/Kotlin APIs share one consent flow. See Android's
+`docs/PresentingInPerson.md` for lifecycle integration and `STATUS.md` for gates.

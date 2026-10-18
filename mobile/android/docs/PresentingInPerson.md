@@ -163,7 +163,8 @@ to select its NFC service. Reapply it to each new presentation.
 
 `owner.close()` cancels and awaits cleanup. Starting another NFC owner
 waits for the previous owner's tasks and radio resources to close.
-Do not start a separate QR/BLE session at the same time. HCE service
+Use `startCombinedPresentation` below to offer QR and NFC together;
+do not combine two independent owners. HCE service
 recreation reuses the owner. A process restart leaves it unarmed.
 Repeated reads reuse the key/UUID/Hs and trigger BLE only once the whole
 Hs has been read. NFC removal after BLE handover leaves BLE running.
@@ -196,3 +197,71 @@ timeout/WTX behavior must be included in real-device validation.
 The demo's presentation settings select QR, static NFC-to-BLE,
 negotiated NFC-to-BLE, or NFC-only. Reader presets offer NFC/Bluetooth
 and NFC-only actions; the latter does not request Bluetooth permissions.
+
+## Combined QR and NFC engagement
+
+Use one owner for a screen that displays a QR code and accepts an NFC tap:
+
+```kotlin
+val owner = wallet.startCombinedPresentation(
+    context,
+    nfc = NfcEngagementOptions(negotiated = false, nfcData = false),
+)
+showQr(owner.qrCode) // Empty when NFC-only is available but BLE permission is absent.
+// Collect owner.state, the same ProximityPresentation.State used by QR sessions.
+// On RequestReceived, use owner.respond(document, credentialID, elements)
+// or owner.decline(). owner.selectedEngagement records QR, NFC_BLE or NFC_DATA.
+```
+
+Hide the QR once `selectedEngagement` becomes non-null; it cannot accept another
+reader after either offer has won.
+
+Retain the owner at application/presentation scope across HCE recreation. Create
+it once on entering the screen, after checking NFC availability. Reuse the
+declared `NfcEngagementService` and `@xml/oid4vc_nfc_aids` manifest entry above.
+The exact activity/screen calls, while that owner exists, are:
+
+```kotlin
+// Activity.onResume(), and immediately after creating an owner while resumed:
+val preferred = owner.preferForeground(activity, IdentityNfcService::class.java)
+if (!preferred) showNfcServiceSelectionInstructions()
+
+// Activity.onPause():
+owner.releaseForeground(activity)
+
+// Screen exit or terminal state, from a retained coroutine that survives navigation:
+owner.releaseForeground(activity)
+owner.cancel() // Withdraw immediately, even if cleanup has to suspend.
+owner.close()  // Await tasks and radio cleanup before dropping/replacing the owner.
+```
+
+Do not create another owner on each resume or use a coroutine cancelled by the
+screen exit to await cleanup. If creation finishes after pause, retain it and
+defer foreground preference until resume. A refused foreground preference is a
+Boolean result, not proof that NFC routing is available; offer service-selection
+instructions and the QR alternative if present. Do not force a different wallet's
+routing. Pausing releases preference; explicitly close on screen exit.
+
+QR BLE advertising/scanning starts immediately. A completed QR BLE connection
+(the State-start handshake) or an accepted Type 4 NFC application SELECT claims
+the presentation. The losing offer can never attach or be revived by field loss.
+After QR wins, further NFC APDUs return `6985`. After NFC wins, QR tasks stop and
+their BLE resources close before any NFC BLE transport is created. NFC BLE still
+waits until the complete Hs has been read. There are never two offer advertisers
+running together. For NFC data, keep the devices together through consent.
+
+The offers have independent ephemeral keys, DeviceEngagements and service UUIDs.
+QR uses a null Handover; NFC uses exactly `[Hs, null]` (static) or `[Hs, Hr]`
+(negotiated). Selection switches the Go session before processing any request;
+consent and response remain one state machine. This avoids assuming permission
+to reuse one EDeviceKey across engagement mechanisms. Existing Annex D vectors
+cover transcript construction; they do not establish that key reuse is permitted.
+
+With `nfcData = true`, missing Bluetooth runtime permissions omit the QR offer
+(`qrCode == ""`) and no Bluetooth transport is constructed. NFC remains armed.
+A QR transport startup failure also leaves the NFC offer available until the
+connection timeout. NFC-to-BLE requires Bluetooth permissions as before.
+
+The additive method keeps the JVM descriptors and default-argument bridges of
+the existing QR and NFC APIs unchanged. `CombinedPresentation` delegates the
+existing state/consent flow and uses the same serialized NFC owner registry.

@@ -1287,3 +1287,14 @@ be received from at all. Issuance now follows the issuer's metadata
   app's signing certificate) or Play Integrity — and key attestation
   formats. Both demos attest any key with the passport-vdc demo's
   provider until then.
+
+## Combined engagement preview
+
+Android adds `startCombinedPresentation` without changing existing public API
+signatures or ABI 12. It reuses the serialized NFC owner registry and proximity
+consent state machine. Independent ephemeral keys prevent cross-offer transcript
+reuse; the native arbiter claims QR at BLE State-start or NFC at application
+SELECT. QR resources stop before gated NFC BLE starts. NFC data can omit QR when
+Bluetooth permissions are absent. Tests and local validation gates are tracked
+in the root `STATUS.md`; physical RF/BLE, competing-wallet routing and refused
+foreground preference remain device-validation gates.
