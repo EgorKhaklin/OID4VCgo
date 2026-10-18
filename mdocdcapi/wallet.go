@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/identifier"
 	"slices"
 	"sort"
 	"strings"
@@ -217,9 +218,20 @@ func parseItemsRequest(itemsRequestBytes cbor.RawMessage) (RequestedDocument, er
 	if items.DocType == "" || len(items.NameSpaces) == 0 {
 		return RequestedDocument{}, errors.New("ItemsRequest needs a docType and at least one namespace")
 	}
+	if err := identifier.Check(items.DocType); err != nil {
+		return RequestedDocument{}, fmt.Errorf("docType: %w", err)
+	}
 	for ns, elements := range items.NameSpaces {
 		if len(elements) == 0 {
 			return RequestedDocument{}, fmt.Errorf("namespace %q requests no element", ns)
+		}
+		if err := identifier.Check(ns); err != nil {
+			return RequestedDocument{}, fmt.Errorf("namespace: %w", err)
+		}
+		for el := range elements {
+			if err := identifier.Check(el); err != nil {
+				return RequestedDocument{}, fmt.Errorf("data element: %w", err)
+			}
 		}
 	}
 	return RequestedDocument{DocType: items.DocType, Elements: items.NameSpaces, itemsRequestBytes: itemsRequestBytes}, nil

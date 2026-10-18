@@ -235,7 +235,9 @@ func heldCredential(c StoredCredential, holderKey Key) wallet.HeldCredential {
 func (p *Presentation) Verifier() Verifier {
 	v := Verifier{ClientID: p.req.ClientID, Certificate: p.req.VerifierCertificate, ResponseURI: p.req.ResponseURI, Origin: p.req.Origin}
 	if p.req.VerifierCertificate != nil {
-		v.Name = p.req.VerifierCertificate.Subject.CommonName
+		// The certificate's, which its CA vetted, shown as an issuer's
+		// display text is (displayText).
+		v.Name = displayText(p.req.VerifierCertificate.Subject.CommonName, maxDisplayName)
 	}
 	return v
 }

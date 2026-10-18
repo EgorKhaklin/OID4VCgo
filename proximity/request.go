@@ -2,6 +2,7 @@ package proximity
 
 import (
 	"fmt"
+	"github.com/idfoundry/oid4vcgo/internal/identifier"
 	"sort"
 	"strings"
 
@@ -142,6 +143,9 @@ func parseDocRequest(dr wireDocRequest) (DocRequest, error) {
 		return DocRequest{}, fmt.Errorf("ItemsRequest asks for %d data elements, over %d: %w", requested, MaxRequestedElements, ErrCBORValidation)
 	}
 
+	if err := identifier.Check(items.DocType); err != nil {
+		return DocRequest{}, fmt.Errorf("docType: %w: %w", err, ErrCBORValidation)
+	}
 	out := DocRequest{
 		DocType:           items.DocType,
 		IntentToRetain:    map[[2]string]bool{},
@@ -162,7 +166,13 @@ func parseDocRequest(dr wireDocRequest) (DocRequest, error) {
 		if len(elements) == 0 {
 			return DocRequest{}, fmt.Errorf("namespace %q requests no elements: %w", ns, ErrCBORValidation)
 		}
+		if err := identifier.Check(ns); err != nil {
+			return DocRequest{}, fmt.Errorf("namespace: %w: %w", err, ErrCBORValidation)
+		}
 		for _, el := range elements {
+			if err := identifier.Check(el); err != nil {
+				return DocRequest{}, fmt.Errorf("data element: %w: %w", err, ErrCBORValidation)
+			}
 			pair := [2]string{ns, el}
 			out.Elements = append(out.Elements, pair)
 			out.IntentToRetain[pair] = typed[ns][el]
