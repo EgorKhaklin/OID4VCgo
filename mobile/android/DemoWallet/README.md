@@ -101,6 +101,11 @@ holder and disable Bluetooth on both phones. The verified result reports
 the actual data transport and the BLE role when applicable. Consent and
 credential verification use the existing presentation flow.
 
+Selecting either tap action opens an NFC waiting screen showing the selected
+request and tap instructions. **Cancel NFC** or Back returns to the request
+list and disables reader mode; leaving the Verify screen also closes it.
+NFC errors show **Try again** without claiming the reader is ready.
+
 Use two NFC-capable Android phones, unlocked with NFC enabled. The verifier
 needs the credential issuer's IACA in `reader.issuer_roots`, and a reader
 identity in `reader.reader_chain` / `reader.reader_key`. If the holder

@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import dev.idfoundry.oid4vcwallet.ProximityBLEMode
 import org.junit.Rule
 import org.junit.Test
@@ -12,6 +13,30 @@ import org.junit.Test
 /** A tap must not be reported as NFC data when the session actually selected BLE. */
 class NfcTransportUiTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun armedNfcReaderShowsSelectionAndCanCancel() {
+        var cancelled = false
+        compose.setContent { MaterialTheme {
+            NfcReaderWaiting(readerPresets.last(), null, onCancel = { cancelled = true }, onRetry = {})
+        } }
+        compose.onNodeWithTag("reader-nfc-waiting").assertIsDisplayed()
+        compose.onNodeWithText("NFC verification").assertIsDisplayed()
+        compose.onNodeWithText("Test mdoc: name").assertIsDisplayed()
+        compose.onNodeWithTag("reader-nfc-ready").assertIsDisplayed()
+        compose.onNodeWithTag("reader-nfc-cancel").performClick()
+        compose.runOnIdle { org.junit.Assert.assertTrue(cancelled) }
+    }
+
+    @Test fun nfcErrorOffersRetryWithoutClaimingReaderIsReady() {
+        var retried = false
+        compose.setContent { MaterialTheme {
+            NfcReaderWaiting(readerPresets.last(), "Turn on NFC and try again.", onCancel = {}, onRetry = { retried = true })
+        } }
+        compose.onNodeWithTag("reader-nfc-ready").assertDoesNotExist()
+        compose.onNodeWithText("Turn on NFC and try again.").assertIsDisplayed()
+        compose.onNodeWithTag("reader-nfc-retry").performClick()
+        compose.runOnIdle { org.junit.Assert.assertTrue(retried) }
+    }
 
     @Test fun nfcDataDoesNotDisplayBleMode() {
         compose.setContent { MaterialTheme { ReaderDataTransport(true, ProximityBLEMode.CENTRAL_CLIENT) } }

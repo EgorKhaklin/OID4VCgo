@@ -65,5 +65,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.junit)
+    // Keep Espresso aligned with the runner on current Android input APIs.
+    androidTestImplementation(libs.androidx.test.espresso)
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

@@ -1,5 +1,6 @@
 package dev.idfoundry.oid4vcgo.demowallet
 
+import android.app.Activity
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -20,7 +21,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
@@ -362,6 +365,12 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
     var preset by remember { mutableStateOf<ReaderPreset?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var denied by remember { mutableStateOf(false) }
+    val activity = LocalContext.current as? Activity
+    DisposableEffect(model, activity) {
+        onDispose {
+            if (activity?.isChangingConfigurations != true && model.nfcReadPreset != null) model.closeReading()
+        }
+    }
     val startScan = rememberBluetoothPermissions(ProximityPermissions.reader, then = {
         // An engagement handed over by link needs no scan.
         val given = model.engagementToRead
@@ -374,13 +383,19 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
         )
     }
     val state = model.readingState
-    if (model.reading == null) BackHandler(onBack = onLeave)
-    val back = if (model.reading != null) ({ model.closeReading(); preset = null }) else null
+    val hasSession = model.reading != null || model.nfcReadPreset != null
+    if (!hasSession) BackHandler(onBack = onLeave)
+    val back = if (hasSession) ({ model.closeReading(); preset = null }) else null
     InPersonScaffold("Verify in person", onBack = back, bottomBar = bottomBar) {
         when {
             !model.readerAvailable -> Text(
                 "Verifying needs a reader in the configuration: see mobile/android/DemoWallet/README.md.",
                 Modifier.padding(16.dp).testTag("reader-unavailable"),
+            )
+            model.reading == null && model.nfcReadPreset != null -> NfcReaderWaiting(
+                model.nfcReadPreset!!, model.notice,
+                onCancel = { model.closeReading(); preset = null },
+                onRetry = { model.nfcReadPreset?.let(model::armNfcReader) },
             )
             model.reading == null -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 item {
@@ -391,7 +406,6 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
                 }
                 if (denied) item { Text("Allow nearby devices to verify in person.", color = Color(0xFFC62828)) }
                 model.notice?.let { item { Text(it, color = Color(0xFFE65100)) } }
-                model.nfcReadPreset?.let { item { Text("Hold the phones together to request ${it.title}. Keep them together through consent for NFC transfer.", Modifier.padding(vertical = 8.dp)) } }
                 items(readerPresets) { p ->
                     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { preset = p; startScan() }.testTag("reader-preset")) {
                         Column(Modifier.padding(16.dp)) {
@@ -413,6 +427,32 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
             else -> ReaderOutcome(state, model.readingPreset, model.reading?.usesNfcData == true,
                 model.reading?.takeUnless { it.usesNfcData }?.mode, onDone = { model.closeReading(); preset = null })
         }
+    }
+}
+
+/** An armed NFC reader gets a dedicated screen, like the QR scanner does. */
+@Composable
+internal fun NfcReaderWaiting(preset: ReaderPreset, notice: String?, onCancel: () -> Unit, onRetry: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp).testTag("reader-nfc-waiting"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("NFC verification", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(16.dp))
+        if (notice == null) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(16.dp))
+            Text("Waiting for an NFC tap", Modifier.testTag("reader-nfc-ready"))
+        }
+        Text(preset.title, Modifier.padding(vertical = 12.dp), fontWeight = FontWeight.SemiBold)
+        Text("Hold the holder's phone near this phone's NFC antenna. Keep both phones unlocked and the holder's presentation screen open.")
+        Text("The holder selects NFC or Bluetooth transfer. For NFC transfer, keep the phones together through consent and sharing.", Modifier.padding(vertical = 12.dp))
+        notice?.let {
+            Text(it, Modifier.testTag("reader-nfc-notice"), color = Color(0xFFC62828))
+            OutlinedButton(onRetry, Modifier.testTag("reader-nfc-retry")) { Text("Try again") }
+        }
+        OutlinedButton(onCancel, Modifier.padding(top = 16.dp).testTag("reader-nfc-cancel")) { Text("Cancel NFC") }
     }
 }
 
