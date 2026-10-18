@@ -34,9 +34,11 @@ all) TARGET=android/arm64,android/arm,android/amd64,android/386 ;;
 64) TARGET=android/arm64,android/amd64 ;;
 *) echo "OID4VC_ABIS is all or 64, not $OID4VC_ABIS" >&2; exit 2 ;;
 esac
+# Both ELF LOAD alignment and the RELRO boundary must support 16 KB pages,
+# including when the installed NDK predates r28. Apply to test builds too.
 PATH="$PWD/build/bin:$PATH" gomobile bind \
 	-target="$TARGET" -androidapi=26 \
 	-javapkg=dev.idfoundry.oid4vcwallet.gomobile \
-	-trimpath -ldflags="-s -w" "$@" \
+	-trimpath -ldflags="-s -w -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384" "$@" \
 	-o "$OUT/mobile.aar" .
 echo "$OUT/mobile.aar"
