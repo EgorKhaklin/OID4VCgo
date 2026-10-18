@@ -29,11 +29,22 @@ func RecommendedJWTProofType() oid4vci.ProofTypeConfiguration {
 // Wallets to support the format specified in Appendix D ... in
 // combination with ... attestation proof type."
 //
-// §4.5.1 also names a second combination, "jwt proof type using
-// key_attestation" — deliberately not offered here: issuer doesn't
-// verify a jwt proof's key_attestation header, and issuer.New refuses
-// KeyAttestationsRequired on the jwt proof type.
+// RecommendedJWTKeyAttestationProofType is §4.5.1's other combination.
 func RecommendedAttestationProofType() oid4vci.ProofTypeConfiguration {
+	return oid4vci.ProofTypeConfiguration{
+		ProofSigningAlgValuesSupported: []string{string(RecommendedJOSEAlgorithm)},
+		KeyAttestationsRequired:        &oid4vci.KeyAttestationRequirement{},
+	}
+}
+
+// RecommendedJWTKeyAttestationProofType returns a jwt proof type's
+// ProofTypeConfiguration (OID4VCI 1.0 Appendix F.1) requiring a Key
+// Attestation in each proof's key_attestation header, accepting
+// RecommendedJOSEAlgorithm: HAIP 1.0 §4.5.1's "jwt proof type using
+// key_attestation", the other combination beside
+// RecommendedAttestationProofType. The issuer verifies the header with
+// Dependencies.AttestationVerifier, which issuer.New then requires.
+func RecommendedJWTKeyAttestationProofType() oid4vci.ProofTypeConfiguration {
 	return oid4vci.ProofTypeConfiguration{
 		ProofSigningAlgValuesSupported: []string{string(RecommendedJOSEAlgorithm)},
 		KeyAttestationsRequired:        &oid4vci.KeyAttestationRequirement{},
