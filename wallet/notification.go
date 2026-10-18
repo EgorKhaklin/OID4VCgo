@@ -97,7 +97,7 @@ func (w *Wallet) RequestNotification(
 		return fmt.Errorf("wallet: request notification: read response: %w", err)
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return parseError(EndpointNotification, res.StatusCode, respBody)
+		return parseErrorWithHeader(EndpointNotification, res.StatusCode, res.Header, respBody)
 	}
 	return nil
 }

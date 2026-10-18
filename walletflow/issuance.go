@@ -858,7 +858,9 @@ func permanent(err error) bool {
 		return true
 	}
 	var protocol *wallet.Error
-	if !errors.As(err, &protocol) || protocol.HTTPStatus < 400 || protocol.HTTPStatus >= 500 || protocol.HTTPStatus == 429 {
+	// A 401 is the access token's or DPoP proof's (RFC 6750 §3, RFC 9449
+	// §7.1), which a retry renews, whatever error it names.
+	if !errors.As(err, &protocol) || protocol.HTTPStatus < 400 || protocol.HTTPStatus >= 500 || protocol.HTTPStatus == 429 || protocol.HTTPStatus == 401 {
 		return false
 	}
 	switch protocol.Code {

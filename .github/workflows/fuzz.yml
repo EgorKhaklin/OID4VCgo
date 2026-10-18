@@ -171,6 +171,9 @@ jobs:
           - id: wallet-parse-error
             pkg: ./wallet
             name: FuzzParseError
+          - id: wallet-challenge-param
+            pkg: ./wallet
+            name: FuzzChallengeParam
           - id: wallet-verify-issued-credential
             pkg: ./wallet
             name: FuzzVerifyIssuedCredential
