@@ -295,6 +295,17 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 		if err != nil {
 			return nil, err
 		}
+		// Freshness first: a replayed attestation is refused before its
+		// status is fetched, which would otherwise cost a Status List
+		// fetch for each replay of any attestation ever issued.
+		if err := iss.checkProofNonce(ctx, "attestation", i, verified.Nonce, &expectedNonce); err != nil {
+			return nil, err
+		}
+		// Without a Nonce Endpoint, the attestation's iat is its only
+		// freshness (Appendix F.4), as a jwt proof's is.
+		if err := iss.checkProofAge(verified.IssuedAt.Unix(), i); err != nil {
+			return nil, err
+		}
 		if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
 			return nil, err
 		}
@@ -302,9 +313,6 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 			if err := iss.deps.AttestationStatus.CheckAttestationStatus(ctx, verified); err != nil {
 				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: status", i), err)
 			}
-		}
-		if err := iss.checkProofNonce(ctx, "attestation", i, verified.Nonce, &expectedNonce); err != nil {
-			return nil, err
 		}
 		keys, err = appendAttestedKeys(keys, verified, i, maxKeys)
 		if err != nil {

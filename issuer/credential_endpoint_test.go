@@ -1655,3 +1655,23 @@ func TestRequestCredential_RequiredRequestEncryption(t *testing.T) {
 		t.Errorf("an encrypted request: %v", err)
 	}
 }
+
+// A replayed attestation, with a nonce this issuer never issued or
+// already used, is refused before its status is checked: a status
+// check costs a Status List fetch, which a replay mustn't buy.
+func TestRequestCredential_AttestationNonceBeforeStatus(t *testing.T) {
+	checked := 0
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
+		deps.AttestationStatus = attestationStatusFunc(func(context.Context, attestation.VerifiedClaims) error { checked++; return nil })
+	})
+	key := testP256Key(t)
+	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeAttestation: {buildAttestation(t, f.attestationSigner, "never-issued", &key.PublicKey)}},
+		SDJWTClaims:               testSDJWTClaims(),
+	})
+	assertIssuerError(t, err, issuer.ErrorInvalidNonce)
+	if checked != 0 {
+		t.Errorf("the status was checked %d times for a replayed attestation, want none", checked)
+	}
+}
