@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -196,9 +195,7 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	var cfg config
 	// A misspelled key, a require_* option say, is refused rather than
 	// silently left at its default.
-	dec := json.NewDecoder(strings.NewReader(configJSON))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&cfg); err != nil {
+	if err := decodeConfig(configJSON, &cfg); err != nil {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("configuration: %w", err))
 	}
 	if keys == nil || credentials == nil {
