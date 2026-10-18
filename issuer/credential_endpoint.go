@@ -743,5 +743,39 @@ func checkInstanceType(cc CredentialConfiguration, instance CredentialInstance) 
 			return fmt.Errorf("the credential's docType %q isn't the configuration's %q", instance.MdocClaims.DocType, cc.DocType)
 		}
 	}
+	return checkMandatoryClaims(cc, instance)
+}
+
+// checkMandatoryClaims refuses a credential missing a claim cc's
+// credential_metadata marks mandatory: "the Credential Issuer will
+// always include this claim" (Appendix B.2). An SD-JWT VC's path is
+// resolved as its Type Metadata's would be; an mdoc's is [namespace,
+// element identifier] (Appendix B.2).
+func checkMandatoryClaims(cc CredentialConfiguration, instance CredentialInstance) error {
+	if cc.CredentialMetadata == nil {
+		return nil
+	}
+	var mandatory []sdjwtvc.ClaimMetadata
+	for _, c := range cc.CredentialMetadata.Claims {
+		if c.IsMandatory() {
+			mandatory = append(mandatory, sdjwtvc.ClaimMetadata{Path: c.Path, Mandatory: true})
+		}
+	}
+	if len(mandatory) == 0 {
+		return nil
+	}
+	if instance.SDJWTClaims != nil {
+		if err := sdjwtvc.CheckTypeMetadata(*instance.SDJWTClaims, sdjwtvc.TypeMetadata{Claims: mandatory}); err != nil {
+			return fmt.Errorf("credential_metadata: %w", err)
+		}
+		return nil
+	}
+	for _, c := range mandatory {
+		namespace, _ := c.Path[0].(string)
+		element, _ := c.Path[len(c.Path)-1].(string)
+		if _, ok := instance.MdocClaims.NameSpaces[namespace][element]; len(c.Path) != 2 || !ok {
+			return fmt.Errorf("credential_metadata: claim %v is mandatory, but the credential doesn't include it", c.Path)
+		}
+	}
 	return nil
 }

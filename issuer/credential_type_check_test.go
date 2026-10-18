@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
@@ -67,5 +68,46 @@ func TestResolveCredentialConfiguration(t *testing.T) {
 	}
 	if _, err := f.iss.ResolveCredentialConfiguration(issuer.AuthorizedRequest{Scopes: []string{"other"}}, issuer.CredentialRequest{CredentialConfigurationID: testSDJWTConfigID}); err == nil {
 		t.Error("resolved a configuration the token doesn't authorize")
+	}
+}
+
+// A claim credential_metadata marks mandatory ("the Credential Issuer
+// will always include this claim", Appendix B.2) must be in the
+// credential signed: one missing is a server error, not signed.
+func TestRequestCredential_EnforcesMandatoryClaims(t *testing.T) {
+	yes := true
+	request := func(sdjwtClaims *sdjwtvc.Claims, mdocClaims *mdoc.Claims) error {
+		f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+			for id, path := range map[string][]any{testSDJWTConfigID: {"given_name"}, testMdocConfigID: {"org.iso.18013.5.1", "given_name"}} {
+				c := cfg.CredentialConfigurationsSupported[id]
+				c.CredentialMetadata = &oid4vci.CredentialMetadata{Claims: []oid4vci.ClaimsDescription{{Path: path, Mandatory: &yes}}}
+				cfg.CredentialConfigurationsSupported[id] = c
+			}
+		})
+		auth, req := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+			CredentialConfigurationID: testSDJWTConfigID, SDJWTClaims: sdjwtClaims,
+		}
+		if mdocClaims != nil {
+			auth, req = grantingConfiguration(testMdocConfigID), issuer.CredentialRequest{CredentialConfigurationID: testMdocConfigID, MdocClaims: mdocClaims}
+		}
+		req.Proofs = map[string][]string{oid4vci.ProofTypeJWT: {buildJWTProof(t, testP256Key(t), testIssuer, f.issueNonce(t))}}
+		_, err := f.iss.RequestCredential(context.Background(), auth, req)
+		return err
+	}
+	missing := func(name string, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "mandatory") {
+			t.Errorf("%s: %v, want refused for the mandatory claim", name, err)
+		}
+	}
+	if err := request(&sdjwtvc.Claims{VCT: testVCT, Additional: map[string]any{"given_name": sdjwtvc.SD("Erika")}}, nil); err != nil {
+		t.Errorf("an SD-JWT VC with the mandatory claim: %v", err)
+	}
+	missing("an SD-JWT VC without it", request(&sdjwtvc.Claims{VCT: testVCT}, nil))
+	mdocClaims := testMdocClaims(t)
+	missing("an mdoc without it", request(nil, mdocClaims))
+	mdocClaims.NameSpaces["org.iso.18013.5.1"]["given_name"] = "Erika"
+	if err := request(nil, mdocClaims); err != nil {
+		t.Errorf("an mdoc with the mandatory claim: %v", err)
 	}
 }
