@@ -32,7 +32,7 @@ func TestParseDeviceRequest_RefusesForgedIdentifiers(t *testing.T) {
 	}
 	for name, b := range map[string][]byte{
 		"element with a newline":      request("org.iso.18013.5.1.mDL", "org.iso.18013.5.1", "age_over_18\nRetain: no"),
-		"namespace with an override":  request("org.iso.18013.5.1.mDL", "org.iso‮.18013.5.1", "age_over_18"),
+		"namespace with an override":  request("org.iso.18013.5.1.mDL", "org.iso\u202e.18013.5.1", "age_over_18"),
 		"docType with a control char": request("org.iso.18013.5.1.mDL\x00", "org.iso.18013.5.1", "age_over_18"),
 	} {
 		if _, err := ParseDeviceRequest(b); !errors.Is(err, ErrCBORValidation) {

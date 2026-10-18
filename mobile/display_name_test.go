@@ -7,9 +7,9 @@ import "testing"
 func TestDisplayName(t *testing.T) {
 	for in, want := range map[string]string{
 		"State Police":            "State Police",
-		"State‮ Police":      "State Police",
+		"State\u202e Police":      "State Police",
 		"Reader\nTrusted: yes":    "ReaderTrusted: yes",
-		"  ⁦Isolated⁩ ": "Isolated",
+		"  \u2066Isolated\u2069 ": "Isolated",
 	} {
 		if got := displayName(in); got != want {
 			t.Errorf("displayName(%q) = %q, want %q", in, got, want)
