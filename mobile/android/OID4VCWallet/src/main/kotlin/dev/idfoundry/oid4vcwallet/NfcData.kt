@@ -7,8 +7,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlin.time.Duration
@@ -177,14 +175,9 @@ internal class NfcDataReaderTransport(
     private var closed = false
     private var sending = false
 
-    override suspend fun connect(): Unit = withContext(Dispatchers.IO) {
-        suspendCancellableCoroutine { continuation ->
-            continuation.invokeOnCancellation { closeTag() }
-            continuation.resumeWith(runCatching {
-                val response = exchange(byteArrayOf(0, 0xa4.toByte(), 4, 0, 7) + NfcData.aid + byteArrayOf(0))
-                if (!response.contentEquals(nfcResponse(0x9000))) throw IOException("NFC data application unavailable")
-            })
-        }
+    override suspend fun connect(): Unit = runNfcExchange(closeTag) {
+        val response = exchange(byteArrayOf(0, 0xa4.toByte(), 4, 0, 7) + NfcData.aid + byteArrayOf(0))
+        if (!response.contentEquals(nfcResponse(0x9000))) throw IOException("NFC data application unavailable")
     }
 
     override suspend fun send(message: ByteArray) {

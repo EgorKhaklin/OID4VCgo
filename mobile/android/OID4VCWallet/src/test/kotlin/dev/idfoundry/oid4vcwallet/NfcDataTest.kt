@@ -9,8 +9,37 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
 
 class NfcDataTest {
+    @Test fun cancelConnectClosesTagAndInterruptsBlockingWork(): Unit = runBlocking {
+        val started = CountDownLatch(1)
+        val released = CountDownLatch(1)
+        val finished = CountDownLatch(1)
+        val closed = AtomicBoolean(false)
+        val reader = NfcDataReaderTransport({
+            started.countDown()
+            try { released.await(); nfcResponse(0x9000) }
+            finally { finished.countDown() }
+        }, { closed.set(true) }, 258, NfcDataParametersJSON(255, 256))
+        val job = launch(Dispatchers.Default) { reader.connect() }
+        var interrupted = false
+        try {
+            assertTrue("connect did not start", started.await(5, TimeUnit.SECONDS))
+            job.cancel()
+            interrupted = finished.await(1, TimeUnit.SECONDS)
+        } finally {
+            released.countDown()
+            job.cancelAndJoin()
+            reader.close()
+        }
+        assertTrue("cancellation did not close the NFC tag", closed.get())
+        assertTrue("cancelled NFC work continued blocking its worker", interrupted)
+    }
+
     @Test fun do53BoundariesAndMalformedLengths() {
         for (size in listOf(0, 1, 127, 128, 255, 256, 65535, 65536, 180000)) {
             val original = ByteArray(size) { it.toByte() }

@@ -2,9 +2,6 @@ package dev.idfoundry.oid4vcwallet
 
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.IOException
 import kotlin.math.ceil
 import kotlin.math.pow
@@ -125,7 +122,7 @@ internal class NfcType4Reader(private val exchange: (ByteArray) -> ByteArray, pr
         ((bytes[offset].toInt() and 255) shl 8) or (bytes[offset + 1].toInt() and 255)
 }
 
-/** Reads engagement with cancellation closing IsoDep to interrupt a blocking transceive. */
+/** The handover bytes used to construct the reader's session transcript. */
 internal data class NfcHandover(val hs: ByteArray, val hr: ByteArray?)
 
 internal class NfcTagConnection(tag: Tag) {
@@ -135,20 +132,11 @@ internal class NfcTagConnection(tag: Tag) {
     fun close() { runCatching { iso.close() } }
     fun allowConsentDelay(milliseconds: Int) { iso.timeout = milliseconds }
 
-    suspend fun read(hr: ByteArray): NfcHandover = withContext(Dispatchers.IO) {
-        suspendCancellableCoroutine { continuation ->
-            continuation.invokeOnCancellation { close() }
-            if (!continuation.isActive) return@suspendCancellableCoroutine
-            // This function runs on Dispatchers.IO; cancellation can still close the tag.
-            val result = runCatching {
-                iso.connect()
-                if (!continuation.isActive) { close(); throw kotlinx.coroutines.CancellationException("NFC read cancelled") }
-                iso.timeout = 5000
-                val reader = NfcType4Reader(iso::transceive, iso.maxTransceiveLength)
-                val hs = reader.read(hr)
-                NfcHandover(hs, if (reader.negotiated) hr else null)
-            }
-            continuation.resumeWith(result)
-        }
+    suspend fun read(hr: ByteArray): NfcHandover = runNfcExchange(::close) {
+        iso.connect()
+        iso.timeout = 5000
+        val reader = NfcType4Reader(iso::transceive, iso.maxTransceiveLength)
+        val hs = reader.read(hr)
+        NfcHandover(hs, if (reader.negotiated) hr else null)
     }
 }

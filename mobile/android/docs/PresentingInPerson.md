@@ -183,8 +183,10 @@ carrier. BLE retrieval needs `ProximityPermissions.reader` granted.
 For NFC-only, keep the phones together through consent and response;
 `session.usesNfcData` identifies this path. The BLE `mode` property has
 meaning only when `usesNfcData` is false. Disable reader mode on pause
-or after leaving the reader screen. Cancellation closes IsoDep, including
-a blocking transceive. Removing the tag after BLE selection is safe.
+or after leaving the reader screen. Cancellation closes IsoDep and interrupts
+blocking transceives and negotiated-handover waits; the coroutine waits for
+its worker to exit. A successful handover keeps the tag open for NFC data
+selection. Removing the tag after BLE selection is safe.
 
 Android Type 4 supports read-only static Hs and staged TNEP writes,
 with a 32767-byte NDEF file limit and chunked NDEF records rejected.
