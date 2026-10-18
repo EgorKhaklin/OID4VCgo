@@ -1166,7 +1166,7 @@ func TestRequestCredential_RequiredResponseEncryption(t *testing.T) {
 		return err
 	}
 	assertIssuerError(t, request(nil), issuer.ErrorInvalidEncryptionParameters)
-	if err := request(&issuer.ResponseEncryptionRequest{JWK: jwkJSON(t, &testP256Key(t).PublicKey), Enc: jwe.A128GCM}); err != nil {
+	if err := request(&issuer.ResponseEncryptionRequest{JWK: encryptionJWK(t, &testP256Key(t).PublicKey), Enc: jwe.A128GCM}); err != nil {
 		t.Fatalf("request with credential_response_encryption: %v", err)
 	}
 }

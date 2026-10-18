@@ -617,10 +617,10 @@ func setupEncryptedCredentialRequestTest(t *testing.T, clientID, defaultSubject 
 // buildWalletResponseEncryptionKey generates a fresh ephemeral P-256
 // "Wallet" key for credential_response_encryption, returning both its
 // own private key (needed to decrypt a real response back) and its
-// wire JWK. bogusAlg, when non-empty, is embedded as the JWK's own
-// "alg" member — reproducing the OIDF suite's own literal
-// "UNSUPPORTED_ALG" probe for a Wallet-declared alg this issuer can't
-// honor.
+// wire JWK, with "alg" ECDH-ES (§10 requires one). bogusAlg, when
+// non-empty, is the "alg" instead, reproducing the OIDF suite's own
+// literal "UNSUPPORTED_ALG" probe for a Wallet-declared alg this issuer
+// can't honor.
 func buildWalletResponseEncryptionKey(t *testing.T, bogusAlg string) (walletKey *ecdsa.PrivateKey, walletJWK json.RawMessage) {
 	t.Helper()
 	walletKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -631,17 +631,14 @@ func buildWalletResponseEncryptionKey(t *testing.T, bogusAlg string) (walletKey 
 	if err != nil {
 		t.Fatalf("jwk.Marshal: %v", err)
 	}
-	if bogusAlg == "" {
-		raw, err := json.Marshal(pubJWK)
-		if err != nil {
-			t.Fatalf("marshal wallet jwk: %v", err)
-		}
-		return walletKey, raw
+	alg := bogusAlg
+	if alg == "" {
+		alg = "ECDH-ES" // §10: "The alg parameter MUST be present."
 	}
 	raw, err := json.Marshal(struct {
 		jwk.JWK
 		Alg string `json:"alg"`
-	}{JWK: pubJWK, Alg: bogusAlg})
+	}{JWK: pubJWK, Alg: alg})
 	if err != nil {
 		t.Fatalf("marshal wallet jwk with alg: %v", err)
 	}

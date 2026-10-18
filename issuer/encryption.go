@@ -319,15 +319,15 @@ func (iss *Issuer) responseEncryptionKey(req *ResponseEncryptionRequest) (*ecdsa
 		Alg   jwe.Alg `json:"alg"`
 	}
 	_ = json.Unmarshal(req.JWK, &jwkFields)
-	// §10's own "The alg parameter MUST be present [and] MUST be equal
-	// to the alg value of the chosen JWK" — this issuer only ever
-	// encrypts with ECDH-ES (internal/jwe's own sole implementation),
-	// so a JWK declaring any other alg must be rejected outright rather
-	// than silently encrypted with ECDH-ES anyway. An absent alg is
-	// left alone: this repo's own jwk.Marshal never emits one, so
-	// requiring its presence unconditionally would reject every
-	// legitimate caller in this codebase, not just a genuine mismatch.
-	if jwkFields.Alg != "" && jwkFields.Alg != jwe.ECDHES {
+	// §10: "The alg parameter MUST be present. The JWE alg algorithm
+	// used MUST be equal to the alg value of the chosen JWK." This
+	// issuer only encrypts with ECDH-ES (internal/jwe's sole
+	// implementation), so a JWK without alg, or with another, is
+	// refused rather than encrypted with ECDH-ES anyway.
+	if jwkFields.Alg == "" {
+		return nil, "", newError(ErrorInvalidEncryptionParameters, 400, "credential_response_encryption.jwk must carry alg (Section 10)", nil)
+	}
+	if jwkFields.Alg != jwe.ECDHES {
 		return nil, "", newError(ErrorInvalidEncryptionParameters, 400,
 			fmt.Sprintf("credential_response_encryption.jwk declares alg %q, which this issuer cannot encrypt with", jwkFields.Alg), nil)
 	}
