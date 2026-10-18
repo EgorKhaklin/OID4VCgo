@@ -59,15 +59,20 @@ func keyBoundChain(chain [][]byte, issuerPub crypto.PublicKey) [][]byte {
 // resolver is an MdocIssuerChainResolver, ISO/IEC 18013-5's document
 // signer checks over the paths it verified x5chain on.
 //
-// It returns the issuer chain to trust: the first path the resolver
-// verified, document signer first, without its trust anchor. Never
-// x5chain itself: an mdoc's x5chain is an unprotected COSE header, so
-// the holder can add, drop or reorder certificates in it, or swap the
-// leaf for one with the same key their own CA issued. A resolver that
-// isn't an MdocIssuerChainResolver authenticates only the key, so the
-// chain is nil, and a trusted_authorities check on it fails.
+// It returns the issuer chain to trust: the path that passed the
+// document signer checks, document signer first, without its trust
+// anchor. Never x5chain itself: an mdoc's x5chain is an unprotected
+// COSE header, so the holder can add, drop or reorder certificates in
+// it, or swap the leaf for one with the same key their own CA issued.
+// Nor another verified path: through a cross-certificate the holder
+// adds, a second path may end at an anchor that never passed the
+// country check. A resolver that wraps another (logging, caching)
+// reaches its MdocIssuerChainResolver through Unwrap; one that isn't
+// one authenticates only the key, so the chain is nil, and a
+// trusted_authorities check on it fails. Under AssuranceProduction,
+// VerifyResponse requires an MdocIssuerChainResolver.
 func CheckMdocIssuer(ctx context.Context, resolver MdocIssuerKeyResolver, x5chain [][]byte, docType string, issuerPub crypto.PublicKey, verified mdoc.VerifiedMSO) ([][]byte, error) {
-	chainResolver, ok := resolver.(MdocIssuerChainResolver)
+	chainResolver, ok := mdocChainResolver(resolver)
 	if !ok {
 		return nil, nil
 	}
@@ -78,10 +83,39 @@ func CheckMdocIssuer(ctx context.Context, resolver MdocIssuerKeyResolver, x5chai
 	if err != nil {
 		return nil, fmt.Errorf("issuer certificate chain: %w", err)
 	}
-	if _, err := mdoc.CheckDocumentSigner(verified, chains); err != nil {
+	path, err := mdoc.CheckDocumentSigner(verified, chains)
+	if err != nil {
 		return nil, err
 	}
-	return verifiedPath(chains, issuerPub), nil
+	trusted := verifiedPath([][]*x509.Certificate{path}, issuerPub)
+	if trusted == nil {
+		return nil, errors.New("the issuer certificate path that passed the document signer checks isn't the key's")
+	}
+	return trusted, nil
+}
+
+// MdocIssuerKeyResolverWrapper is a resolver that wraps another, a
+// logging or caching one, say: Unwrap returns the one it wraps, so the
+// document signer checks of an MdocIssuerChainResolver it wraps still
+// apply.
+type MdocIssuerKeyResolverWrapper interface {
+	Unwrap() MdocIssuerKeyResolver
+}
+
+// mdocChainResolver is resolver as an MdocIssuerChainResolver, or the
+// one it wraps, through Unwrap.
+func mdocChainResolver(resolver MdocIssuerKeyResolver) (MdocIssuerChainResolver, bool) {
+	for range 16 {
+		if chain, ok := resolver.(MdocIssuerChainResolver); ok {
+			return chain, true
+		}
+		wrapper, ok := resolver.(MdocIssuerKeyResolverWrapper)
+		if !ok {
+			return nil, false
+		}
+		resolver = wrapper.Unwrap()
+	}
+	return nil, false
 }
 
 // verifiedPath is the first of chains whose leaf has issuerPub, as DER,
