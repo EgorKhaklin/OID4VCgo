@@ -1,6 +1,7 @@
 package statuslist
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -10,6 +11,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -190,5 +192,46 @@ func TestPublisher_HistoricalResolutionNotImplemented(t *testing.T) {
 		if rec.Code != want {
 			t.Errorf("GET %s: status %d, want %d", target, rec.Code, want)
 		}
+	}
+}
+
+// draft-14 §8.2: the response "SHOULD use gzip Content-Encoding" when
+// the client accepts it (q above zero), and varies by Accept-Encoding.
+func TestPublisher_Gzip(t *testing.T) {
+	ca, caKey := testcert.CA(t, "status CA")
+	cert, key := testcert.Leaf(t, "status signer", ca, caKey)
+	p := &Publisher{
+		URI: "https://issuer.example/statuslists/1", Signer: key, Chain: []*x509.Certificate{cert}, TTL: time.Minute,
+		Statuses: func(context.Context) ([]uint8, error) { return []uint8{0, 1}, nil },
+	}
+	get := func(acceptEncoding string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/s", nil)
+		if acceptEncoding != "" {
+			r.Header.Set("Accept-Encoding", acceptEncoding)
+		}
+		p.ServeHTTP(rec, r)
+		return rec
+	}
+	plain := get("")
+	if plain.Header().Get("Content-Encoding") != "" || plain.Header().Get("Vary") != "Accept, Accept-Encoding" {
+		t.Errorf("without Accept-Encoding: headers %v", plain.Header())
+	}
+	for _, ae := range []string{"gzip", "br, gzip;q=0.5"} {
+		rec := get(ae)
+		if rec.Header().Get("Content-Encoding") != "gzip" {
+			t.Fatalf("Accept-Encoding %q: Content-Encoding %q, want gzip", ae, rec.Header().Get("Content-Encoding"))
+		}
+		zr, err := gzip.NewReader(rec.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(zr)
+		if err != nil || string(body) != plain.Body.String() {
+			t.Errorf("Accept-Encoding %q: decompressed body isn't the token: %v", ae, err)
+		}
+	}
+	if rec := get("gzip;q=0"); rec.Header().Get("Content-Encoding") != "" {
+		t.Error("gzip;q=0 was answered with gzip")
 	}
 }

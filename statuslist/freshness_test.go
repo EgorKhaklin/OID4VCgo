@@ -18,9 +18,10 @@ func TestVerifyToken_Freshness(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
+	// Signed without IssueToken's checks, which refuse some of these.
 	issue := func(iat int64, exp *int64) string {
 		t.Helper()
-		token, err := IssueToken(key, jose.ES256, TokenClaims{Sub: "https://example.com/statuslists/1", Iat: iat, Exp: exp, StatusList: sl}, "")
+		token, err := signToken(key, jose.ES256, TokenClaims{Sub: "https://example.com/statuslists/1", Iat: iat, Exp: exp, StatusList: sl}, map[string]any{"typ": TokenTyp})
 		if err != nil {
 			t.Fatal(err)
 		}
