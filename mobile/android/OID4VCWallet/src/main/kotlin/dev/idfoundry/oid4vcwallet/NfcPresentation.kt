@@ -30,6 +30,8 @@ public class NfcPresentation internal constructor(
     transportFor: (HolderEngagement) -> ProximityTransport,
 ) {
     private val gate = NfcHandoverGate()
+    internal val combined: CombinedEngagementArbiter? = if (handle.isCombined())
+        CombinedEngagementArbiter(dataTransport != null) { handle.selectEngagement(it) } else null
     private val tnep = if (negotiated) NfcTnepHolder {
         handle.handleHandoverRequest(it).also { hs ->
             if (dataTransport != null) dataTransport.selectParameters(decode<NfcDataParametersJSON>(
@@ -42,8 +44,12 @@ public class NfcPresentation internal constructor(
     ) { if (tnep == null || tnep.handoverReady) gate.complete() }
 
     /** The consent flow and final result of this presentation. */
-    public val presentation: ProximityPresentation = ProximityPresentation(handle, {
-        gate.transport { dataTransport ?: transportFor(currentEngagement()) }
+    public val presentation: ProximityPresentation = ProximityPresentation(handle, { initial ->
+        val nfc = gate.transport { dataTransport ?: transportFor(currentEngagement()) }
+        combined?.let { arbiter ->
+            val qr = if (initial.modes.isEmpty()) null else NfcHandoverGate().apply { complete() }.transport { transportFor(initial) }
+            CombinedTransport(arbiter, qr, nfc)
+        } ?: nfc
     }, timeouts)
 
     private fun currentEngagement(): HolderEngagement = presentation.currentHolderEngagement()
@@ -52,6 +58,7 @@ public class NfcPresentation internal constructor(
     @Synchronized internal fun process(command: ByteArray, respond: (ByteArray) -> Unit = {}): ByteArray? {
         if (presentation.state.value.isFinal) return nfcResponse(0x6985)
         val c = NfcCommand.parse(command)
+        if (combined?.acceptNfc(c, gate.isComplete) == false) return nfcResponse(0x6985)
         if (c?.ins == 0xa4 && c.p1 == 4) dataSelected = dataTransport != null && c.data.contentEquals(NfcData.aid)
         return if (dataSelected) dataTransport!!.process(command, respond) else type4.process(command)
     }
@@ -87,25 +94,21 @@ public class NfcPresentation internal constructor(
 
     /** Cancels and waits for radio cleanup before a replacement can be armed. */
     public suspend fun close() {
-        presentation.cancel()
+        cancelCombined()
         presentation.awaitClosed()
         NfcPresentations.clear(this)
     }
+
+    internal fun cancelCombined() { combined?.close(); presentation.cancel() }
 }
 
 /** App-level registry; service instances never own or manufacture presentations. */
 internal object NfcPresentations {
-    private val replacing = Mutex()
-    @Volatile private var active: NfcPresentation? = null
-
-    suspend fun replace(create: () -> NfcPresentation): NfcPresentation = replacing.withLock {
-        active?.close()
-        create().also { active = it }
-    }
-
-    @Synchronized fun clear(owner: NfcPresentation) { if (active === owner) active = null }
-    fun owner(): NfcPresentation? = active
-    fun deactivate() { active?.deactivate() }
+    private val owners = PresentationOwners<NfcPresentation> { it.close() }
+    suspend fun replace(create: () -> NfcPresentation): NfcPresentation = owners.replace(create)
+    fun clear(owner: NfcPresentation) { owners.clear(owner) }
+    fun owner(): NfcPresentation? = owners.owner()
+    fun deactivate() { owners.owner()?.deactivate() }
 }
 
 /** Defers native resource creation until the reader has read the complete Hs. */

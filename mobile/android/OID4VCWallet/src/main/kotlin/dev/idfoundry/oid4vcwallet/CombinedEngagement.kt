@@ -1,0 +1,104 @@
+package dev.idfoundry.oid4vcwallet
+
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+/** NFC handover and retrieval offered alongside a QR engagement. */
+public data class NfcEngagementOptions(
+    /** Use TNEP negotiated handover instead of static handover. */
+    val negotiated: Boolean = false,
+    /** Transfer session messages over NFC instead of BLE after handover. */
+    val nfcData: Boolean = false,
+)
+
+/** The engagement and data transport selected by the first reader. */
+public enum class SelectedEngagement {
+    /** QR engagement with BLE retrieval. */
+    QR,
+    /** NFC engagement with BLE retrieval. */
+    NFC_BLE,
+    /** NFC engagement with classic NFC retrieval. */
+    NFC_DATA,
+}
+
+/** Serializes QR connection, NFC application selection, and cancellation. */
+internal class CombinedEngagementArbiter(
+    private val nfcData: Boolean,
+    private val claim: (Boolean) -> Unit,
+) {
+    private val selected = MutableStateFlow<SelectedEngagement?>(null)
+    val state: StateFlow<SelectedEngagement?> = selected.asStateFlow()
+    private val ready = CompletableDeferred<SelectedEngagement>()
+    private var closed = false
+
+    @Synchronized fun select(nfc: Boolean): Boolean {
+        val path = if (!nfc) SelectedEngagement.QR else if (nfcData) SelectedEngagement.NFC_DATA else SelectedEngagement.NFC_BLE
+        if (closed) return false
+        selected.value?.let { return it == path }
+        claim(nfc)
+        selected.value = path
+        ready.complete(path)
+        return true
+    }
+
+    suspend fun await(): SelectedEngagement = ready.await()
+    @Synchronized fun close() { closed = true; ready.cancel() }
+
+    @Synchronized fun acceptNfc(command: NfcCommand?, dataReady: Boolean): Boolean {
+        if (closed || selected.value == SelectedEngagement.QR) return false
+        val isSelect = command != null && command.cla == 0 && command.ins == 0xa4 && command.p1 == 4 &&
+            (command.p2 == 0 || command.p2 == 0x0c)
+        if (!isSelect) return true
+        if (command!!.data.contentEquals(NfcData.aid)) {
+            if (!nfcData || !dataReady) return false
+            return select(true)
+        }
+        return !command.data.contentEquals(NfcType4.AID) || select(true)
+    }
+}
+
+/** QR advertises immediately; NFC creates its transport only after QR cleanup. */
+internal class CombinedTransport(
+    private val arbiter: CombinedEngagementArbiter,
+    private val qr: ProximityTransport?,
+    private val nfc: ProximityTransport,
+) : ProximityTransport {
+    @Volatile private var chosen: ProximityTransport? = null
+
+    override suspend fun connect(): Unit = coroutineScope {
+        val qrJob = qr?.let { transport -> launch {
+            try {
+                transport.connect()
+                if (!arbiter.select(false)) transport.close()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // A failed QR offer must not break NFC-only retrieval.
+                transport.close()
+            }
+        } }
+        try {
+            if (arbiter.await() == SelectedEngagement.QR) {
+                qrJob?.join()
+                chosen = checkNotNull(qr)
+            } else {
+                qrJob?.cancelAndJoin()
+                qr?.close()
+                chosen = nfc
+                nfc.connect()
+            }
+        } finally {
+            qrJob?.cancelAndJoin()
+        }
+    }
+
+    override suspend fun send(message: ByteArray): Unit = connected().send(message)
+    override suspend fun receive(): ByteArray = connected().receive()
+    private fun connected(): ProximityTransport = chosen ?: throw ProximityTransportException("engagement not connected")
+    override fun close() { arbiter.close(); qr?.close(); nfc.close() }
+}

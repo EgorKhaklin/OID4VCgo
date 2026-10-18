@@ -700,6 +700,38 @@ public class Wallet(
         return startNfcPresentation(timeouts, modes, negotiated, nfcData) { it.transport(app) }
     }
 
+    /**
+     * Offers QR/BLE and NFC with independent keys and one consent flow. A valid
+     * NFC application SELECT or a completed QR BLE connection wins permanently.
+     * NFC-only remains available without Bluetooth permission; then QR is omitted.
+     * Closing a previous app-level NFC/combined owner finishes before replacement.
+     */
+    public suspend fun startCombinedPresentation(
+        context: Context,
+        timeouts: ProximityTimeouts = ProximityTimeouts(),
+        modes: Set<ProximityBLEMode> = ProximityBLEMode.entries.toSet(),
+        nfc: NfcEngagementOptions = NfcEngagementOptions(),
+    ): CombinedPresentation {
+        require(modes.isNotEmpty()) { "no BLE mode" }
+        require(android.nfc.NfcAdapter.getDefaultAdapter(context)?.isEnabled == true) { "NFC unavailable or disabled" }
+        val missing = ProximityPermissions.missing(context, ProximityPermissions.holder(modes))
+        if (!nfc.nfcData) ProximityPermissions.require(context, ProximityPermissions.holder(modes))
+        val app = context.applicationContext
+        return startCombinedPresentation(timeouts, modes, nfc, missing.isNotEmpty()) { it.transport(app) }
+    }
+
+    internal suspend fun startCombinedPresentation(
+        timeouts: ProximityTimeouts,
+        modes: Set<ProximityBLEMode>,
+        options: NfcEngagementOptions,
+        omitQR: Boolean = false,
+        transportFor: (HolderEngagement) -> ProximityTransport,
+    ): CombinedPresentation = CombinedPresentation(NfcPresentations.replace {
+        val encoded = json.encodeToString(ListSerializer(String.serializer()), ProximityBLEMode.entries.filter { it in modes }.map { it.rawValue })
+        val session = OID4VC.wrap { handle.startCombinedProximityPresentation(encoded, options.negotiated, options.nfcData, omitQR) }
+        NfcPresentation(session, timeouts, options.negotiated, if (options.nfcData) NfcDataHolderTransport(timeouts.idle) else null, transportFor)
+    })
+
     internal suspend fun startNfcPresentation(
         timeouts: ProximityTimeouts,
         modes: Set<ProximityBLEMode>,
