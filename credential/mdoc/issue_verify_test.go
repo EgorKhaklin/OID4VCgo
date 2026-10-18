@@ -597,3 +597,38 @@ func TestIssueRefusesStatusWithoutURI(t *testing.T) {
 		t.Error("issued a status reference without a uri")
 	}
 }
+
+// Verify returns the values that were digested: editing NameSpaces
+// after unmarshalling changes nothing verified, and removing an item
+// is refused rather than misaligning values and digests.
+func TestVerifyReturnsDigestedValues(t *testing.T) {
+	f := newFixture(t)
+	wire, err := f.signed.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := VerifyOptions{Now: func() time.Time { return f.claims.Signed.Add(time.Hour) }}
+	edited, err := UnmarshalIssuerSigned(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range edited.NameSpaces["org.iso.18013.5.1"] {
+		edited.NameSpaces["org.iso.18013.5.1"][i].ElementValue = "Mallory"
+	}
+	verified, err := Verify(edited, f.claims.DocType, &f.issuerKey.PublicKey, cose.ES256, opts)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if got := verified.NameSpaces["org.iso.18013.5.1"]["family_name"]; got != "Doe" {
+		t.Errorf("family_name = %v, want the digested Doe", got)
+	}
+
+	trimmed, err := UnmarshalIssuerSigned(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trimmed.NameSpaces["org.iso.18013.5.1"] = trimmed.NameSpaces["org.iso.18013.5.1"][1:]
+	if _, err := Verify(trimmed, f.claims.DocType, &f.issuerKey.PublicKey, cose.ES256, opts); err == nil {
+		t.Error("a namespace changed after unmarshalling was accepted")
+	}
+}
