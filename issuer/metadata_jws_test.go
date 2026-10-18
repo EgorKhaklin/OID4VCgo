@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
@@ -65,34 +66,105 @@ func TestSignMetadataJWS_ProducesValidJWS(t *testing.T) {
 	}
 }
 
-// TestMetadataHandler_NegotiatesContentType proves MetadataHandler
-// returns plain JSON when the Wallet doesn't ask for application/jwt,
-// and a signed JWS (with matching Content-Type) when it does.
+// TestMetadataHandler_NegotiatesContentType: NewMetadataHandler serves
+// plain JSON unless the Wallet's Accept prefers application/jwt (by q),
+// and a signed JWS when it does, with Vary: Accept either way.
 func TestMetadataHandler_NegotiatesContentType(t *testing.T) {
 	key, cert := testSignerAndCert(t)
 	iss := newTestIssuer(t, validConfig(t), validDependencies(t))
-
-	handler := issuer.MetadataHandler(iss, key, jose.ES256, cert)
-
-	t.Run("json by default", func(t *testing.T) {
+	handler, err := issuer.NewMetadataHandler(iss, &issuer.MetadataSigner{Signer: key, Alg: jose.ES256, Certificate: cert})
+	if err != nil {
+		t.Fatalf("NewMetadataHandler: %v", err)
+	}
+	for accept, want := range map[string]string{
+		"":                 "application/json",
+		"application/json": "application/json",
+		"application/jwt":  "application/jwt",
+		"application/jwt, application/json;q=0.5": "application/jwt",
+		"application/json, application/jwt;q=0.5": "application/json",
+		"application/jwt;q=0":                     "application/json",
+	} {
 		req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-credential-issuer", nil)
-		rec := httptest.NewRecorder()
-		handler(rec, req)
-		if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-			t.Errorf("Content-Type = %q, want application/json", ct)
+		if accept != "" {
+			req.Header.Set("Accept", accept)
 		}
-	})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if ct := rec.Header().Get("Content-Type"); ct != want {
+			t.Errorf("Accept %q: Content-Type = %q, want %q", accept, ct, want)
+		}
+		if rec.Header().Get("Vary") != "Accept" {
+			t.Errorf("Accept %q: no Vary: Accept", accept)
+		}
+		if want == "application/jwt" {
+			if _, _, err := jose.Verify(jose.ES256, &key.PublicKey, rec.Body.String()); err != nil {
+				t.Errorf("Accept %q: response body is not a valid JWS: %v", accept, err)
+			}
+		}
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/.well-known/openid-credential-issuer", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST = %d, want 405", rec.Code)
+	}
+}
 
-	t.Run("jwt when requested", func(t *testing.T) {
+// The signed copy is reused until Refresh has passed on the Issuer's
+// clock, then signed again with a new iat.
+func TestMetadataHandler_CachesSignedCopy(t *testing.T) {
+	key, cert := testSignerAndCert(t)
+	clock := &mutableClock{now: time.Now()}
+	deps := validDependencies(t)
+	deps.Clock = clock
+	iss := newTestIssuer(t, validConfig(t), deps)
+	handler, err := issuer.NewMetadataHandler(iss, &issuer.MetadataSigner{Signer: key, Alg: jose.ES256, Certificate: cert, Refresh: time.Minute})
+	if err != nil {
+		t.Fatalf("NewMetadataHandler: %v", err)
+	}
+	get := func() string {
 		req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-credential-issuer", nil)
 		req.Header.Set("Accept", "application/jwt")
 		rec := httptest.NewRecorder()
-		handler(rec, req)
-		if ct := rec.Header().Get("Content-Type"); ct != "application/jwt" {
-			t.Errorf("Content-Type = %q, want application/jwt", ct)
+		handler.ServeHTTP(rec, req)
+		return rec.Body.String()
+	}
+	first := get()
+	if get() != first {
+		t.Error("signed again within Refresh")
+	}
+	clock.now = clock.now.Add(2 * time.Minute)
+	refreshed := get()
+	if refreshed == first {
+		t.Fatal("not signed again after Refresh")
+	}
+	_, payload, err := jose.Verify(jose.ES256, &key.PublicKey, refreshed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims struct {
+		Iat int64 `json:"iat"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Iat != clock.now.Unix() {
+		t.Errorf("iat = %d, want the Issuer's clock %d", claims.Iat, clock.now.Unix())
+	}
+}
+
+// NewMetadataHandler refuses a signer it couldn't sign verifiable
+// metadata with, rather than serving unsigned metadata.
+func TestNewMetadataHandler_RefusesMisconfiguredSigner(t *testing.T) {
+	key, cert := testSignerAndCert(t)
+	other, _ := testSignerAndCert(t)
+	iss := newTestIssuer(t, validConfig(t), validDependencies(t))
+	for name, s := range map[string]*issuer.MetadataSigner{
+		"another key's certificate": {Signer: other, Alg: jose.ES256, Certificate: cert},
+		"an unsupported alg":        {Signer: key, Alg: "HS256", Certificate: cert},
+		"no certificate":            {Signer: key, Alg: jose.ES256},
+	} {
+		if _, err := issuer.NewMetadataHandler(iss, s); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
-		if _, _, err := jose.Verify(jose.ES256, &key.PublicKey, rec.Body.String()); err != nil {
-			t.Errorf("response body is not a valid JWS: %v", err)
-		}
-	})
+	}
+	if _, err := issuer.NewMetadataHandler(iss, nil); err != nil {
+		t.Errorf("no signer (JSON only): %v", err)
+	}
 }

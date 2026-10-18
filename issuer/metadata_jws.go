@@ -6,8 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo"
@@ -39,6 +42,11 @@ const MetadataJWSTyp = "openidvci-issuer-metadata+jwt"
 // the CA certificates between it and the trust anchor, in order, the
 // anchor left out: x5c carries cert followed by them (HAIP 1.0 §4.1).
 func SignMetadataJWS(meta oid4vci.Metadata, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate, intermediates ...*x509.Certificate) (string, error) {
+	return signMetadataJWSAt(time.Now(), meta, signer, alg, cert, intermediates...)
+}
+
+// signMetadataJWSAt is SignMetadataJWS with iat now.
+func signMetadataJWSAt(now time.Time, meta oid4vci.Metadata, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate, intermediates ...*x509.Certificate) (string, error) {
 	if err := certchain.CheckPresentedChain(cert, intermediates); err != nil {
 		return "", fmt.Errorf("issuer: sign metadata: %w", err)
 	}
@@ -55,7 +63,7 @@ func SignMetadataJWS(meta oid4vci.Metadata, signer crypto.Signer, alg oid4vci.JO
 		return "", fmt.Errorf("issuer: sign metadata: credential_issuer is empty, cannot set sub claim")
 	}
 	claims["sub"] = sub
-	claims["iat"] = time.Now().Unix()
+	claims["iat"] = now.Unix()
 
 	claimsJSON, err := json.Marshal(claims)
 	if err != nil {
@@ -69,38 +77,163 @@ func SignMetadataJWS(meta oid4vci.Metadata, signer crypto.Signer, alg oid4vci.JO
 		"typ": MetadataJWSTyp,
 		"x5c": x5c,
 	}
-	signed, err := jose.Sign(alg, signer, header, claimsJSON)
+	signed, err := jose.Sign(jose.Alg(alg), signer, header, claimsJSON)
 	if err != nil {
 		return "", fmt.Errorf("issuer: sign metadata: %w", err)
 	}
 	return signed, nil
 }
 
-// MetadataHandler serves GET /.well-known/openid-credential-issuer
-// (§12.2). §12.2.2 makes this pure content negotiation, not a separate
-// endpoint or field: a Wallet's Accept header names application/json
-// and/or application/jwt, a Credential Issuer MUST always support the
-// former and MAY support the latter (confirmed live against the OIDF
-// conformance suite's own metadata-test-signed module, which detects
-// support by the response's Content-Type header, not by any
-// request-side signal this handler reads). Signing failure falls back
-// to plain JSON rather than a 500 — an operator error in signer/cert
-// config shouldn't take down the one endpoint every OID4VCI flow
-// starts with.
+// MetadataSigner signs the Credential Issuer Metadata
+// NewMetadataHandler serves (§12.2.3).
+type MetadataSigner struct {
+	Signer crypto.Signer
+	Alg    oid4vci.JOSEAlg
+
+	// Certificate is Signer's, issued by a CA the Wallets trust for
+	// metadata (HAIP 1.0 §4.1); Intermediates are the CA certificates
+	// between it and the trust anchor, in order, the anchor left out.
+	Certificate   *x509.Certificate
+	Intermediates []*x509.Certificate
+
+	// Refresh is how long a signed copy is served before it's signed
+	// again, so its iat stays recent for a Wallet bounding its age.
+	// Zero means DefaultMetadataRefresh.
+	Refresh time.Duration
+}
+
+// DefaultMetadataRefresh is MetadataSigner.Refresh's default.
+const DefaultMetadataRefresh = time.Hour
+
+// NewMetadataHandler serves the Credential Issuer Metadata at
+// /.well-known/openid-credential-issuer (§12.2): signed (§12.2.3) to a
+// Wallet whose Accept prefers application/jwt, as JSON otherwise
+// (§12.2.2). signer nil serves JSON only.
 //
-// intermediates follow cert in the signed metadata's x5c, as
-// SignMetadataJWS describes.
-func MetadataHandler(iss *Issuer, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate, intermediates ...*x509.Certificate) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		meta := iss.Metadata()
-		if strings.Contains(r.Header.Get("Accept"), "application/jwt") {
-			if signed, err := SignMetadataJWS(meta, signer, alg, cert, intermediates...); err == nil {
-				w.Header().Set("Content-Type", "application/jwt")
-				_, _ = w.Write([]byte(signed))
-				return
+// It checks signer up front, so a misconfigured one fails here rather
+// than leaving Wallets unsigned metadata: the certificate's key must be
+// the signer's, the chain well formed, the algorithm supported, and,
+// under AssuranceProduction, the certificate not self-signed. A test
+// signature is made too.
+//
+// The signed copy is made once and reused for signer.Refresh (dated by
+// the Issuer's clock), so a client can't make the server sign at will.
+// Only GET and HEAD are answered; responses carry Vary: Accept.
+func NewMetadataHandler(iss *Issuer, signer *MetadataSigner) (http.Handler, error) {
+	h := &metadataHandler{iss: iss}
+	if signer == nil {
+		return h, nil
+	}
+	s := *signer
+	if s.Signer == nil || s.Certificate == nil {
+		return nil, fmt.Errorf("issuer: metadata handler: signer and certificate are required")
+	}
+	if !jose.IsSupported(jose.Alg(s.Alg)) {
+		return nil, fmt.Errorf("issuer: metadata handler: alg %q is not supported", s.Alg)
+	}
+	if err := checkSignerCertificate("metadata signer", s.Signer, s.Certificate, s.Intermediates, iss.cfg.Assurance); err != nil {
+		return nil, fmt.Errorf("issuer: metadata handler: %w", err)
+	}
+	if s.Refresh <= 0 {
+		s.Refresh = DefaultMetadataRefresh
+	}
+	h.signer = &s
+	if _, err := h.signed(); err != nil {
+		return nil, fmt.Errorf("issuer: metadata handler: %w", err)
+	}
+	return h, nil
+}
+
+type metadataHandler struct {
+	iss    *Issuer
+	signer *MetadataSigner
+
+	mu       sync.Mutex
+	jws      string
+	signedAt time.Time
+}
+
+// signed is the signed metadata, signed again once Refresh has passed.
+func (h *metadataHandler) signed() (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := h.iss.deps.Clock.Now()
+	if h.jws != "" && !now.Before(h.signedAt) && now.Sub(h.signedAt) < h.signer.Refresh {
+		return h.jws, nil
+	}
+	s := h.signer
+	jws, err := signMetadataJWSAt(now, h.iss.Metadata(), s.Signer, s.Alg, s.Certificate, s.Intermediates...)
+	if err != nil {
+		return "", err
+	}
+	h.jws, h.signedAt = jws, now
+	return jws, nil
+}
+
+func (h *metadataHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Vary", "Accept")
+	if h.signer != nil && prefersJWT(r.Header.Values("Accept")) {
+		signed, err := h.signed()
+		if err != nil {
+			http.Error(w, "server_error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/jwt")
+		_, _ = w.Write([]byte(signed))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(h.iss.Metadata())
+}
+
+// prefersJWT reports whether an Accept header's application/jwt has a
+// q above zero and no lower than application/json's (RFC 9110 §12.5.1).
+func prefersJWT(accept []string) bool {
+	jwtQ, jsonQ := 0.0, 0.0
+	for _, line := range accept {
+		for _, part := range strings.Split(line, ",") {
+			mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(part))
+			if err != nil {
+				continue
+			}
+			q := 1.0
+			if v, ok := params["q"]; ok {
+				if q, err = strconv.ParseFloat(v, 64); err != nil || q < 0 || q > 1 {
+					continue
+				}
+			}
+			switch mediaType {
+			case "application/jwt":
+				jwtQ = max(jwtQ, q)
+			case "application/json":
+				jsonQ = max(jsonQ, q)
 			}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(meta)
 	}
+	return jwtQ > 0 && jwtQ >= jsonQ
+}
+
+// MetadataHandler serves the Credential Issuer Metadata, signed when
+// the Wallet asks for application/jwt and signing succeeds.
+//
+// Deprecated: Use NewMetadataHandler, which checks the signer up front
+// instead of falling back to unsigned metadata when it's misconfigured,
+// signs once per MetadataSigner.Refresh rather than per request, and
+// reads the Accept header's q values. MetadataHandler is
+// NewMetadataHandler, serving JSON only when the signer is refused.
+func MetadataHandler(iss *Issuer, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate, intermediates ...*x509.Certificate) http.HandlerFunc {
+	var ms *MetadataSigner
+	if signer != nil {
+		ms = &MetadataSigner{Signer: signer, Alg: alg, Certificate: cert, Intermediates: intermediates}
+	}
+	h, err := NewMetadataHandler(iss, ms)
+	if err != nil {
+		h, _ = NewMetadataHandler(iss, nil)
+	}
+	return h.ServeHTTP
 }

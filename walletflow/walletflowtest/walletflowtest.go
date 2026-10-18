@@ -420,7 +420,11 @@ func New(opts Options) (env *Env, err error) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(asMetadataJSON)
 	})
-	mux.HandleFunc("GET /.well-known/openid-credential-issuer", issuer.MetadataHandler(e.iss, nil, "", nil))
+	metadata, err := issuer.NewMetadataHandler(e.iss, nil)
+	if err != nil {
+		return nil, err
+	}
+	mux.Handle("GET /.well-known/openid-credential-issuer", metadata)
 	mux.HandleFunc("POST /par", e.challenged(e.handlePAR))
 	mux.HandleFunc("GET /authorize", e.handleAuthorize)
 	mux.HandleFunc("POST /token", e.challenged(e.handleToken))
