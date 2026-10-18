@@ -275,3 +275,33 @@ func sha256Sum(b []byte) []byte {
 	h := sha256.Sum256(b)
 	return h[:]
 }
+
+// A Request Object addressed to another audience, expired, or not yet
+// valid is refused (RFC 7519 §4.1.3–§4.1.5, OpenID4VP 1.0 §5.8); the
+// self-issued audience, as a string or in an array, and a fractional
+// NumericDate in the future are accepted.
+func TestRequestObjectAudienceAndTimes(t *testing.T) {
+	now := time.Now()
+	for name, tc := range map[string]struct {
+		set func(map[string]any)
+		ok  bool
+	}{
+		"another audience":          {func(p map[string]any) { p["aud"] = "https://another-wallet.example" }, false},
+		"expired":                   {func(p map[string]any) { p["exp"] = now.Add(-time.Hour).Unix() }, false},
+		"not valid yet":             {func(p map[string]any) { p["nbf"] = now.Add(time.Hour).Unix() }, false},
+		"aud not a string":          {func(p map[string]any) { p["aud"] = 7 }, false},
+		"self-issued in an array":   {func(p map[string]any) { p["aud"] = []any{"https://self-issued.me/v2", "x"} }, true},
+		"no aud at all":             {func(p map[string]any) { delete(p, "aud") }, true},
+		"fractional exp in a while": {func(p map[string]any) { p["exp"] = float64(now.Add(time.Hour).Unix()) + 0.5 }, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newRequestFixture(t)
+			_, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
+				RequestObject: f.sign(t, f.key, nil, tc.set), ClientID: f.clientID, VerifierTrust: f.trust,
+			})
+			if (err == nil) != tc.ok {
+				t.Errorf("err = %v, want accepted %v", err, tc.ok)
+			}
+		})
+	}
+}

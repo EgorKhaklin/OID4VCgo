@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"slices"
+	"time"
 )
 
 // dcAPIResponseMode is the only Response Mode a DC API request may ask
@@ -35,6 +36,10 @@ type ParseDCAPIRequestParams struct {
 	// Request Object is signed with (OID4VP §5.9.3). REQUIRED — pass
 	// NoVerifierTrust{} to opt out explicitly.
 	VerifierTrust VerifierTrust
+
+	// Now is the time a signed request's exp and nbf are checked at;
+	// nil means time.Now.
+	Now func() time.Time
 }
 
 // ParseDCAPIRequest verifies a signed OpenID4VP request delivered
@@ -72,6 +77,9 @@ func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, er
 	var wire wireRequestObjectPayload
 	if err := strictjson.Unmarshal(payload, &wire); err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: parse payload: %w", err)
+	}
+	if err := checkRequestObjectClaims(wire, params.Now); err != nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 	}
 	if wire.ClientID != clientID {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: client_id %q does not match x5c leaf's own x509_hash %q", wire.ClientID, clientID)
@@ -148,7 +156,7 @@ func (w *Wallet) ParseDCAPIRequest(request, origin string) (AuthorizationRequest
 	if w.cfg.VerifierTrust == nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: Config.VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
 	}
-	return ParseDCAPIRequest(ParseDCAPIRequestParams{Request: request, Origin: origin, VerifierTrust: w.cfg.VerifierTrust})
+	return ParseDCAPIRequest(ParseDCAPIRequestParams{Request: request, Origin: origin, VerifierTrust: w.cfg.VerifierTrust, Now: w.deps.Clock.Now})
 }
 
 // The DC API protocol identifiers of OpenID4VP's three request forms
@@ -192,6 +200,10 @@ type ParseDCAPIRequestDataParams struct {
 	// protocols (pass NoVerifierTrust{} to opt out explicitly), unused
 	// for the unsigned one.
 	VerifierTrust VerifierTrust
+
+	// Now is the time a signed request's exp and nbf are checked at;
+	// nil means time.Now.
+	Now func() time.Time
 }
 
 // ParseDCAPIRequestData parses an OpenID4VP request delivered through
@@ -236,7 +248,7 @@ func ParseDCAPIRequestData(params ParseDCAPIRequestDataParams) (AuthorizationReq
 		if err := json.Unmarshal(params.Data, &data); err != nil || data.Request == "" {
 			return AuthorizationRequest{}, errors.New("wallet: parse dc api request: data.request must be a signed Request Object")
 		}
-		return ParseDCAPIRequest(ParseDCAPIRequestParams{Request: data.Request, Origin: params.Origin, VerifierTrust: params.VerifierTrust})
+		return ParseDCAPIRequest(ParseDCAPIRequestParams{Request: data.Request, Origin: params.Origin, VerifierTrust: params.VerifierTrust, Now: params.Now})
 	case DCAPIProtocolMultiSigned:
 		return parseMultiSignedDCAPIRequest(params)
 	case DCAPIProtocolUnsigned:
@@ -295,8 +307,11 @@ func parseMultiSignedDCAPIRequest(params ParseDCAPIRequestDataParams) (Authoriza
 			continue
 		}
 		var wire wireRequestObjectPayload
-		if err := json.Unmarshal(payload, &wire); err != nil {
+		if err := strictjson.Unmarshal(payload, &wire); err != nil {
 			return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: parse payload: %w", err)
+		}
+		if err := checkRequestObjectClaims(wire, params.Now); err != nil {
+			return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 		}
 		if wire.ClientID != "" || len(wire.VerifierInfo) > 0 {
 			return AuthorizationRequest{}, errors.New("wallet: parse dc api request: client_id and verifier_info belong in a multi-signed request's protected headers, not its payload")
@@ -321,5 +336,5 @@ func (w *Wallet) ParseDCAPIRequestData(protocol string, data []byte, origin stri
 	if protocol != DCAPIProtocolUnsigned && w.cfg.VerifierTrust == nil {
 		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: Config.VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
 	}
-	return ParseDCAPIRequestData(ParseDCAPIRequestDataParams{Protocol: protocol, Data: data, Origin: origin, VerifierTrust: w.cfg.VerifierTrust})
+	return ParseDCAPIRequestData(ParseDCAPIRequestDataParams{Protocol: protocol, Data: data, Origin: origin, VerifierTrust: w.cfg.VerifierTrust, Now: w.deps.Clock.Now})
 }
