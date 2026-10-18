@@ -26,7 +26,7 @@ import dev.idfoundry.oid4vcwallet.Issuance
 import dev.idfoundry.oid4vcwallet.MdocPresentation
 import dev.idfoundry.oid4vcwallet.ProximityException
 import dev.idfoundry.oid4vcwallet.ProximityPresentation
-import dev.idfoundry.oid4vcwallet.NfcPresentation
+import dev.idfoundry.oid4vcwallet.NfcEngagementOptions
 import dev.idfoundry.oid4vcwallet.ProximityReader
 import dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration
 import dev.idfoundry.oid4vcwallet.ProximityBLEMode
@@ -139,8 +139,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         this.config = config
         val reset = intent?.getBooleanExtra("reset", false) == true
         if (reset) {
-            prefs.edit().remove(COPY_POLICY).remove(BLE_MODES).apply()
+            prefs.edit().remove(COPY_POLICY).remove(BLE_MODES).remove(ENGAGEMENT).apply()
             bleModes = ProximityBLEMode.entries.toSet()
+            inPersonEngagement = InPersonEngagement.QR
         }
         copyPolicy = prefs.getString(COPY_POLICY, null)?.let { saved ->
             WalletConfiguration.CopyPolicy.entries.firstOrNull { it.name == saved }
@@ -814,32 +815,41 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     // In person (ISO/IEC 18013-5 over BLE)
 
     /** The in-person presentation in progress, the holder's side. */
-    var inPerson by mutableStateOf<ProximityPresentation?>(null)
+    var inPerson by mutableStateOf<InPersonSession?>(null)
         private set
     var inPersonState by mutableStateOf<ProximityPresentation.State?>(null)
         private set
     private var inPersonJob: Job? = null
     private var armingJob: Job? = null
-    var nfcOwner by mutableStateOf<NfcPresentation?>(null)
-        private set
-    var inPersonEngagement by mutableStateOf(InPersonEngagement.QR)
+    /** How presenting in person engages the reader, as chosen in the app's settings: QR by default. */
+    var inPersonEngagement by mutableStateOf(
+        prefs.getString(ENGAGEMENT, null).let { saved -> InPersonEngagement.entries.firstOrNull { it.name == saved } } ?: InPersonEngagement.QR,
+    )
         private set
 
+    /** Chooses how presenting in person engages the reader, from the next session. */
     fun chooseEngagement(choice: InPersonEngagement) {
         closeInPerson()
         inPersonEngagement = choice
+        prefs.edit().putString(ENGAGEMENT, choice.name).commit()
     }
 
     fun refreshNfcForeground() {
-        val owner = nfcOwner ?: return
+        val session = inPerson?.takeIf { it.nfc } ?: return
+        // A biometric prompt can resume the activity after sharing has ended.
+        // Keep terminal sessions from reacquiring routing preference.
+        if (session.state.value.isFinal) {
+            releaseNfcForeground()
+            return
+        }
         activity.get()?.let { host ->
-            val preferred = runCatching { owner.preferForeground(host, DemoNfcService::class.java) }.getOrDefault(false)
+            val preferred = runCatching { session.preferForeground(host) }.getOrDefault(false)
             if (!preferred) notice = "Could not prefer this wallet for NFC. Keep this screen open and choose this wallet if Android asks which app to use."
         }
     }
 
     fun releaseNfcForeground() {
-        activity.get()?.let { host -> runCatching { nfcOwner?.releaseForeground(host) } }
+        activity.get()?.let { host -> runCatching { inPerson?.releaseForeground(host) } }
     }
 
     /**
@@ -852,17 +862,17 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         notice = null
         armingJob = viewModelScope.launch {
         try {
-            val p = if (inPersonEngagement == InPersonEngagement.QR) {
-                wallet.startProximityPresentation(getApplication(), modes = bleModes)
-            } else {
-                wallet.startNfcPresentation(getApplication(), modes = bleModes,
-                    negotiated = inPersonEngagement in setOf(InPersonEngagement.NFC_NEGOTIATED, InPersonEngagement.NFC_NEGOTIATED_DATA),
-                    nfcData = inPersonEngagement in setOf(InPersonEngagement.NFC_DATA, InPersonEngagement.NFC_NEGOTIATED_DATA)).also {
-                    nfcOwner = it
-                    refreshNfcForeground()
-                }.presentation
+            val e = inPersonEngagement
+            val p = when {
+                !e.nfc -> InPersonSession.Qr(wallet.startProximityPresentation(getApplication(), modes = bleModes))
+                // Both offered: the first reader to engage, by QR or by tap, wins.
+                e.qr -> InPersonSession.Combined(wallet.startCombinedPresentation(getApplication(), modes = bleModes,
+                    nfc = NfcEngagementOptions(negotiated = e.negotiated, nfcData = e.nfcData)))
+                else -> InPersonSession.Nfc(wallet.startNfcPresentation(getApplication(), modes = bleModes,
+                    negotiated = e.negotiated, nfcData = e.nfcData))
             }
             inPerson = p
+            refreshNfcForeground()
             // For driving two emulators: the QR code's text, an ephemeral
             // key and a service UUID, in debug builds.
             if (getApplication<Application>().applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
@@ -910,10 +920,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     fun closeInPerson() {
         armingJob?.cancel()
         releaseNfcForeground()
-        val owner = nfcOwner
-        nfcOwner = null
-        if (owner != null) viewModelScope.launch { owner.close() }
-        inPerson?.cancel()
+        val session = inPerson
+        session?.cancel()
+        if (session != null) viewModelScope.launch { session.close() }
         inPersonJob?.cancel()
         inPerson = null
         inPersonState = null
@@ -1010,6 +1019,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val COPY_POLICY = "demo-copy-policy"
         private const val BLE_MODES = "demo-ble-modes"
+        private const val ENGAGEMENT = "demo-in-person-engagement"
 
         /** Credential Offer links' scheme, and presentation requests'. */
         const val OFFER_SCHEME = "openid-credential-offer"

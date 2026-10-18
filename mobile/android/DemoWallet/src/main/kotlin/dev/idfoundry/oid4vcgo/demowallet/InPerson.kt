@@ -164,12 +164,13 @@ fun InPersonScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeav
         }
         when {
             model.inPerson == null -> NoSession(model, start)
-            model.nfcOwner != null && (state == null || state == ProximityPresentation.State.WaitingForReader) ->
-                Waiting(if (model.inPersonEngagement in setOf(InPersonEngagement.NFC_DATA, InPersonEngagement.NFC_NEGOTIATED_DATA))
+            model.inPerson is InPersonSession.Nfc && (state == null || state == ProximityPresentation.State.WaitingForReader) ->
+                Waiting(if (model.inPersonEngagement.nfcData)
                     "Keep the phones together through consent and sharing by NFC."
                 else "Hold the phones together for the NFC tap. Once connected by Bluetooth, you can move them apart.")
             state == null || state == ProximityPresentation.State.WaitingForReader || state == ProximityPresentation.State.Connected ->
-                QRCodeView(model.inPerson?.qrCode.orEmpty(), connected = state == ProximityPresentation.State.Connected)
+                QRCodeView(model.inPerson?.qrCode.orEmpty(), connected = state == ProximityPresentation.State.Connected,
+                    orTap = model.inPerson is InPersonSession.Combined)
             state is ProximityPresentation.State.RequestReceived -> InPersonConsent(model, state.request, onCertificates = { certificates = it })
             state == ProximityPresentation.State.Responding -> Waiting("Sharing…")
             // Done starts the next session: a new QR code.
@@ -192,7 +193,7 @@ private fun NoSession(model: WalletModel, start: () -> Unit) {
 }
 
 @Composable
-private fun QRCodeView(qrCode: String, connected: Boolean) {
+internal fun QRCodeView(qrCode: String, connected: Boolean, orTap: Boolean = false) {
     val bitmap = remember(qrCode) { if (qrCode.isEmpty()) null else qrBitmap(qrCode) }
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         if (connected) {
@@ -205,6 +206,15 @@ private fun QRCodeView(qrCode: String, connected: Boolean) {
                 Image(
                     it.asImageBitmap(), "QR code for the reader",
                     Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(Color.White).testTag("in-person-qr"),
+                )
+            }
+            // QR and NFC both offered: whichever reader engages first gets the request.
+            if (orTap) {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    if (bitmap == null) "Hold the phones together for the NFC tap."
+                    else "Or hold the phones together for the NFC tap. The first reader to connect gets the request.",
+                    Modifier.testTag("in-person-or-tap"),
                 )
             }
         }
@@ -549,7 +559,7 @@ fun PresentScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave
 @Composable
 fun rememberShareInPerson(model: WalletModel): () -> Unit =
     rememberBluetoothPermissions(
-        if (model.inPersonEngagement in setOf(InPersonEngagement.NFC_DATA, InPersonEngagement.NFC_NEGOTIATED_DATA)) emptyList() else ProximityPermissions.holder(model.bleModes),
+        if (model.inPersonEngagement.usesBluetooth) ProximityPermissions.holder(model.bleModes) else emptyList(),
         then = { model.shareInPerson() },
         denied = { model.notice = "Allow nearby devices to share in person." },
     )

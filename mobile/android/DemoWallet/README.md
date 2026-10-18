@@ -87,11 +87,16 @@ so use manual configuration for an existing integration.
 
 ## In person (ISO/IEC 18013-5 over QR/BLE or NFC)
 
-The demo also offers **NFC tap and Bluetooth**,
-**Negotiated NFC tap and Bluetooth**, **NFC tap and transfer**, and
-**Negotiated NFC tap and transfer** in the presentation settings. The
-first two retain the selected BLE role. The latter two keep the phones
-together for the whole exchange and require no Bluetooth permissions.
+The demo also offers **QR code or NFC tap, then Bluetooth**, **NFC tap and
+Bluetooth**, **Negotiated NFC tap and Bluetooth**, **NFC tap and
+transfer**, and **Negotiated NFC tap and transfer** in the presentation
+settings. The first shows the QR code and answers a tap at the same time
+(`startCombinedPresentation`): the first reader to engage gets the request,
+and the other offer is withdrawn. The Bluetooth ones use the BLE mode
+chosen below them in the same menu, which stays open for both choices. The
+two transfer modes keep the phones together for the whole exchange and
+require no Bluetooth permissions, so the menu greys out the Bluetooth modes.
+The choice is kept across launches.
 Reader presets offer **Tap with Bluetooth allowed**, which requests
 Bluetooth permissions, and **Tap without asking for Bluetooth**, which
 skips that request. Both detect the holder's selected carrier; the second

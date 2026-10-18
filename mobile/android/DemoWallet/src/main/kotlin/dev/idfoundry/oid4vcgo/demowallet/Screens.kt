@@ -204,31 +204,54 @@ private fun SettingsMenu(model: WalletModel) {
             )
         }
         HorizontalDivider()
-        Text("Presenting in person", Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
-        for (choice in InPersonEngagement.entries) {
-            DropdownMenuItem(
-                text = { Text(choice.label) },
-                leadingIcon = { Icon(if (model.inPersonEngagement == choice) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked, null) },
-                onClick = { model.chooseEngagement(choice); open = false },
-                modifier = Modifier.testTag("engagement-${choice.name}"),
-            )
-        }
-        for ((modes, label) in listOf(
-            ProximityBLEMode.entries.toSet() to "Both Bluetooth modes (the reader picks)",
-            setOf(ProximityBLEMode.PERIPHERAL_SERVER) to "Advertise only (peripheral server)",
-            setOf(ProximityBLEMode.CENTRAL_CLIENT) to "Scan for the reader only (central client)",
-        )) {
-            val chosen = model.bleModes == modes
-            DropdownMenuItem(
-                text = { Text(label) },
-                leadingIcon = { Icon(if (chosen) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked, null) },
-                onClick = {
-                    model.chooseBLEModes(modes)
-                    open = false
-                },
-                modifier = Modifier.testTag("ble-modes-${modes.joinToString("-") { it.name }}"),
-            )
-        }
+        // The in-person choices stay open together: engagement and Bluetooth mode are set in one visit.
+        InPersonSettings(model.inPersonEngagement, model.bleModes, model::chooseEngagement, model::chooseBLEModes)
+    }
+}
+
+/**
+ * Presenting in person: how the reader engages, then the Bluetooth mode,
+ * greyed out when the engagement transfers by NFC and so uses no Bluetooth.
+ */
+@Composable
+internal fun InPersonSettings(
+    engagement: InPersonEngagement,
+    bleModes: Set<ProximityBLEMode>,
+    onEngagement: (InPersonEngagement) -> Unit,
+    onBLEModes: (Set<ProximityBLEMode>) -> Unit,
+) {
+    Text("Presenting in person", Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
+    for (choice in InPersonEngagement.entries) {
+        DropdownMenuItem(
+            text = { Text(choice.label) },
+            leadingIcon = { Icon(if (engagement == choice) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked, null) },
+            onClick = { onEngagement(choice) },
+            modifier = Modifier.testTag("engagement-${choice.name}"),
+        )
+    }
+    HorizontalDivider()
+    Text("Bluetooth mode", Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
+    if (!engagement.usesBluetooth) {
+        Text(
+            "Not used: NFC transfer keeps the whole exchange on NFC.",
+            Modifier.padding(horizontal = 16.dp).testTag("ble-modes-unused"),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    for ((modes, label) in listOf(
+        ProximityBLEMode.entries.toSet() to "Both Bluetooth modes (the reader picks)",
+        setOf(ProximityBLEMode.PERIPHERAL_SERVER) to "Advertise only (peripheral server)",
+        setOf(ProximityBLEMode.CENTRAL_CLIENT) to "Scan for the reader only (central client)",
+    )) {
+        val chosen = bleModes == modes
+        DropdownMenuItem(
+            text = { Text(label) },
+            leadingIcon = { Icon(if (chosen) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked, null) },
+            onClick = { onBLEModes(modes) },
+            enabled = engagement.usesBluetooth,
+            modifier = Modifier.testTag("ble-modes-${modes.joinToString("-") { it.name }}"),
+        )
     }
 }
 
