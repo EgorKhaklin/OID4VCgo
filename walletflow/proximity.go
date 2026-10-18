@@ -26,8 +26,9 @@ var ErrReaderEnded = errors.New("walletflow: the reader ended the session")
 // back. The radio transport is the app's. One request per session: the
 // holder answers it with Respond, or ends the session with Terminate.
 type ProximityPresentation struct {
-	w *Wallet
-	s *proximity.DeviceSession
+	w        *Wallet
+	s        *proximity.DeviceSession
+	combined *proximity.CombinedDeviceSession
 
 	mu       sync.Mutex
 	state    proximityState
@@ -103,13 +104,26 @@ func (w *Wallet) startProximityPresentation(create func(io.Reader, ...proximity.
 
 // QRCode is the device engagement to show, "mdoc:" and its base64url
 // (§8.2.2.3).
-func (p *ProximityPresentation) QRCode() string { return p.s.QRCode() }
+func (p *ProximityPresentation) QRCode() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.combined != nil {
+		if q := p.combined.QROffer(); q != nil {
+			return q.QRCode()
+		}
+		return ""
+	}
+	return p.s.QRCode()
+}
 
 // HandoverSelect is the static NFC NDEF message, without NLEN; nil for
 // QR sessions. The returned copy may be passed to platform NFC code.
 func (p *ProximityPresentation) HandoverSelect() []byte {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.combined != nil {
+		return p.combined.NFCOffer().HandoverSelect()
+	}
 	return p.s.HandoverSelect()
 }
 
@@ -126,6 +140,11 @@ type ProximityEngagement struct {
 func (p *ProximityPresentation) Engagement() ProximityEngagement {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// With no QR offer, carrier metadata belongs only to NFC and must not
+	// start a QR transport before NFC selection and the complete Hs read.
+	if p.combined != nil && p.combined.SelectedEngagement() == "" && p.combined.QROffer() == nil {
+		return ProximityEngagement{}
+	}
 	return ProximityEngagement{QRCode: p.s.QRCode(), PeripheralServerUUID: p.s.PeripheralServerUUID(), CentralClientUUID: p.s.CentralClientUUID(), BLEIdent: append([]byte(nil), p.s.BLEIdent()...)}
 }
 
@@ -136,6 +155,11 @@ func (p *ProximityPresentation) HandleHandoverRequest(hr []byte) ([]byte, error)
 	defer p.mu.Unlock()
 	if p.state != proximityWaiting {
 		return nil, fmt.Errorf("walletflow: no NFC handover pending: %w", proximity.ErrSessionClosed)
+	}
+	if p.combined != nil {
+		if p.combined.SelectedEngagement() != "nfc_ble" && p.combined.SelectedEngagement() != "nfc_data" {
+			return nil, fmt.Errorf("walletflow: NFC not selected: %w", proximity.ErrSessionClosed)
+		}
 	}
 	return p.s.HandleHandoverRequest(hr)
 }
@@ -166,7 +190,11 @@ func (p *ProximityPresentation) CentralClientUUID() string {
 
 // BLEIdent is the value the reader's Ident characteristic must hold in
 // mdoc central client mode: disconnect from a reader whose differs.
-func (p *ProximityPresentation) BLEIdent() []byte { return p.s.BLEIdent() }
+func (p *ProximityPresentation) BLEIdent() []byte {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]byte(nil), p.s.BLEIdent()...)
+}
 
 // ProximityEvent is what HandleMessage made of a message.
 type ProximityEvent struct {
@@ -194,6 +222,9 @@ func (p *ProximityPresentation) HandleMessage(ctx context.Context, msg []byte) P
 	defer p.mu.Unlock()
 	switch p.state {
 	case proximityWaiting:
+		if p.combined != nil && p.combined.SelectedEngagement() == "" {
+			return ProximityEvent{Err: fmt.Errorf("walletflow: engagement not selected: %w", proximity.ErrSessionClosed)}
+		}
 		return p.establish(ctx, msg)
 	case proximityRequested:
 		// A message before the holder answered: the reader ending the
@@ -489,5 +520,8 @@ func (p *ProximityPresentation) Terminate() []byte {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.state = proximityEnded
+	if p.combined != nil {
+		p.combined.Close()
+	}
 	return p.s.Termination()
 }
