@@ -41,6 +41,14 @@ holder, then respond or decline.
 
 ```kotlin
 import android.content.Context
+import android.app.Activity
+import android.nfc.Tag
+import dev.idfoundry.oid4vcwallet.CombinedPresentation
+import dev.idfoundry.oid4vcwallet.NfcEngagementOptions
+import dev.idfoundry.oid4vcwallet.NfcEngagementService
+import dev.idfoundry.oid4vcwallet.NfcPresentation
+import dev.idfoundry.oid4vcwallet.ProximityBLEMode
+import dev.idfoundry.oid4vcwallet.ProximityDiagnostics
 import dev.idfoundry.oid4vcwallet.MdocPresentation
 import dev.idfoundry.oid4vcwallet.ProximityPresentation
 import dev.idfoundry.oid4vcwallet.ProximityReader
@@ -146,11 +154,16 @@ Its AID resource uses category `other` and requires device unlock. Retain
 one `NfcPresentation` at application/view-model level. Start it with:
 
 ```kotlin
-val owner = wallet.startNfcPresentation(context, modes = modes)
+class IdentityNfcService : NfcEngagementService()
+
+suspend fun startNfcHolder(
+    context: Context, wallet: Wallet, modes: Set<ProximityBLEMode>,
+): NfcPresentation {
+    return wallet.startNfcPresentation(context, modes = modes)
+}
 // For negotiated NFC-to-BLE, pass negotiated = true.
 // For static NFC-only retrieval, pass nfcData = true.
 // For negotiated NFC-only, pass both nfcData = true and negotiated = true.
-val session = owner.presentation
 ```
 
 Follow `session.state` and use the existing `respond`/`decline` consent
@@ -175,7 +188,10 @@ On the verifier, enable Android reader mode with NFC-A/NFC-B and
 `FLAG_READER_SKIP_NDEF_CHECK`, then invoke from a coroutine:
 
 ```kotlin
-val session = reader.startFromNfc(context, tag, docType, elements)
+suspend fun startNfcReader(
+    context: Context, reader: ProximityReader, tag: Tag,
+    docType: String, elements: Map<String, List<String>>,
+): ProximityReaderSession = reader.startFromNfc(context, tag, docType, elements)
 ```
 
 The reader detects static versus negotiated handover and the selected
@@ -205,11 +221,16 @@ and NFC-only actions; the latter does not request Bluetooth permissions.
 Use one owner for a screen that displays a QR code and accepts an NFC tap:
 
 ```kotlin
-val owner = wallet.startCombinedPresentation(
-    context,
-    nfc = NfcEngagementOptions(negotiated = false, nfcData = false),
-)
-showQr(owner.qrCode) // Empty when NFC-only is available but BLE permission is absent.
+suspend fun startCombinedHolder(
+    context: Context, wallet: Wallet, showQr: (String) -> Unit,
+): CombinedPresentation {
+    val owner = wallet.startCombinedPresentation(
+        context,
+        nfc = NfcEngagementOptions(negotiated = false, nfcData = false),
+    )
+    showQr(owner.qrCode) // Empty when NFC-only is available but BLE permission is absent.
+    return owner
+}
 // Collect owner.state, the same ProximityPresentation.State used by QR sessions.
 // On RequestReceived, use owner.respond(document, credentialID, elements)
 // or owner.decline(). owner.selectedEngagement records QR, NFC_BLE or NFC_DATA.
@@ -225,16 +246,25 @@ The exact activity/screen calls, while that owner exists, are:
 
 ```kotlin
 // Activity.onResume(), and immediately after creating an owner while resumed:
-val preferred = owner.preferForeground(activity, IdentityNfcService::class.java)
-if (!preferred) showNfcServiceSelectionInstructions()
+fun resumeCombinedHolder(
+    owner: CombinedPresentation, activity: Activity,
+    showNfcServiceSelectionInstructions: () -> Unit,
+) {
+    val preferred = owner.preferForeground(activity, IdentityNfcService::class.java)
+    if (!preferred) showNfcServiceSelectionInstructions()
+}
 
 // Activity.onPause():
-owner.releaseForeground(activity)
+fun pauseCombinedHolder(owner: CombinedPresentation, activity: Activity) {
+    owner.releaseForeground(activity)
+}
 
 // Screen exit or terminal state, from a retained coroutine that survives navigation:
-owner.releaseForeground(activity)
-owner.cancel() // Withdraw immediately, even if cleanup has to suspend.
-owner.close()  // Await tasks and radio cleanup before dropping/replacing the owner.
+suspend fun closeCombinedHolder(owner: CombinedPresentation, activity: Activity) {
+    owner.releaseForeground(activity)
+    owner.cancel() // Withdraw immediately, even if cleanup has to suspend.
+    owner.close()  // Await tasks and radio cleanup before dropping/replacing the owner.
+}
 ```
 
 Do not create another owner on each resume or use a coroutine cancelled by the
@@ -277,7 +307,9 @@ conformance gate; public overviews do not replace those normative texts.
 For opt-in Android lifecycle diagnostics:
 
 ```kotlin
-ProximityDiagnostics.enabled = true // Turn off again after troubleshooting.
+fun enableProximityDiagnostics(enabled: Boolean) {
+    ProximityDiagnostics.enabled = enabled // Turn off again after troubleshooting.
+}
 ```
 
 Filter logcat by `OID4VCProximity`. Events distinguish Type 4 discovery,
