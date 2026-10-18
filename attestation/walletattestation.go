@@ -136,6 +136,9 @@ func IssueWalletAttestation(signer crypto.Signer, alg oid4vci.JOSEAlg, header He
 	if claims.IssuedAt != 0 && claims.ExpiresAt <= claims.IssuedAt {
 		return "", fmt.Errorf("attestation: WalletAttestationClaims.ExpiresAt must be after IssuedAt")
 	}
+	if err := header.checkX5C(signer); err != nil {
+		return "", err
+	}
 	instanceJWK, err := marshalJWK(claims.InstanceKey)
 	if err != nil {
 		return "", err

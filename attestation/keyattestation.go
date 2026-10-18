@@ -2,11 +2,14 @@ package attestation
 
 import (
 	"crypto"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
@@ -49,6 +52,13 @@ const (
 // to resolve a kid/trust_chain to an actual verification key — that's
 // the caller's policy, the same division credential/sdjwtvc leaves to
 // its own callers for Issuer Signature Mechanism resolution.
+//
+// HAIP 1.0 (§4.4.1 for a Wallet Attestation, §4.5.1 for a Key
+// Attestation) requires x5c: a header with only kid or trust_chain
+// isn't HAIP-conformant. When X5C is set, Issue and
+// IssueWalletAttestation check it as HAIP requires: its leaf's key is
+// the signer's, the leaf isn't self-signed, each certificate signs the
+// one before it, and the trust anchor is left out.
 type Header struct {
 	KeyID      string
 	X5C        []string // base64-encoded DER certificates (RFC 7515 §4.1.6)
@@ -110,6 +120,9 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, header Header, claims Clai
 	if len(claims.AttestedKeys) == 0 {
 		return "", fmt.Errorf("attestation: Claims.AttestedKeys must not be empty")
 	}
+	if err := header.checkX5C(signer); err != nil {
+		return "", err
+	}
 
 	payload, err := json.Marshal(wireClaims(claims))
 	if err != nil {
@@ -121,6 +134,35 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, header Header, claims Clai
 		return "", fmt.Errorf("attestation: sign: %w", err)
 	}
 	return compact, nil
+}
+
+// checkX5C checks h.X5C, when set, as HAIP 1.0 §4.4.1 and §4.5.1
+// require: the leaf's key is signer's, and the chain is one a signer
+// presents (certchain.CheckPresentedChain: the leaf not self-signed,
+// each certificate signing the one before, no anchor). A Verifier
+// would refuse an attestation breaking these.
+func (h Header) checkX5C(signer crypto.Signer) error {
+	if len(h.X5C) == 0 {
+		return nil
+	}
+	certs := make([]*x509.Certificate, len(h.X5C))
+	for i, b64 := range h.X5C {
+		der, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			return fmt.Errorf("attestation: Header.X5C[%d]: %w", i, err)
+		}
+		if certs[i], err = x509.ParseCertificate(der); err != nil {
+			return fmt.Errorf("attestation: Header.X5C[%d]: %w", i, err)
+		}
+	}
+	key, ok := signer.Public().(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !key.Equal(certs[0].PublicKey) {
+		return fmt.Errorf("attestation: Header.X5C's leaf certificate isn't the signer's")
+	}
+	if err := certchain.CheckPresentedChain(certs[0], certs[1:]); err != nil {
+		return fmt.Errorf("attestation: Header.X5C: %w", err)
+	}
+	return nil
 }
 
 // joseHeader builds an attestation JWT's JOSE header: typ plus

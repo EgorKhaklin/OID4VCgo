@@ -5,7 +5,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/attestation"
@@ -20,16 +19,15 @@ func x5cKeyAttestation(t *testing.T, signer *ecdsa.PrivateKey, certs ...*x509.Ce
 	for i, c := range certs {
 		x5c[i] = base64.StdEncoding.EncodeToString(c.Raw)
 	}
-	attestedKey, err := json.Marshal(map[string]any{"kty": "EC"})
-	if err != nil {
-		t.Fatalf("marshal attested key: %v", err)
+	// Signed directly, not by attestation.Issue, which refuses the bad
+	// chains these tests need the verifier to refuse.
+	header := map[string]any{"typ": attestation.TypHeader}
+	if len(x5c) > 0 {
+		header["x5c"] = x5c
 	}
-	compact, err := attestation.Issue(signer, jose.ES256,
-		attestation.Header{X5C: x5c},
-		attestation.Claims{IssuedAt: 1, AttestedKeys: []json.RawMessage{attestedKey}},
-	)
+	compact, err := jose.Sign(jose.ES256, signer, header, []byte(`{"iat":1,"attested_keys":[{"kty":"EC"}]}`))
 	if err != nil {
-		t.Fatalf("attestation.Issue: %v", err)
+		t.Fatalf("jose.Sign: %v", err)
 	}
 	parsed, err := attestation.Parse(compact)
 	if err != nil {
