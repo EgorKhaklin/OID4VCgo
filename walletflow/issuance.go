@@ -385,7 +385,7 @@ func (s *Issuance) BeginAuthorizationWith(ctx context.Context, opts Authorizatio
 	if err := s.newClient(ctx, plan.AuthorizationServer, true); err != nil {
 		return "", err
 	}
-	authReq, err := wallet.BuildAuthorizationRequest(s.offer, plan.Scopes)
+	authReq, err := wallet.BuildAuthorizationRequestForPlan(s.offer, plan)
 	if err != nil {
 		return "", fmt.Errorf("walletflow: %w", err)
 	}
