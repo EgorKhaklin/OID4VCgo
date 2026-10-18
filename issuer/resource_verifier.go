@@ -39,9 +39,6 @@ package issuer
 // translation:
 //
 //	authCtx, err := verifier.Verify(ctx, resource.VerifyRequestFromHTTP(r, credentialEndpointURL))
-//
-// URL is the endpoint's absolute URL, not r.URL: a server-side request's
-// URL has no scheme or host, so a DPoP proof's htu would never match it.
 //	if err != nil {
 //		// respond per *resource.Error — Verify's own doc comment covers this.
 //	}
@@ -50,18 +47,27 @@ package issuer
 //		// client_id, which could equal a holder's (RFC 9068 §5).
 //		return resource.NewInsufficientScopeError(authCtx, "a Credential needs an end user's access token")
 //	}
+//	if authCtx.InternalSubject == "" {
+//		// a resource verifier resolving only pairwise client subjects:
+//		// every holder would share the empty subject. A server error.
+//		return errors.New("the access token's internal subject isn't resolved")
+//	}
 //	var client issuer.ClientIdentity = issuer.NoClientIdentity{}
 //	if authCtx.ClientID != "" {
 //		client = issuer.KnownClientID(authCtx.ClientID)
 //	}
-//	auth := issuer.AuthorizedRequest{ClientIdentity: client, Subject: authCtx.Subject, Scopes: authCtx.Scopes}
+//	auth := issuer.AuthorizedRequest{ClientIdentity: client, Subject: authCtx.InternalSubject, Scopes: authCtx.Scopes}
 //	if raw, ok := authCtx.Claims["authorization_details"]; ok {
 //		if err := json.Unmarshal(raw, &auth.AuthorizationDetails); err != nil {
 //			// malformed claim — treat the same as a verification failure.
 //		}
 //	}
 //
-// authCtx.Subject binds a deferred transaction to the token's subject
+// credentialEndpointURL is the endpoint's absolute URL, not r.URL: a
+// server-side request's URL has no scheme or host, so a DPoP proof's
+// htu would never match it.
+//
+// authCtx.InternalSubject binds a deferred transaction to the token's subject
 // (AuthorizedRequest.Subject), and it is how the caller finds out what
 // to issue: for a token minted by
 // ExchangePreAuthorizedCode it is the redeemed
