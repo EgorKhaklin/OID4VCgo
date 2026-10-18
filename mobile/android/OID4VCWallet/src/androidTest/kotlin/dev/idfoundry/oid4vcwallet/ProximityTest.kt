@@ -307,7 +307,9 @@ class ProximityTest {
             val hr = dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile.newNFCHandoverRequestWithNFCData("[\"peripheral_server\",\"central_client\"]",255,256)
             val hs = NfcType4Reader({ checkNotNull(owner.process(it)) }, 128).read(hr)
             val parameters = decode<NfcDataParametersJSON>(dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile.parseNfcDataParameters(hs))
+            val commands = java.util.Collections.synchronizedList(mutableListOf<ByteArray>())
             val exchange: (ByteArray) -> ByteArray = { command ->
+                commands.add(command)
                 val response = java.util.concurrent.ArrayBlockingQueue<ByteArray>(1)
                 owner.process(command) { response.offer(it) } ?: response.poll(30, java.util.concurrent.TimeUnit.SECONDS) ?: error("APDU timed out")
             }
@@ -318,6 +320,11 @@ class ProximityTest {
             owner.presentation.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name")))
             val verified = awaitFinal(reader.state) { it.isFinal } as ProximityReaderSession.State.Verified
             assertEquals("Doe", verified.result.claims[NAMESPACE]!!.jsonObject["family_name"]!!.jsonPrimitive.content)
+            // NFC has no State 0x02: the reader ends with session termination, so a holder
+            // keeping the session open for another request doesn't see only a lost field.
+            val last = checkNotNull(NfcCommand.parse(commands.last()))
+            assertEquals(0xc3, last.ins)
+            assertEquals("a16673746174757314", NfcData.unwrap(last.data).joinToString("") { "%02x".format(it) })
         } finally { owner.close() }
         }
     }

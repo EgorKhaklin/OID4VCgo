@@ -729,7 +729,7 @@ public class ProximityReaderSession internal constructor(
                 throw ProximityException(ProximityException.Reason.TimedOut, "the holder didn't respond in time", e)
             }
             val event = decode<ReaderEventJSON>(handle.handleMessage(answer))
-            event.send?.let { runCatching { transport.send(it) } }
+            sendLast(event)
             finish(
                 when {
                     event.event == "verified" && event.verified != null -> State.Verified(event.verified.toVerified())
@@ -769,6 +769,29 @@ public class ProximityReaderSession internal constructor(
     private suspend fun terminate() {
         val message = decode<SendJSON>(handle.terminate()).send
         if (_state.value is State.WaitingForResponse) runCatching { transport.send(message) }
+    }
+
+    /**
+     * Sends the session's last message, if any. BLE ends with State 0x02 on
+     * close. NFC has no such signal, so an NFC-only session that got an
+     * answer ends with session termination (status 20), and waits briefly
+     * for that exchange before the tag closes: a holder keeping the session
+     * open for another request would otherwise see only a lost field.
+     */
+    private suspend fun sendLast(event: ReaderEventJSON) {
+        if (!usesNfcData) {
+            event.send?.let { runCatching { transport.send(it) } }
+            return
+        }
+        val last = event.send ?: if (event.reason == "declined") return else decode<SendJSON>(handle.terminate()).send
+        runCatching {
+            transport.send(last)
+            withTimeoutOrNull(LAST_NFC_MESSAGE_TIMEOUT) { transport.receive() }
+        }
+    }
+
+    private companion object {
+        val LAST_NFC_MESSAGE_TIMEOUT = 1.seconds
     }
 
     private fun finish(final: State) {
