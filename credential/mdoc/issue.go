@@ -96,6 +96,20 @@ func validateIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions)
 	return validateX5Chain(signer, claims, opts)
 }
 
+// normalizeValidity puts claims' validity times in UTC with whole
+// seconds, as ISO/IEC 18013-5 §9.1.2.4 has the MSO's tdate values
+// encoded, before their order is checked: two times within one second
+// would otherwise pass validFrom < validUntil and encode as equal.
+func normalizeValidity(claims Claims) Claims {
+	norm := func(t time.Time) time.Time { return t.UTC().Truncate(time.Second) }
+	claims.Signed, claims.ValidFrom, claims.ValidUntil = norm(claims.Signed), norm(claims.ValidFrom), norm(claims.ValidUntil)
+	if claims.ExpectedUpdate != nil {
+		update := norm(*claims.ExpectedUpdate)
+		claims.ExpectedUpdate = &update
+	}
+	return claims
+}
+
 // validateClaims checks claims on their own: what's required, and the
 // order of the validity timestamps.
 func validateClaims(claims Claims) error {
@@ -168,6 +182,7 @@ func validateX5Chain(signer crypto.Signer, claims Claims, opts IssueOptions) err
 // via internal/cose. Resolving the caller's actual signer/certificate
 // is out of scope — see the package doc comment.
 func Issue(signer crypto.Signer, alg oid4vci.COSEAlg, claims Claims, opts IssueOptions) (IssuerSigned, error) {
+	claims = normalizeValidity(claims)
 	if err := validateIssueInputs(signer, claims, opts); err != nil {
 		return IssuerSigned{}, err
 	}

@@ -558,3 +558,32 @@ func TestDigestIDsAreUniqueWithinNamespace(t *testing.T) {
 		}
 	}
 }
+
+// ISO/IEC 18013-5 §9.1.2.4: the MSO's times are UTC with whole
+// seconds. Issue normalizes them before checking their order, so two
+// times within one second can't pass validFrom < validUntil and encode
+// as equal.
+func TestIssueNormalizesValidityTimes(t *testing.T) {
+	f := newFixture(t)
+	cest := time.FixedZone("CEST", 2*60*60)
+	signed := time.Date(2025, 1, 1, 2, 0, 0, 400_000_000, cest)
+	claims := f.claims
+	claims.Signed, claims.ValidFrom, claims.ValidUntil = signed, signed, signed.Add(24*time.Hour)
+	issued, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	verified, err := Verify(issued, claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{Now: func() time.Time { return signed.Add(time.Hour) }})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	want := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	if got := verified.ValidityInfo.Signed; !got.Equal(want) || got.Location() != time.UTC {
+		t.Errorf("signed = %s, want %s", got, want)
+	}
+
+	claims.ValidFrom, claims.ValidUntil = signed, signed.Add(300*time.Millisecond)
+	if _, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}}); err == nil {
+		t.Error("validUntil within validFrom's second was accepted")
+	}
+}
