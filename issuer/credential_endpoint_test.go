@@ -95,6 +95,17 @@ type credentialEndpointFixture struct {
 // file) or to replace a Dependencies field.
 func newCredentialEndpointFixture(t testing.TB, mutate ...func(cfg *issuer.Config, deps *issuer.Dependencies)) credentialEndpointFixture {
 	t.Helper()
+	f, err := tryCredentialEndpointFixture(t, mutate...)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return f
+}
+
+// tryCredentialEndpointFixture is newCredentialEndpointFixture,
+// returning New's error.
+func tryCredentialEndpointFixture(t testing.TB, mutate ...func(cfg *issuer.Config, deps *issuer.Dependencies)) (credentialEndpointFixture, error) {
+	t.Helper()
 	sdjwtSigner := testSDJWTSigner(t)
 	mdocSigner := testMdocSigner(t)
 	attestationSigner := testP256Key(t)
@@ -147,13 +158,10 @@ func newCredentialEndpointFixture(t testing.TB, mutate ...func(cfg *issuer.Confi
 	}
 
 	iss, err := issuer.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
 	return credentialEndpointFixture{
 		iss: iss, sdjwtSigner: sdjwtSigner, mdocSigner: mdocSigner,
 		attestationSigner: attestationSigner, nonces: nonces, now: now,
-	}
+	}, err
 }
 
 func (f credentialEndpointFixture) issueNonce(t *testing.T) string {
@@ -907,69 +915,55 @@ func TestRequestCredential_RejectsAttestationFromUntrustedSigner(t *testing.T) {
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
 
-func TestRequestCredential_RejectsUnboundConfig(t *testing.T) {
-	f := newCredentialEndpointFixture(t)
-	cfg := issuer.Config{
-		Assurance: issuer.AssuranceDevelopment,
-		Issuer:    mustIssuerURL(t, testIssuer),
-		Endpoints: issuer.Endpoints{
-			Credential: mustEndpointURL(t, testCredentialEndpoint),
-			Nonce:      mustEndpointURL(t, testNonceEndpoint),
+// New refuses a configuration it advertises but could never issue, or
+// would issue as something other than it says: Wallets would request
+// it and every request would fail, or they'd expect another binding,
+// algorithm or a valid signer.
+func TestNew_RefusesUnissuableConfiguration(t *testing.T) {
+	expired := func(t *testing.T, deps *issuer.Dependencies) {
+		ca, caKey := testcert.CA(t, "test issuer CA")
+		cert, key := testcert.Leaf(t, "test issuer", ca, caKey)
+		deps.SDJWTSigner = &issuer.SDJWTSigner{Signer: key, Alg: jose.ES256, IssuerCertificate: cert}
+		deps.Clock = fixedClock{now: cert.NotAfter.Add(time.Hour)}
+	}
+	for name, mutate := range map[string]func(t *testing.T, cfg *issuer.Config, deps *issuer.Dependencies){
+		"no binding method": func(_ *testing.T, cfg *issuer.Config, _ *issuer.Dependencies) {
+			c := cfg.CredentialConfigurationsSupported[testSDJWTConfigID]
+			c.CryptographicBindingMethodsSupported = nil
+			cfg.CredentialConfigurationsSupported[testSDJWTConfigID] = c
 		},
-		Limits: issuer.Limits{NonceLifetime: time.Minute},
-		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
-			"UnboundCredential": {Format: sdjwtvc.CredentialFormat, VCT: "https://credentials.example.com/identity_credential"},
+		"an unknown format": func(_ *testing.T, cfg *issuer.Config, _ *issuer.Dependencies) {
+			c := cfg.CredentialConfigurationsSupported[testSDJWTConfigID]
+			c.Format = "some_unknown_format"
+			cfg.CredentialConfigurationsSupported[testSDJWTConfigID] = c
 		},
-	}
-	deps := issuer.Dependencies{
-		Nonces: f.nonces, Clock: fixedClock{now: f.now}, Random: rand.Reader, SDJWTSigner: f.sdjwtSigner,
-	}
-	iss, err := issuer.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	_, err = iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.CredentialRequest{
-		CredentialConfigurationID: "UnboundCredential",
-		SDJWTClaims:               testSDJWTClaims(),
-	})
-	assertIssuerError(t, err, issuer.ErrorInsufficientScope)
-}
-
-func TestRequestCredential_RejectsUnsupportedFormat(t *testing.T) {
-	f := newCredentialEndpointFixture(t)
-	cfg := issuer.Config{
-		Assurance: issuer.AssuranceDevelopment,
-		Issuer:    mustIssuerURL(t, testIssuer),
-		Endpoints: issuer.Endpoints{
-			Credential: mustEndpointURL(t, testCredentialEndpoint),
-			Nonce:      mustEndpointURL(t, testNonceEndpoint),
+		"jwk binding for an mdoc": func(_ *testing.T, cfg *issuer.Config, _ *issuer.Dependencies) {
+			c := cfg.CredentialConfigurationsSupported[testMdocConfigID]
+			c.CryptographicBindingMethodsSupported = []string{"jwk"}
+			cfg.CredentialConfigurationsSupported[testMdocConfigID] = c
 		},
-		Limits: issuer.Limits{NonceLifetime: time.Minute},
-		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
-			"UnsupportedFormat": {
-				Format: "some_unknown_format", CryptographicBindingMethodsSupported: []string{"jwk"},
-				ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
-					oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{"ES256"}},
-				},
-			},
+		"cose_key binding for an SD-JWT VC": func(_ *testing.T, cfg *issuer.Config, _ *issuer.Dependencies) {
+			c := cfg.CredentialConfigurationsSupported[testSDJWTConfigID]
+			c.CryptographicBindingMethodsSupported = []string{"cose_key"}
+			cfg.CredentialConfigurationsSupported[testSDJWTConfigID] = c
 		},
-	}
-	deps := issuer.Dependencies{
-		Nonces: f.nonces, Clock: fixedClock{now: f.now}, Random: rand.Reader, SDJWTSigner: f.sdjwtSigner,
-	}
-	iss, err := issuer.New(cfg, deps)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	nonce := f.issueNonce(t)
-	proof := buildJWTProof(t, testP256Key(t), testIssuer, nonce)
-	_, err = iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, issuer.CredentialRequest{
-		CredentialConfigurationID: "UnsupportedFormat",
-		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {proof}},
-		SDJWTClaims:               testSDJWTClaims(),
-	})
-	if err == nil {
-		t.Errorf("RequestCredential accepted an unsupported format")
+		"an SD-JWT VC alg the signer doesn't use": func(_ *testing.T, cfg *issuer.Config, _ *issuer.Dependencies) {
+			c := cfg.CredentialConfigurationsSupported[testSDJWTConfigID]
+			c.CredentialSigningAlgValuesSupported = []string{"ES384"}
+			cfg.CredentialConfigurationsSupported[testSDJWTConfigID] = c
+		},
+		"an mdoc alg the signer doesn't use": func(_ *testing.T, cfg *issuer.Config, _ *issuer.Dependencies) {
+			c := cfg.CredentialConfigurationsSupported[testMdocConfigID]
+			c.CredentialSigningAlgValuesSupportedCOSE = []oid4vci.COSEAlg{cose.EdDSA}
+			cfg.CredentialConfigurationsSupported[testMdocConfigID] = c
+		},
+		"an expired signer certificate": func(t *testing.T, _ *issuer.Config, deps *issuer.Dependencies) { expired(t, deps) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := tryCredentialEndpointFixture(t, func(cfg *issuer.Config, deps *issuer.Dependencies) { mutate(t, cfg, deps) }); err == nil {
+				t.Error("New accepted it")
+			}
+		})
 	}
 }
 

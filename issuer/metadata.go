@@ -31,15 +31,16 @@ type CredentialConfiguration struct {
 	// selects this Credential.
 	Scope string
 
-	// CryptographicBindingMethodsSupported is REQUIRED when
-	// Cryptographic Key Binding applies to this Credential ("jwk" for
-	// key material in JWK format — the only value OID4VCgo currently
-	// has a use for, since credential/sdjwtvc's holder binding is
-	// JWK-based); omitted otherwise.
+	// CryptographicBindingMethodsSupported is how the Credential is
+	// bound to the holder's key (§12.2.4). REQUIRED here, since this
+	// package issues only key-bound credentials: "jwk" (or a "did:"
+	// method) for an SD-JWT VC, "cose_key" for an mdoc. New refuses
+	// another, or none.
 	CryptographicBindingMethodsSupported []string
 
 	// CredentialSigningAlgValuesSupported is OPTIONAL: the algorithms
-	// this issuer signs this Credential with.
+	// this issuer signs this Credential with. When set, New requires it
+	// to list SDJWTSigner.Alg.
 	CredentialSigningAlgValuesSupported []string
 
 	// ProofTypesSupported is REQUIRED exactly when
@@ -63,7 +64,8 @@ type CredentialConfiguration struct {
 	// ES256) an mdoc's IssuerAuth is signed with, wire-encoded as bare
 	// JSON numbers rather than JOSE alg strings. Set this instead of
 	// CredentialSigningAlgValuesSupported when Format is
-	// credential/mdoc.CredentialFormat — setting both is rejected.
+	// credential/mdoc.CredentialFormat — setting both is rejected. When
+	// set, New requires it to list MdocSigner.Alg.
 	CredentialSigningAlgValuesSupportedCOSE []oid4vci.COSEAlg
 
 	// CredentialMetadata is OPTIONAL (Appendix A): display/claims

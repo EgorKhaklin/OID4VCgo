@@ -76,16 +76,15 @@ var credentialEncValuesSupported = []jwe.Enc{jwe.A128GCM, jwe.A256GCM}
 // invalid_encryption_parameters.
 var credentialZipValuesSupported = []jwe.Zip{jwe.DEF}
 
-// jwtProofCredentialConfiguration builds the jwk-binding/jwt-proof-type
-// shape every CredentialConfiguration this binary advertises shares —
-// Format and the format-specific metadata parameter (VCT or DocType)
-// are the caller's own job to set afterward, the one thing that
-// actually differs between the "dc+sd-jwt" and "mso_mdoc"
-// configurations below.
-func jwtProofCredentialConfiguration(scope string, proofSigningAlgs []string) issuer.CredentialConfiguration {
+// jwtProofCredentialConfiguration builds the jwt-proof-type shape every
+// CredentialConfiguration this binary advertises shares, bound by
+// bindingMethod: "jwk" for a "dc+sd-jwt" credential, "cose_key" for an
+// "mso_mdoc" one (OpenID4VCI §12.2.4). Format and the format-specific
+// metadata parameter (VCT or DocType) are the caller's to set.
+func jwtProofCredentialConfiguration(scope, bindingMethod string, proofSigningAlgs []string) issuer.CredentialConfiguration {
 	return issuer.CredentialConfiguration{
 		Scope:                                scope,
-		CryptographicBindingMethodsSupported: []string{"jwk"},
+		CryptographicBindingMethodsSupported: []string{bindingMethod},
 		ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
 			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: proofSigningAlgs},
 		},
@@ -192,7 +191,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		return nil, fmt.Errorf("credential request decryption key: %w", err)
 	}
 	issProofAlgs := []string{"ES256"}
-	sdjwtConfig := jwtProofCredentialConfiguration(cfg.Scope, issProofAlgs)
+	sdjwtConfig := jwtProofCredentialConfiguration(cfg.Scope, "jwk", issProofAlgs)
 	sdjwtConfig.Format, sdjwtConfig.VCT = sdjwtvc.CredentialFormat, cfg.VCT
 	issDeps := issuer.Dependencies{
 		// The Notification Endpoint (§11) accepts events and records
@@ -220,7 +219,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	var mdocConfig issuer.CredentialConfiguration
 	attestationTargets := []*issuer.CredentialConfiguration{&sdjwtConfig}
 	if cfg.Mdoc != nil {
-		mdocConfig = jwtProofCredentialConfiguration(cfg.Mdoc.Scope, issProofAlgs)
+		mdocConfig = jwtProofCredentialConfiguration(cfg.Mdoc.Scope, "cose_key", issProofAlgs)
 		mdocConfig.Format, mdocConfig.DocType = mdoc.CredentialFormat, cfg.Mdoc.DocType
 		attestationTargets = append(attestationTargets, &mdocConfig)
 		mdocSigner, err := buildMdocSigner(cfg, issuerSigningKey, issuerCertificate)
