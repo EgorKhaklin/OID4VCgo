@@ -479,7 +479,9 @@ func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clie
 		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: parse request_uri: %w", err)
 	}
 	res, err := w.fetcher.Fetch(ctx, fapihttp.FetchRequest{
-		URL: target, ExpectedContentType: "application/" + requestObjectTyp,
+		// RFC 9101 §5.2 serves a GET request_uri as either media type;
+		// only POST (OpenID4VP §5.10.1) fixes it.
+		URL: target, ExpectedContentType: "application/" + requestObjectTyp, AlternateContentTypes: []string{"application/jwt"},
 	})
 	if err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: fetch request_uri: %w", err)
