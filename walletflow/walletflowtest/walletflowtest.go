@@ -118,6 +118,11 @@ type Options struct {
 	// wallet is registered as a native app, so each must be a form RFC
 	// 8252 allows one.
 	RedirectURIs []string
+	// JWTKeyAttestation has the issuer take the jwt proof type with a
+	// key attestation in each proof's key_attestation header (HAIP 1.0
+	// §4.5.1, haip.RecommendedJWTKeyAttestationProofType) instead of the
+	// attestation proof type.
+	JWTKeyAttestation bool
 	// AttestationChallenges has the Authorization Server offer a
 	// challenge endpoint, and refuse a Client Attestation PoP at its
 	// pushed authorization request and token endpoints without a
@@ -301,6 +306,9 @@ func New(opts Options) (env *Env, err error) {
 	e.RegistrarRoots, e.RegistrarCA = x509.NewCertPool(), registrarCA
 	e.RegistrarRoots.AddCert(registrarCA)
 	proofTypes := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: haip.RecommendedAttestationProofType()}
+	if opts.JWTKeyAttestation {
+		proofTypes = map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: haip.RecommendedJWTKeyAttestationProofType()}
+	}
 	var preAuthClientAuth issuer.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
 	if opts.Anonymous {
 		proofTypes = map[string]oid4vci.ProofTypeConfiguration{

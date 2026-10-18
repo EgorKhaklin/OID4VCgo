@@ -17,6 +17,8 @@ type WalletProvider interface {
 	WalletAttestation(ctx context.Context, clientID string, instanceKey crypto.PublicKey) (string, error)
 	// KeyAttestation returns a Key Attestation over keys carrying the
 	// Credential Issuer's nonce: the attestation proof the wallet sends
-	// in a Credential Request.
+	// in a Credential Request, or the key_attestation its jwt proofs
+	// carry. It must have an exp, which the jwt proof type requires
+	// (OpenID4VCI 1.0 Appendix D.1).
 	KeyAttestation(ctx context.Context, keys []*ecdsa.PublicKey, nonce string) (string, error)
 }
