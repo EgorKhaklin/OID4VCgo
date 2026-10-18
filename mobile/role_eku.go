@@ -15,6 +15,9 @@ import (
 // §4.2.1.12).
 var oidExtKeyUsage = asn1.ObjectIdentifier{2, 5, 29, 37}
 
+// oidAnyExtendedKeyUsage is anyExtendedKeyUsage (RFC 5280 §4.2.1.12).
+var oidAnyExtendedKeyUsage = asn1.ObjectIdentifier{2, 5, 29, 37, 0}
+
 // parseOID parses a dotted object identifier, such as "1.3.6.1.5.5.7.3.2".
 func parseOID(dotted string) (asn1.ObjectIdentifier, error) {
 	parts := strings.Split(dotted, ".")
@@ -70,15 +73,26 @@ func pemCertificates(pemText string) [][]byte {
 	}
 }
 
-// checkRoleRoots refuses, outside development, any role's roots that
-// share a trust anchor with another role's without an extended key
-// usage to tell that role's certificates apart: otherwise an issuer's
-// signing certificate, say, would be taken for a trusted Verifier, a
-// Verifier's for an issuer able to issue credentials, or a Verifier's
-// second certificate for a registrar.
+// mdocReaderAuthEKU is ISO/IEC 18013-5's mdoc reader authentication
+// extended key usage (mdoc_reader_require_eku).
+const mdocReaderAuthEKU = "1.0.18013.5.1.6"
+
+// checkRoleRoots refuses, outside development, two roles whose roots
+// may vouch for the same certificates unless each has its own extended
+// key usage, and the two differ: otherwise an issuer's signing
+// certificate, say, would be taken for a trusted Verifier, a Verifier's
+// for an issuer able to issue credentials, or a Verifier's second
+// certificate for a registrar. Roots may vouch for the same
+// certificates when they share an anchor, and whenever either holds an
+// intermediate: where that chains to can't be known from the roots
+// alone, so it may be the other's.
 func checkRoleRoots(cfg config) error {
 	if cfg.Development {
 		return nil
+	}
+	mdocEKU := ""
+	if cfg.MdocReaderRequireEKU {
+		mdocEKU = mdocReaderAuthEKU
 	}
 	roles := []struct {
 		name, roots string
@@ -87,27 +101,55 @@ func checkRoleRoots(cfg config) error {
 		{"verifier_roots", cfg.VerifierRoots, cfg.VerifierRequireEKU},
 		{"registrar_roots", cfg.RegistrarRoots, cfg.RegistrarRequireEKU},
 		{"issuer_roots", cfg.IssuerRoots, cfg.IssuerRequireEKU},
-		{"mdoc_reader_roots", cfg.MdocReaderRoots, boolEKU(cfg.MdocReaderRequireEKU)},
+		{"issuer_metadata_roots", cfg.IssuerMetadataRoots, cfg.IssuerMetadataRequireEKU},
+		{"mdoc_reader_roots", cfg.MdocReaderRoots, mdocEKU},
 	}
 	for i, a := range roles {
-		if a.eku != "" {
-			continue
-		}
-		for j, b := range roles {
-			if i == j || !shareAnchor(a.roots, b.roots) {
+		for _, b := range roles[i+1:] {
+			if !mayShareAnchor(a.roots, b.roots) {
 				continue
 			}
-			return newError(CodeInvalidInput, fmt.Errorf("%s shares a trust anchor with %s: set %s to tell its certificates apart", a.name, b.name, strings.TrimSuffix(a.name, "_roots")+"_require_eku"))
+			for _, r := range []struct{ name, eku, other string }{{a.name, a.eku, b.name}, {b.name, b.eku, a.name}} {
+				if r.eku == "" {
+					return newError(CodeInvalidInput, fmt.Errorf("%s may share a trust anchor with %s: set %s to tell its certificates apart", r.name, r.other, ekuKey(r.name)))
+				}
+			}
+			if a.eku == b.eku {
+				return newError(CodeInvalidInput, fmt.Errorf("%s and %s may share a trust anchor, and %s and %s are the same extended key usage, which can't tell their certificates apart", a.name, b.name, ekuKey(a.name), ekuKey(b.name)))
+			}
 		}
 	}
 	return nil
 }
 
-func boolEKU(set bool) string {
-	if set {
-		return "-"
+// ekuKey is the configuration key naming the extended key usage of the
+// role whose roots are rootsKey.
+func ekuKey(rootsKey string) string {
+	return strings.TrimSuffix(rootsKey, "_roots") + "_require_eku"
+}
+
+// mayShareAnchor reports whether roots a and b may vouch for the same
+// certificates: they share an anchor (shareAnchor), or either holds a
+// certificate that isn't self-signed, an intermediate, whose own
+// anchor is unknown.
+func mayShareAnchor(a, b string) bool {
+	if a == "" || b == "" {
+		return false
 	}
-	return ""
+	return shareAnchor(a, b) || holdsIntermediate(a) || holdsIntermediate(b)
+}
+
+// holdsIntermediate reports whether pemText has a certificate not
+// signed by its own key.
+func holdsIntermediate(pemText string) bool {
+	for _, c := range parseCertificates(pemCertificates(pemText)) {
+		// Self-signed is the certificate's own key signing it, CA flag or
+		// not (CheckSignatureFrom would also want the flag).
+		if c.CheckSignature(c.SignatureAlgorithm, c.RawTBSCertificate, c.Signature) != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // shareAnchor reports whether roots a and b can vouch for the same
@@ -180,6 +222,11 @@ func roleEKU(name, dotted string) (func(*x509.Certificate, [][]*x509.Certificate
 	oid, err := parseOID(dotted)
 	if err != nil {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("%s: %w", name, err))
+	}
+	// anyExtendedKeyUsage (RFC 5280 §4.2.1.12) names no role: every
+	// certificate with it would pass.
+	if oid.Equal(oidAnyExtendedKeyUsage) {
+		return nil, newError(CodeInvalidInput, fmt.Errorf("%s: anyExtendedKeyUsage can't tell a role's certificates apart", name))
 	}
 	return requireEKU(oid), nil
 }

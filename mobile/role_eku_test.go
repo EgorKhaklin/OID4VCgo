@@ -84,6 +84,10 @@ func TestCheckRoleRoots(t *testing.T) {
 		"mdoc reader shares with issuer": {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.5", MdocReaderRoots: shared}, refused: "mdoc_reader_require_eku"},
 		"mdoc reader has its EKU":        {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.5", MdocReaderRoots: shared, MdocReaderRequireEKU: true}},
 		"development":                    {cfg: config{IssuerRoots: shared, VerifierRoots: shared, Development: true}},
+		"the same EKU for both":          {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.3", VerifierRoots: shared, VerifierRequireEKU: "1.2.3"}, refused: "same extended key usage"},
+		"issuer EKU is the reader's":     {cfg: config{IssuerRoots: shared, IssuerRequireEKU: mdocReaderAuthEKU, MdocReaderRoots: shared, MdocReaderRequireEKU: true}, refused: "same extended key usage"},
+		"metadata shares with issuer":    {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.5", IssuerMetadataRoots: shared}, refused: "issuer_metadata_require_eku"},
+		"metadata has its EKU":           {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.5", IssuerMetadataRoots: shared, IssuerMetadataRequireEKU: "1.2.6"}},
 	} {
 		err := checkRoleRoots(tc.cfg)
 		switch {
@@ -149,10 +153,21 @@ func TestCheckRoleRoots_OverlapBeyondEqualCertificates(t *testing.T) {
 		"a reissued root, same key and subject":                 {asPEM(root), asPEM(reissued), true},
 		"two levels below, through a CA in the sets":            {asPEM(root, intermediate), asPEM(sub), true},
 		"unrelated": {asPEM(root), asPEM(unrelated), false},
+		// The intermediate between them is configured nowhere: whether
+		// sub chains to root can't be told, so it may.
+		"an intermediate whose root is unknown": {asPEM(root), asPEM(sub), true},
+		"an unrelated root and an intermediate": {asPEM(unrelated), asPEM(sub), true},
 	} {
 		err := checkRoleRoots(config{VerifierRoots: tc.verifierRoots, IssuerRoots: tc.issuerRoots})
 		if tc.refused != (err != nil) {
 			t.Errorf("%s: %v, want refused = %v", name, err, tc.refused)
 		}
+	}
+}
+
+// anyExtendedKeyUsage names no role, so it's refused as one's.
+func TestRoleEKU_RefusesAnyExtendedKeyUsage(t *testing.T) {
+	if _, err := roleEKU("issuer_require_eku", "2.5.29.37.0"); err == nil {
+		t.Error("anyExtendedKeyUsage accepted as a role's EKU")
 	}
 }
