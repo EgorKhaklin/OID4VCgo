@@ -580,8 +580,10 @@ func verifyBytes(alg Alg, pub crypto.PublicKey, toVerify, sig []byte) error {
 		return nil
 	case EdDSA:
 		edPub, ok := pub.(ed25519.PublicKey)
-		if !ok {
-			return errors.New("cose: EdDSA requires an Ed25519 public key")
+		// ed25519.Verify panics on a key of another length, which a
+		// caller's own key resolver could return.
+		if !ok || len(edPub) != ed25519.PublicKeySize {
+			return fmt.Errorf("cose: EdDSA requires a %d-byte Ed25519 public key", ed25519.PublicKeySize)
 		}
 		if !ed25519.Verify(edPub, toVerify, sig) {
 			return errors.New("cose: EdDSA signature verification failed")
