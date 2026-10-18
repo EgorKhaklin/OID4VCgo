@@ -12,6 +12,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"math"
 	"net/url"
+	"reflect"
 	"slices"
 	"time"
 
@@ -340,6 +341,13 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
 		}
 	}
+	if wire.DCQLQuery, err = prepareQuery(wire.DCQLQuery); err != nil {
+		return AuthorizationRequest{}, &RequestRejectedError{
+			Code: "invalid_request", Description: err.Error(),
+			State: wire.State, ResponseURI: wire.ResponseURI,
+			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+		}
+	}
 	info, err := parseVerifierInfo(wire.VerifierInfo, wire.DCQLQuery)
 	if err != nil {
 		return AuthorizationRequest{}, &RequestRejectedError{
@@ -608,4 +616,27 @@ func checkRequestObjectClaims(wire wireRequestObjectPayload, nowFunc func() time
 func numericDateTime(v float64) time.Time {
 	sec := math.Floor(v)
 	return time.Unix(int64(sec), int64((v-sec)*1e9))
+}
+
+// prepareQuery is a request's DCQL query as the Wallet answers it,
+// checked when the request is parsed rather than when it's matched:
+// within its size bounds (a 1 MiB unsigned DC API request could
+// otherwise carry thousands of Credential Queries, each matched against
+// every held credential), and otherwise valid. A claims query repeating
+// an earlier one exactly is dropped first: "Wallets SHOULD ignore such
+// duplicate claim queries" (OpenID4VP 1.0 §6.1).
+func prepareQuery(q dcql.Query) (dcql.Query, error) {
+	for i, cq := range q.Credentials {
+		var kept []dcql.ClaimsQuery
+		for _, cl := range cq.Claims {
+			if !slices.ContainsFunc(kept, func(k dcql.ClaimsQuery) bool { return reflect.DeepEqual(k, cl) }) {
+				kept = append(kept, cl)
+			}
+		}
+		q.Credentials[i].Claims = kept
+	}
+	if err := q.Validate(); err != nil {
+		return dcql.Query{}, fmt.Errorf("dcql_query: %w", err)
+	}
+	return q, nil
 }

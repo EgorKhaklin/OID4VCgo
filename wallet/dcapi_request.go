@@ -117,6 +117,13 @@ func finishDCAPIRequest(wire wireRequestObjectPayload, origin string, cert *x509
 			op: dcAPIParseOp,
 		}
 	}
+	if wire.DCQLQuery, err = prepareQuery(wire.DCQLQuery); err != nil {
+		return AuthorizationRequest{}, &RequestRejectedError{
+			Code: "invalid_request", Description: err.Error(),
+			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+			op: dcAPIParseOp,
+		}
+	}
 	if len(wire.TransactionData) > 0 {
 		return AuthorizationRequest{}, &RequestRejectedError{
 			Code:                  "invalid_transaction_data",
