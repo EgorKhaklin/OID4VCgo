@@ -321,10 +321,14 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 	if err != nil {
 		return Begun{}, err
 	}
-	state, err := t.randomToken()
+	secret, err := t.randomToken()
 	if err != nil {
 		return Begun{}, err
 	}
+	// The state names its request, so an unencrypted error response,
+	// which has no response key to route it by, can be tied to it
+	// (HandleUnencryptedError); the secret part makes it unguessable.
+	state := id + stateSeparator + secret
 	built, err := t.v.BuildAuthorizationRequest(BuildAuthorizationRequestRequest{Query: query, State: state})
 	if err != nil {
 		return Begun{}, fmt.Errorf("verifier: transactions: %w", err)
@@ -481,6 +485,34 @@ func (t *Transactions) verify(ctx context.Context, tx Transaction, responseJWE s
 // recordFailure notes why an answer was refused, if the request is
 // still pending. Best effort: a store error here doesn't change the
 // answer's own error.
+// stateSeparator separates a request's ID from the secret in its state.
+const stateSeparator = "."
+
+// HandleUnencryptedError takes an unencrypted error response (OpenID4VP
+// §8.3.1: a Wallet unable to encrypt "MAY send an error response
+// without encryption"), its error code and the state it echoed: the
+// request whose state that is records it as its LastError, still
+// pending, and a same-device request is answered with its redirect_uri
+// (HAIP 1.0 §5.1). It's unauthenticated, so it never closes the
+// request: anyone who saw the Request Object could send one. A state
+// that names no pending request is acknowledged with nothing.
+func (t *Transactions) HandleUnencryptedError(ctx context.Context, code, state string) Answered {
+	id, _, ok := strings.Cut(state, stateSeparator)
+	if !ok || id == "" {
+		return Answered{}
+	}
+	tx, err := t.store.Get(ctx, id)
+	if err != nil || subtle.ConstantTimeCompare([]byte(state), []byte(tx.State)) != 1 || t.checkPending(tx) != nil {
+		return Answered{}
+	}
+	walletErr := &ResponseError{Code: errorCodeOf(code)}
+	t.recordFailure(ctx, id, walletErr)
+	if !tx.SameDevice {
+		return Answered{ID: id}
+	}
+	return Answered{ID: id, RedirectURI: withQuery(t.cfg.RedirectURI, "error", walletErr.Code)}
+}
+
 func (t *Transactions) recordFailure(ctx context.Context, id string, cause error) {
 	_ = t.store.Update(ctx, id, func(cur *Transaction) error {
 		if cur.Status != TransactionPending {

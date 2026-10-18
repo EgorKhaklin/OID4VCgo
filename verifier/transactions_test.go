@@ -653,6 +653,40 @@ func TestTransactions_ErrorResponses(t *testing.T) {
 	}
 
 	if status, body := post(url.Values{"error": {"access_denied"}, "state": {"any"}}); status != http.StatusOK || len(body) != 0 {
-		t.Errorf("unencrypted error response: %d %v, want 200 {}", status, body)
+		t.Errorf("unencrypted error response naming no request: %d %v, want 200 {}", status, body)
 	}
+
+	// An unencrypted error response is tied to its request by state: a
+	// same-device one gets its redirect_uri (HAIP 1.0 §5.1), and the
+	// request records the error but stays pending, since anyone who saw
+	// the Request Object could send one.
+	plain := f.begin("browser-binding-A", true)
+	state := f.stateOf(plain)
+	if _, body := post(url.Values{"error": {"access_denied"}, "state": {state + "x"}}); len(body) != 0 {
+		t.Errorf("unencrypted error with a wrong state: %v, want {}", body)
+	}
+	status, body = post(url.Values{"error": {"access_denied"}, "state": {state}})
+	if u, err := url.Parse(body["redirect_uri"]); status != http.StatusOK || err != nil || u.Query().Get("error") != "access_denied" {
+		t.Errorf("unencrypted same-device error: %d %v, want a redirect_uri carrying error=access_denied", status, body)
+	}
+	if view, err := f.txs.Lookup(context.Background(), plain.ID, "browser-binding-A"); err != nil || view.Status != verifier.TransactionPending || !strings.Contains(view.LastError, "access_denied") {
+		t.Errorf("after the unencrypted error: %+v, %v; want still pending, with the error recorded", view, err)
+	}
+}
+
+// stateOf is begun's state, as its Request Object carries it.
+func (f *txFixture) stateOf(begun verifier.Begun) string {
+	f.t.Helper()
+	object, err := f.txs.RequestObject(context.Background(), begun.ID)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	link, _ := url.Parse(begun.Link)
+	req, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
+		RequestObject: object, ClientID: link.Query().Get("client_id"), VerifierTrust: wallet.NoVerifierTrust{},
+	})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return req.State
 }
