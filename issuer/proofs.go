@@ -121,10 +121,10 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 	}
 
 	var body struct {
-		Iss   string `json:"iss"`
-		Aud   string `json:"aud"`
-		Iat   int64  `json:"iat"`
-		Nonce string `json:"nonce"`
+		Iss   string   `json:"iss"`
+		Aud   string   `json:"aud"`
+		Iat   *float64 `json:"iat"` // a NumericDate, which may be fractional (RFC 7519 §2)
+		Nonce string   `json:"nonce"`
 	}
 	if err := json.Unmarshal(payload, &body); err != nil {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: unmarshal body", i), err)
@@ -132,10 +132,14 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 	if body.Aud != iss.cfg.Issuer.String() {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: aud does not match this issuer", i), nil)
 	}
-	if body.Iat == 0 {
+	if body.Iat == nil || *body.Iat == 0 {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iat is required", i), nil)
 	}
-	if err := iss.checkProofAge(body.Iat, i); err != nil {
+	issued, err := jwtdate.FromFloat(*body.Iat)
+	if err != nil {
+		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iat", i), err)
+	}
+	if err := iss.checkProofAge(issued.Unix(), i); err != nil {
 		return nil, nil, "", err
 	}
 	// auth.ClientID() == "" here only ever means an explicit

@@ -1669,3 +1669,27 @@ func TestRequestCredential_AttestationNonceBeforeStatus(t *testing.T) {
 		t.Errorf("the status was checked %d times for a replayed attestation, want none", checked)
 	}
 }
+
+// A jwt proof's iat is an RFC 7519 NumericDate, which may be
+// fractional; one out of range is refused.
+func TestRequestCredential_ProofIatNumericDate(t *testing.T) {
+	f := newCredentialEndpointFixture(t)
+	key := testP256Key(t)
+	proof := func(iat any) string {
+		var jwkObj map[string]any
+		if err := json.Unmarshal(jwkJSON(t, &key.PublicKey), &jwkObj); err != nil {
+			t.Fatal(err)
+		}
+		payload, _ := json.Marshal(map[string]any{"aud": testIssuer, "iat": iat, "nonce": f.issueNonce(t)})
+		raw, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "openid4vci-proof+jwt", "jwk": jwkObj}, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	if _, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof(float64(time.Now().UnixMilli())/1000)); err != nil {
+		t.Errorf("a fractional iat: %v", err)
+	}
+	_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof(1e300))
+	assertIssuerError(t, err, issuer.ErrorInvalidProof)
+}
