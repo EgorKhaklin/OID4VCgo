@@ -68,18 +68,25 @@ func (c AKITrustedAuthoritiesChecker) CheckTrustedAuthorities(ctx context.Contex
 	if c.Roots != nil {
 		return checkVerifiedChainAKI(ctx, issuerChain, c.Roots, wantAKIs)
 	}
-	leaf, err := x509.ParseCertificate(issuerChain[0])
-	if err != nil {
-		return fmt.Errorf("dcql: parse issuer leaf certificate: %w", err)
+	// OpenID4VP §6.1.1.1: the value "MUST match with the
+	// AuthorityKeyIdentifier element of an X.509 certificate in the
+	// certificate chain", which may carry intermediates but omit the
+	// anchor. Any certificate's authority key identifier counts, and the
+	// topmost one's own subject key identifier, when it's the authority
+	// asked for. Unverified: this only chooses what to present.
+	for i, der := range issuerChain {
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			return fmt.Errorf("dcql: parse issuer certificate %d: %w", i, err)
+		}
+		if len(cert.AuthorityKeyId) > 0 && slices.Contains(wantAKIs, base64.RawURLEncoding.EncodeToString(cert.AuthorityKeyId)) {
+			return nil
+		}
+		if i == len(issuerChain)-1 && i > 0 && len(cert.SubjectKeyId) > 0 && slices.Contains(wantAKIs, base64.RawURLEncoding.EncodeToString(cert.SubjectKeyId)) {
+			return nil
+		}
 	}
-	if len(leaf.AuthorityKeyId) == 0 {
-		return fmt.Errorf("dcql: issuer leaf certificate has no authority key identifier extension")
-	}
-	aki := base64.RawURLEncoding.EncodeToString(leaf.AuthorityKeyId)
-	if !slices.Contains(wantAKIs, aki) {
-		return fmt.Errorf("dcql: issuer certificate's authority key identifier is not among the requested trusted_authorities")
-	}
-	return nil
+	return fmt.Errorf("dcql: no authority key identifier in the issuer's certificate chain is among the requested trusted_authorities")
 }
 
 // checkVerifiedChainAKI succeeds when a certificate authority on a

@@ -283,7 +283,12 @@ func (p *Presentation) DefaultSelection(ctx context.Context) (Selection, error) 
 	held := make([]wallet.HeldCredential, 0, len(p.byID))
 	byCredential := make(map[string]string, len(p.byID))
 	for id, c := range p.byID {
-		held = append(held, heldCredential(c, nil))
+		h := heldCredential(c, nil)
+		// As the queries offer: what the Verifier can take.
+		if !p.req.VPFormats.Accepts(h) {
+			continue
+		}
+		held = append(held, h)
 		byCredential[c.Credential] = id
 	}
 	matches, err := wallet.DefaultSelection(ctx, p.req.Query, held, trustedAuthorities)

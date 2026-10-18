@@ -3,6 +3,7 @@ package wallet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 
@@ -25,6 +26,14 @@ import (
 func (w *Wallet) ResolveCredentialOffer(ctx context.Context, uri string) (oid4vci.CredentialOffer, error) {
 	parsed, err := url.Parse(uri)
 	if err != nil {
+		// url.Error quotes the whole link, pre-authorized code and all:
+		// errors end up in logs.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			redacted := *urlErr
+			redacted.URL = "(the offer link)"
+			err = &redacted
+		}
 		return oid4vci.CredentialOffer{}, fmt.Errorf("wallet: resolve credential offer: parse uri: %w", err)
 	}
 	q := parsed.Query()

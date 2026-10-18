@@ -72,6 +72,9 @@ func TestVerifyIssuedCredential_BindsIssToLeaf(t *testing.T) {
 	if err := verify(issue("https://issuer-b.example", "https://issuer-a.example")); err == nil {
 		t.Error("accepted a credential in issuer A's name signed by issuer B's certificate")
 	}
+	if err := verify(issue("https://issuer-b.example", "")); err == nil {
+		t.Error("accepted a credential naming no issuer, with RequireIssuerName set")
+	}
 	requireName = false
 	if err := verify(issue("https://issuer-b.example", "https://issuer-a.example")); err != nil {
 		t.Errorf("by default, iss isn't checked against the certificate: %v", err)
