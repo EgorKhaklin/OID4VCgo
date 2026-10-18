@@ -430,6 +430,13 @@ func TestNewTransactions_Validates(t *testing.T) {
 	if _, err := verifier.NewTransactions(prod, assured, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: verify}); err == nil || !strings.Contains(err.Error(), "no_status_check") {
 		t.Errorf("no Accept and no NoStatusCheck under AssuranceProduction: %v", err)
 	}
+	// And which issuers may issue which types (IssuerAuthorized), or an
+	// explicit AnyIssuerForAnyType: otherwise any trusted issuer would be
+	// accepted for any type.
+	if _, err := verifier.NewTransactions(prod, assured, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: verify, NoStatusCheck: true}); err == nil || !strings.Contains(err.Error(), "any_issuer_for_any_type") {
+		t.Errorf("no IssuerAuthorized and no AnyIssuerForAnyType under AssuranceProduction: %v", err)
+	}
+	verify.AnyIssuerForAnyType = true
 	for name, cfg := range map[string]verifier.TransactionsConfig{
 		"accept":          {RequestURIBase: txBase, Verify: verify, Accept: func(context.Context, string, verifier.VerifyResponseResult) error { return nil }},
 		"no_status_check": {RequestURIBase: txBase, Verify: verify, NoStatusCheck: true},
@@ -437,6 +444,12 @@ func TestNewTransactions_Validates(t *testing.T) {
 		if _, err := verifier.NewTransactions(prod, assured, cfg); err != nil {
 			t.Errorf("%s under AssuranceProduction: %v", name, err)
 		}
+	}
+	// Status is decided on the transactions config, not per request.
+	withVerifyStatus := verify
+	withVerifyStatus.NoStatusCheck = true
+	if _, err := verifier.NewTransactions(prod, assured, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: withVerifyStatus, NoStatusCheck: true}); err == nil {
+		t.Error("verify.no_status_check accepted on a transactions config")
 	}
 }
 

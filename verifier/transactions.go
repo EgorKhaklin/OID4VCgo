@@ -237,6 +237,9 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 	if cfg.Verify.Query.Credentials != nil || cfg.Verify.ExpectedNonce != "" || cfg.Verify.ResponseEncryptionKey != nil || cfg.Verify.Origin != "" || cfg.Verify.Response.VPToken != nil {
 		return nil, errors.New("verifier: transactions: verify: query, response, expected_nonce, response_encryption_key and origin are set per request; leave them zero")
 	}
+	if cfg.Verify.Accept != nil || cfg.Verify.NoStatusCheck {
+		return nil, errors.New("verifier: transactions: set accept and no_status_check on the transactions config, not on verify")
+	}
 	if v.cfg.Assurance == AssuranceProduction {
 		asserter, ok := store.(StoreAssurance)
 		if !ok || !asserter.Capabilities().Durable || !asserter.Capabilities().AtomicUpdate {
@@ -247,6 +250,9 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 		}
 		if cfg.Accept == nil && !cfg.NoStatusCheck {
 			return nil, errors.New("verifier: transactions: under AssuranceProduction, set accept (verifier.RequireValidStatus checks revocation) or no_status_check: without either, a revoked credential is accepted")
+		}
+		if cfg.Verify.IssuerAuthorized == nil && !cfg.Verify.AnyIssuerForAnyType {
+			return nil, errors.New("verifier: transactions: under AssuranceProduction, set verify.issuer_authorized (which issuers may issue which types) or verify.any_issuer_for_any_type: without either, any trusted issuer is accepted for any type")
 		}
 	}
 	return &Transactions{v: v, store: store, cfg: cfg}, nil
@@ -456,6 +462,7 @@ func (t *Transactions) verify(ctx context.Context, tx Transaction, responseJWE s
 	}
 	req := t.cfg.Verify
 	req.Query, req.Response, req.ExpectedNonce, req.ResponseEncryptionKey = tx.Query, parsed, tx.Nonce, tx.ResponseDecryptionKey
+	req.statusByTransactions = true
 	result, err := t.v.VerifyResponse(ctx, req)
 	if err != nil {
 		return VerifyResponseResult{}, err

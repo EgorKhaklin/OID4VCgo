@@ -143,6 +143,30 @@ type VerifyResponseRequest struct {
 	// the check, through this or the trust configuration itself.
 	IssuerAuthorized func(ctx context.Context, a IssuerAuthorization) error
 
+	// AnyIssuerForAnyType declares that every issuer the key resolvers
+	// trust may issue every credential type the query asks for, so
+	// IssuerAuthorized is deliberately unset. Under AssuranceProduction,
+	// VerifyResponse needs IssuerAuthorized or this: without either, any
+	// trusted issuer (a loyalty-card issuer under the same ecosystem CA,
+	// say) would be accepted for a PID by mistake.
+	AnyIssuerForAnyType bool
+
+	// Accept, if set, runs on a response that verified, before
+	// VerifyResponse returns it, and its error is VerifyResponse's:
+	// RequireValidStatus (or RequireValidStatusFrom) checks revocation.
+	// id is "" here; Transactions passes its request's. Nothing else
+	// checks revocation.
+	Accept func(ctx context.Context, id string, result VerifyResponseResult) error
+	// NoStatusCheck declares that this Verifier deliberately checks no
+	// revocation status. Under AssuranceProduction, VerifyResponse needs
+	// Accept or this, so a Verifier that simply forgot Accept doesn't
+	// take revoked credentials.
+	NoStatusCheck bool
+
+	// statusByTransactions is set by Transactions, which runs its own
+	// Accept once the response is its request's.
+	statusByTransactions bool
+
 	// ResponseEncryptionKey is the same ephemeral private key a prior
 	// BuildAuthorizationRequest/BuildDCAPIAuthorizationRequest call
 	// returned as ResponseDecryptionKey. REQUIRED if Query requests
@@ -334,6 +358,9 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 		if err := checkProductionKeySources(req); err != nil {
 			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
 		}
+		if err := checkProductionDecisions(req); err != nil {
+			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
+		}
 	}
 
 	answered := make(map[string]bool, len(req.Response.VPToken))
@@ -374,7 +401,27 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 			return VerifyResponseResult{}, firstFailure
 		}
 	}
+	if req.Accept != nil && !req.statusByTransactions {
+		if err := req.Accept(ctx, "", result); err != nil {
+			return VerifyResponseResult{}, err
+		}
+	}
 	return result, nil
+}
+
+// checkProductionDecisions refuses, under AssuranceProduction, a
+// request that hasn't decided which issuers may issue which types
+// (IssuerAuthorized, or AnyIssuerForAnyType) and whether revocation is
+// checked (Accept, or NoStatusCheck): left undecided, each silently
+// accepts what it shouldn't.
+func checkProductionDecisions(req VerifyResponseRequest) error {
+	if req.IssuerAuthorized == nil && !req.AnyIssuerForAnyType {
+		return errors.New("under AssuranceProduction, set issuer_authorized (which issuers may issue which types) or any_issuer_for_any_type: without either, any trusted issuer is accepted for any type")
+	}
+	if req.Accept == nil && !req.NoStatusCheck && !req.statusByTransactions {
+		return errors.New("under AssuranceProduction, set accept (verifier.RequireValidStatus checks revocation) or no_status_check: without either, a revoked credential is accepted")
+	}
+	return nil
 }
 
 // checkMaxKeyBindingAgeRequired and checkTrustedAuthoritiesConfigured
