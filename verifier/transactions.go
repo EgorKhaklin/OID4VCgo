@@ -237,6 +237,9 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 	if cfg.Verify.Query.Credentials != nil || cfg.Verify.ExpectedNonce != "" || cfg.Verify.ResponseEncryptionKey != nil || cfg.Verify.Origin != "" || cfg.Verify.Response.VPToken != nil {
 		return nil, errors.New("verifier: transactions: verify: query, response, expected_nonce, response_encryption_key and origin are set per request; leave them zero")
 	}
+	if err := checkTimeBounds(cfg.Verify); err != nil {
+		return nil, err
+	}
 	if cfg.Verify.Accept != nil || cfg.Verify.NoStatusCheck {
 		return nil, errors.New("verifier: transactions: set accept and no_status_check on the transactions config, not on verify")
 	}

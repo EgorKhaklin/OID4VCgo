@@ -225,3 +225,20 @@ func TestVerifyResponse_ProductionDecisions(t *testing.T) {
 		}
 	}
 }
+
+// MaxClockSkew and MaxKeyBindingAge are bounded: a year's skew would
+// take a credential that expired long ago as current.
+func TestVerifyResponse_TimeBounds(t *testing.T) {
+	v := newTestVerifier(t)
+	for name, req := range map[string]verifier.VerifyResponseRequest{
+		"skew of a day":       {MaxClockSkew: 24 * time.Hour, MaxKeyBindingAge: time.Minute},
+		"negative skew":       {MaxClockSkew: -time.Second, MaxKeyBindingAge: time.Minute},
+		"KB-JWT age of a day": {MaxKeyBindingAge: 24 * time.Hour},
+	} {
+		req.Query, req.ExpectedNonce = testIdentityQuery(t), "nonce"
+		req.IssuerKeys = verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()}
+		if _, err := v.VerifyResponse(context.Background(), req); err == nil || !strings.Contains(err.Error(), "outside") {
+			t.Errorf("%s: %v, want refused", name, err)
+		}
+	}
+}

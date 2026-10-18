@@ -351,6 +351,9 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	if err := checkMaxKeyBindingAgeRequired(req); err != nil {
 		return VerifyResponseResult{}, err
 	}
+	if err := checkTimeBounds(req); err != nil {
+		return VerifyResponseResult{}, err
+	}
 	if err := checkTrustedAuthoritiesConfigured(req); err != nil {
 		return VerifyResponseResult{}, err
 	}
@@ -407,6 +410,28 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 		}
 	}
 	return result, nil
+}
+
+// MaxAllowedClockSkew and MaxAllowedKeyBindingAge bound
+// VerifyResponseRequest's MaxClockSkew and MaxKeyBindingAge: beyond them
+// a credential that has expired, or a Key Binding JWT made long ago for
+// another purpose, would be taken as current. Clocks an hour apart are
+// already broken; a holder presents within minutes of the request.
+const (
+	MaxAllowedClockSkew     = time.Hour
+	MaxAllowedKeyBindingAge = time.Hour
+)
+
+// checkTimeBounds refuses a negative or excessive MaxClockSkew or
+// MaxKeyBindingAge.
+func checkTimeBounds(req VerifyResponseRequest) error {
+	if req.MaxClockSkew < 0 || req.MaxClockSkew > MaxAllowedClockSkew {
+		return fmt.Errorf("verifier: verify response: max_clock_skew %s is outside 0..%s", req.MaxClockSkew, MaxAllowedClockSkew)
+	}
+	if req.MaxKeyBindingAge < 0 || req.MaxKeyBindingAge > MaxAllowedKeyBindingAge {
+		return fmt.Errorf("verifier: verify response: max_key_binding_age %s is outside 0..%s", req.MaxKeyBindingAge, MaxAllowedKeyBindingAge)
+	}
+	return nil
 }
 
 // checkProductionDecisions refuses, under AssuranceProduction, a

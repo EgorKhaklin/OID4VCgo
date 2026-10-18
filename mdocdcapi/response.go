@@ -86,6 +86,9 @@ func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 	if p.IssuerKeys == nil {
 		return Verified{}, errors.New("mdocdcapi: IssuerKeys is required")
 	}
+	if p.MaxClockSkew < 0 || p.MaxClockSkew > verifier.MaxAllowedClockSkew {
+		return Verified{}, fmt.Errorf("mdocdcapi: MaxClockSkew %s is outside 0..%s", p.MaxClockSkew, verifier.MaxAllowedClockSkew)
+	}
 	if p.Pending.RecipientKey == nil || p.Pending.EncryptionInfo == "" {
 		return Verified{}, errors.New("mdocdcapi: Pending is incomplete")
 	}
