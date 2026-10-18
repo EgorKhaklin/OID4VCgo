@@ -8,6 +8,155 @@ import (
 	"github.com/fxamacker/cbor/v2"
 )
 
+// Reader/writer TNEP already assigns requester/selector roles. An Hr may
+// start with Alternative Carrier records rather than peer-mode collision data.
+func TestNFCNegotiationWithoutCollisionResolution(t *testing.T) {
+	for _, mode := range []BLEMode{PeripheralServer, CentralClient} {
+		t.Run(mode.String(), func(t *testing.T) {
+			hr, err := NewNFCHandoverRequest(nil, mode)
+			if err != nil {
+				t.Fatal(err)
+			}
+			records, err := parseNDEF(hr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			embedded, err := parseNDEF(records[0].payload[1:])
+			if err != nil {
+				t.Fatal(err)
+			}
+			withoutCR, err := encodeNDEF(embedded[1:])
+			if err != nil {
+				t.Fatal(err)
+			}
+			records[0].payload = append([]byte{0x15}, withoutCR...)
+			hr, err = encodeNDEF(records)
+			if err != nil {
+				t.Fatal(err)
+			}
+			holder, err := NewNFCNegotiatedDeviceSession(nil, WithBLEMode(mode))
+			if err != nil {
+				t.Fatal(err)
+			}
+			hs, err := holder.HandleHandoverRequest(hr)
+			if err != nil {
+				t.Fatalf("TNEP Hr without collision record: %v", err)
+			}
+			reader, err := NewNFCNegotiatedReaderSession(hs, hr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, err := reader.Establishment(mDL, ageOver18)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := holder.HandleSessionEstablishment(request); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(holder.SessionTranscriptBytes(), reader.sessionTranscriptBytes) {
+				t.Fatal("handover transcript changed")
+			}
+		})
+	}
+}
+
+func TestNFCRequestCollisionRecordValidation(t *testing.T) {
+	hr, err := NewNFCHandoverRequest(nil, PeripheralServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := parseNDEF(hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	embedded, err := parseNDEF(records[0].payload[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	cr, ac := embedded[0], embedded[1]
+	shortCR := cr
+	shortCR.payload = []byte{0}
+	for name, invalid := range map[string][]ndefRecord{
+		"short collision record":     {shortCR, ac},
+		"duplicate collision record": {cr, cr, ac},
+		"late collision record":      {ac, cr},
+		"no carriers":                {cr},
+	} {
+		t.Run(name, func(t *testing.T) {
+			payload, err := encodeNDEF(invalid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			outer := append([]ndefRecord(nil), records...)
+			outer[0].payload = append([]byte{0x15}, payload...)
+			request, err := encodeNDEF(outer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parseNFCRequestCarriers(request); err == nil {
+				t.Fatal("accepted malformed embedded records")
+			}
+		})
+	}
+}
+
+func TestNFCDataNegotiationWithoutCollisionResolution(t *testing.T) {
+	parameters := NFCDataParameters{255, 256}
+	hr, err := NewNFCHandoverRequestWithNFCData(nil, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := parseNDEF(hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	embedded, err := parseNDEF(records[0].payload[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := encodeNDEF(embedded[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	records[0].payload = append([]byte{0x15}, payload...)
+	hr, err = encodeNDEF(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder, err := NewNFCNegotiatedDataDeviceSession(nil, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs, err := holder.HandleHandoverRequest(hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := NewNFCNegotiatedDataReaderSession(hs, hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := reader.Establishment(mDL, ageOver18)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceRequest, err := holder.HandleSessionEstablishment(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx := issueFixture(t, mDL)
+	requests, err := ParseDeviceRequest(deviceRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := flow{holder: holder, reader: reader, req: requests[0]}
+	if _, err := reader.Verify(f.respond(t, fx, requests[0].Elements), fx.roots, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(holder.SessionTranscriptBytes(), reader.sessionTranscriptBytes) {
+		t.Fatal("handover transcript changed")
+	}
+}
+
 func TestNFCNegotiatedPresentation(t *testing.T) {
 	fx := issueFixture(t, mDL)
 	for _, mode := range []BLEMode{PeripheralServer, CentralClient} {

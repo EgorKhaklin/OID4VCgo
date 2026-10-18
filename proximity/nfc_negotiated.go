@@ -267,12 +267,18 @@ func parseNFCRequestCarriers(hr []byte) ([]ndefRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	if embedded[0].tnf != 1 || string(embedded[0].typ) != "cr" || len(embedded[0].payload) != 2 {
-		return nil, fmt.Errorf("proximity: missing Hr collision resolution")
+	// Reader/writer TNEP requests can omit peer-mode collision resolution.
+	// If supplied, it must remain a valid leading record; the carrier loop
+	// below rejects duplicate or misplaced collision records.
+	if embedded[0].tnf == 1 && string(embedded[0].typ) == "cr" {
+		if len(embedded[0].payload) != 2 {
+			return nil, fmt.Errorf("proximity: invalid Hr collision resolution")
+		}
+		embedded = embedded[1:]
 	}
 	var carriers []ndefRecord
 	seen := map[string]bool{}
-	for _, ac := range embedded[1:] {
+	for _, ac := range embedded {
 		if ac.tnf != 1 || string(ac.typ) != "ac" {
 			return nil, fmt.Errorf("proximity: unexpected Hr embedded record")
 		}
