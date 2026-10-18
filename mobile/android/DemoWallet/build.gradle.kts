@@ -61,4 +61,9 @@ dependencies {
     implementation(libs.androidx.credentials.registry.openid)
     implementation(libs.androidx.credentials.registry.mdoc)
     implementation(libs.androidx.credentials.registry.sdjwtvc)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.junit)
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

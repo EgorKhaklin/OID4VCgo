@@ -20,6 +20,10 @@ type DeviceSession struct {
 	uuid, peripheralUUID, centralUUID []byte
 	deviceEngagement                  []byte
 	handover                          cbor.RawMessage
+	handoverSelect                    []byte
+	nfcNegotiated                     bool
+	nfcHandoverRequest                []byte
+	nfcDataParameters                 *NFCDataParameters
 	bleIdent                          []byte
 
 	sessionTranscriptBytes []byte
@@ -150,7 +154,12 @@ func newDeviceSession(key *ecdsa.PrivateKey, uuid, deviceEngagement []byte, hand
 
 // QRCode is the QR code payload (§8.2.2.3): "mdoc:" followed by the
 // DeviceEngagement, base64url without padding.
-func (s *DeviceSession) QRCode() string { return encodeQR(s.deviceEngagement) }
+func (s *DeviceSession) QRCode() string {
+	if s.nfcNegotiated || s.handoverSelect != nil {
+		return "" // NFC engagement has no QR retrieval methods.
+	}
+	return encodeQR(s.deviceEngagement)
+}
 
 // ServiceUUID is the BLE service UUID the engagement offers, in
 // 8-4-4-4-12 form: PeripheralServerUUID's when it offers that mode,
@@ -195,6 +204,9 @@ func (s *DeviceSession) SessionTranscriptBytes() []byte { return s.sessionTransc
 func (s *DeviceSession) HandleSessionEstablishment(msg []byte) (deviceRequest []byte, err error) {
 	if s.closed {
 		return nil, ErrSessionClosed
+	}
+	if s.nfcNegotiated && s.handoverSelect == nil {
+		return nil, fmt.Errorf("proximity: NFC handover has not completed")
 	}
 	if s.cipher != nil {
 		return nil, fmt.Errorf("proximity: session already established")

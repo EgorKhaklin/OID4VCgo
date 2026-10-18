@@ -71,6 +71,8 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         model.attach(this)
         model.reload()
+        model.refreshNfcForeground()
+        model.refreshNfcReader()
         // Back from a Custom Tab without the redirect: the holder closed
         // the issuer's page, which leaves the offer as it was. (The
         // redirect, when there is one, arrives through onNewIntent first.)
@@ -81,6 +83,12 @@ class MainActivity : ComponentActivity() {
                 if (!pending.isCompleted) pending.completeExceptionally(WalletModel.AuthorizationCancelled())
             }, 500)
         }
+    }
+
+    override fun onPause() {
+        model.releaseNfcForeground()
+        model.pauseNfcReader()
+        super.onPause()
     }
 
     /**

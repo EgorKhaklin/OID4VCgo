@@ -678,6 +678,47 @@ public class Wallet(
         return ProximityPresentation(start(modes), { it.transport(app) }, timeouts)
     }
 
+    /**
+     * Arms static NFC-to-BLE engagement, closing any previous NFC presentation
+     * before replacing it. Declare an [NfcEngagementService] in the app manifest.
+     * NFC reads start BLE once; consent follows [NfcPresentation.presentation].
+     * [negotiated] enables TNEP service selection and Hr/Hs negotiation.
+     * [nfcData] uses classic NFC-only retrieval, with [negotiated] selecting its handover;
+     * Bluetooth permissions are unnecessary in that mode.
+     */
+    public suspend fun startNfcPresentation(
+        context: Context,
+        timeouts: ProximityTimeouts = ProximityTimeouts(),
+        modes: Set<ProximityBLEMode> = ProximityBLEMode.entries.toSet(),
+        negotiated: Boolean = false,
+        nfcData: Boolean = false,
+    ): NfcPresentation {
+        require(modes.isNotEmpty()) { "no BLE mode" }
+        require(android.nfc.NfcAdapter.getDefaultAdapter(context)?.isEnabled == true) { "NFC unavailable or disabled" }
+        if (!nfcData) ProximityPermissions.require(context, ProximityPermissions.holder(modes))
+        val app = context.applicationContext
+        return startNfcPresentation(timeouts, modes, negotiated, nfcData) { it.transport(app) }
+    }
+
+    internal suspend fun startNfcPresentation(
+        timeouts: ProximityTimeouts,
+        modes: Set<ProximityBLEMode>,
+        negotiated: Boolean,
+        nfcData: Boolean = false,
+        transportFor: (HolderEngagement) -> ProximityTransport,
+    ): NfcPresentation {
+        return NfcPresentations.replace {
+            val encoded = json.encodeToString(ListSerializer(String.serializer()), ProximityBLEMode.entries.filter { it in modes }.map { it.rawValue })
+            val nfc = OID4VC.wrap {
+                if (nfcData && negotiated) handle.startNFCNegotiatedDataProximityPresentation(255, 256)
+                else if (nfcData) handle.startNFCDataProximityPresentation(255, 256)
+                else if (negotiated) handle.startNFCNegotiatedProximityPresentationWithModes(encoded)
+                else handle.startNFCProximityPresentationWithModes(encoded)
+            }
+            NfcPresentation(nfc, timeouts, negotiated, if (nfcData) NfcDataHolderTransport(timeouts.idle) else null, transportFor)
+        }
+    }
+
     internal fun startProximityPresentation(timeouts: ProximityTimeouts, transport: ProximityTransport, modes: Set<ProximityBLEMode> = setOf(ProximityBLEMode.PERIPHERAL_SERVER)): ProximityPresentation =
         ProximityPresentation(start(modes), { transport }, timeouts)
 

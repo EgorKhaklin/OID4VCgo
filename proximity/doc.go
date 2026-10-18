@@ -91,9 +91,9 @@
 // # Out of scope
 //
 //   - BLE, NFC and Wi-Fi Aware transport code, and BLE L2CAP.
-//   - NFC engagement and NFC handover. The session transcript takes the
-//     Handover as a parameter internally (the Annex D tests use it), but
-//     only QR engagement is exposed.
+//   - Platform Type 4 tag/APDU I/O and TNEP service state. NFC engagement
+//     constructors encode/parse static and negotiated Hs/Hr messages;
+//     the platform supplies complete NDEF messages and the BLE transport.
 //   - More than one request per session, and more than one document per
 //     response.
 //   - ISO/IEC 18013-7 (online presentation), OpenID4VP over the Digital

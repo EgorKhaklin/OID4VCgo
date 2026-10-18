@@ -163,6 +163,18 @@ func (r *ProximityReader) Start(qrCode string) (*ProximityReaderSession, error) 
 	return &ProximityReaderSession{r: r, s: s}, nil
 }
 
+// StartFromHandover starts a reader session from a static NFC Handover
+// Select NDEF message, without NLEN. It applies this reader's existing
+// signer and trust configuration. The platform performs NFC I/O and
+// then connects the BLE transport described by Engagement.
+func (r *ProximityReader) StartFromHandover(handoverSelect []byte) (*ProximityReaderSession, error) {
+	s, err := proximity.NewNFCReaderSession(handoverSelect, r.opts...)
+	if err != nil {
+		return nil, newError(CodeInvalidInput, err)
+	}
+	return &ProximityReaderSession{r: r, s: s}, nil
+}
+
 // Engagement returns {"abi", "service_uuid", "ble_mode", "ident",
 // "signed"}. ble_mode is the mode the reader uses, from those the holder
 // offers (central client mode when it offers both, §8.3.3.1.1):

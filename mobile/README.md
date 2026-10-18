@@ -104,7 +104,7 @@ states; it never sees GATT.
 - **Keep the app in the foreground** during a session: neither library
   declares Bluetooth background modes or keeps a session through the
   app being suspended.
-- **Not supported:** the L2CAP transport, NFC engagement, and more than
+- **Not supported:** the L2CAP transport, NFC on iOS, and more than
   one request per session.
 
 Build the XCFramework (Xcode and Go needed; gomobile and gobind are the

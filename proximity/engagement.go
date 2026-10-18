@@ -78,6 +78,14 @@ func encodeDeviceEngagement(eDeviceKey *ecdsa.PublicKey, peripheralUUID, central
 	if peripheralUUID == nil && centralUUID == nil {
 		return nil, fmt.Errorf("proximity: no BLE mode offered")
 	}
+	security, err := encodeEngagementSecurity(eDeviceKey)
+	if err != nil {
+		return nil, err
+	}
+	return encodeQREngagement(security, peripheralUUID, centralUUID)
+}
+
+func encodeEngagementSecurity(eDeviceKey *ecdsa.PublicKey) (cbor.RawMessage, error) {
 	coseKey, err := encodeCoseKey(eDeviceKey)
 	if err != nil {
 		return nil, err
@@ -90,7 +98,10 @@ func encodeDeviceEngagement(eDeviceKey *ecdsa.PublicKey, peripheralUUID, central
 	if err != nil {
 		return nil, fmt.Errorf("proximity: encode Security: %w", err)
 	}
+	return security, nil
+}
 
+func encodeQREngagement(security cbor.RawMessage, peripheralUUID, centralUUID []byte) ([]byte, error) {
 	opts := bleOptions{
 		PeripheralServer: peripheralUUID != nil, PeripheralUUID: peripheralUUID,
 		CentralClient: centralUUID != nil, CentralUUID: centralUUID,

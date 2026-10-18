@@ -56,11 +56,45 @@ const (
 // the reader's Ident characteristic against BLEIdent. Offering both, it
 // does both until the reader connects one way.
 func (w *Wallet) StartProximityPresentation(modes ...proximity.BLEMode) (*ProximityPresentation, error) {
+	return w.startProximityPresentation(proximity.NewDeviceSession, modes...)
+}
+
+// StartNFCProximityPresentation starts a static NFC handover to BLE.
+// The platform exposes HandoverSelect through its Type 4 tag service
+// and retains this presentation across repeated NFC reads. Consent,
+// reader trust and response handling are identical to QR presentation.
+func (w *Wallet) StartNFCProximityPresentation(modes ...proximity.BLEMode) (*ProximityPresentation, error) {
+	return w.startProximityPresentation(proximity.NewNFCDeviceSession, modes...)
+}
+
+// StartNFCNegotiatedProximityPresentation prepares a negotiated NFC
+// engagement. Pass the complete Hr to HandleHandoverRequest before
+// starting the BLE transport selected by its response.
+func (w *Wallet) StartNFCNegotiatedProximityPresentation(modes ...proximity.BLEMode) (*ProximityPresentation, error) {
+	return w.startProximityPresentation(proximity.NewNFCNegotiatedDeviceSession, modes...)
+}
+
+// StartNFCDataProximityPresentation starts static NFC engagement with classic
+// NFC-only retrieval. Native code implements APDU I/O; consent remains here.
+func (w *Wallet) StartNFCDataProximityPresentation(parameters proximity.NFCDataParameters) (*ProximityPresentation, error) {
+	return w.startProximityPresentation(func(random io.Reader, _ ...proximity.DeviceOption) (*proximity.DeviceSession, error) {
+		return proximity.NewNFCDataDeviceSession(random, parameters)
+	})
+}
+
+// StartNFCNegotiatedDataProximityPresentation negotiates classic NFC-only retrieval.
+func (w *Wallet) StartNFCNegotiatedDataProximityPresentation(parameters proximity.NFCDataParameters) (*ProximityPresentation, error) {
+	return w.startProximityPresentation(func(random io.Reader, _ ...proximity.DeviceOption) (*proximity.DeviceSession, error) {
+		return proximity.NewNFCNegotiatedDataDeviceSession(random, parameters)
+	})
+}
+
+func (w *Wallet) startProximityPresentation(create func(io.Reader, ...proximity.DeviceOption) (*proximity.DeviceSession, error), modes ...proximity.BLEMode) (*ProximityPresentation, error) {
 	var opts []proximity.DeviceOption
 	if len(modes) > 0 {
 		opts = append(opts, proximity.WithBLEModes(modes...))
 	}
-	s, err := proximity.NewDeviceSession(w.deps.Random, opts...)
+	s, err := create(w.deps.Random, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: %w", err)
 	}
@@ -71,17 +105,64 @@ func (w *Wallet) StartProximityPresentation(modes ...proximity.BLEMode) (*Proxim
 // (§8.2.2.3).
 func (p *ProximityPresentation) QRCode() string { return p.s.QRCode() }
 
+// HandoverSelect is the static NFC NDEF message, without NLEN; nil for
+// QR sessions. The returned copy may be passed to platform NFC code.
+func (p *ProximityPresentation) HandoverSelect() []byte {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.s.HandoverSelect()
+}
+
+// ProximityEngagement is an atomic snapshot of the presentation's transport
+// settings. Negotiated selection must not mix UUIDs from different states.
+type ProximityEngagement struct {
+	QRCode               string
+	PeripheralServerUUID string
+	CentralClientUUID    string
+	BLEIdent             []byte
+}
+
+// Engagement returns a transport snapshot safe to read during Hr selection.
+func (p *ProximityPresentation) Engagement() ProximityEngagement {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return ProximityEngagement{QRCode: p.s.QRCode(), PeripheralServerUUID: p.s.PeripheralServerUUID(), CentralClientUUID: p.s.CentralClientUUID(), BLEIdent: append([]byte(nil), p.s.BLEIdent()...)}
+}
+
+// HandleHandoverRequest selects the negotiated carrier while the
+// presentation is waiting. It does not start a radio transport.
+func (p *ProximityPresentation) HandleHandoverRequest(hr []byte) ([]byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.state != proximityWaiting {
+		return nil, fmt.Errorf("walletflow: no NFC handover pending: %w", proximity.ErrSessionClosed)
+	}
+	return p.s.HandleHandoverRequest(hr)
+}
+
 // ServiceUUID is the BLE service UUID: PeripheralServerUUID when the
 // session offers that mode, else CentralClientUUID.
-func (p *ProximityPresentation) ServiceUUID() string { return p.s.ServiceUUID() }
+func (p *ProximityPresentation) ServiceUUID() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.s.ServiceUUID()
+}
 
 // PeripheralServerUUID is the service UUID to advertise in mdoc
 // peripheral server mode; empty when the session doesn't offer it.
-func (p *ProximityPresentation) PeripheralServerUUID() string { return p.s.PeripheralServerUUID() }
+func (p *ProximityPresentation) PeripheralServerUUID() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.s.PeripheralServerUUID()
+}
 
 // CentralClientUUID is the service UUID to scan for and connect to in
 // mdoc central client mode; empty when the session doesn't offer it.
-func (p *ProximityPresentation) CentralClientUUID() string { return p.s.CentralClientUUID() }
+func (p *ProximityPresentation) CentralClientUUID() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.s.CentralClientUUID()
+}
 
 // BLEIdent is the value the reader's Ident characteristic must hold in
 // mdoc central client mode: disconnect from a reader whose differs.

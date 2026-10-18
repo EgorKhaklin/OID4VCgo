@@ -119,3 +119,80 @@ suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String):
 `VerifiedMdoc` carries the disclosed elements, the document signer and
 the IACA it chains to, and its validity. Its status list reference is
 unchecked: check it before relying on the document.
+
+## NFC holder and reader
+
+The NFC additions include static and negotiated handover for BLE and
+classic NFC-only retrieval. They require physical interoperability and
+normative specification review before a conformance claim. iOS NFC,
+USB readers, L2CAP and Concurrent Channel Engagement are outside this work.
+
+Declare an application subclass, for example `class IdentityNfcService :
+NfcEngagementService()`, and its HCE service:
+
+```xml
+<service android:name=".IdentityNfcService" android:exported="true"
+    android:permission="android.permission.BIND_NFC_SERVICE">
+    <intent-filter>
+        <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
+    </intent-filter>
+    <meta-data android:name="android.nfc.cardemulation.host_apdu_service"
+        android:resource="@xml/oid4vc_nfc_aids" />
+</service>
+```
+
+The library declares optional NFC/HCE hardware and the NFC permission.
+Its AID resource uses category `other` and requires device unlock. Retain
+one `NfcPresentation` at application/view-model level. Start it with:
+
+```kotlin
+val owner = wallet.startNfcPresentation(context, modes = modes)
+// For negotiated NFC-to-BLE, pass negotiated = true.
+// For static NFC-only retrieval, pass nfcData = true.
+// For negotiated NFC-only, pass both nfcData = true and negotiated = true.
+val session = owner.presentation
+```
+
+Follow `session.state` and use the existing `respond`/`decline` consent
+flow. On a resumed Activity, call
+`owner.preferForeground(activity, IdentityNfcService::class.java)` and
+check its Boolean result. Call `releaseForeground(activity)` on pause
+and completion, and acquire preference again on every resume. The
+platform can refuse preference; the application should explain how
+to select its NFC service. Reapply it to each new presentation.
+
+`owner.close()` cancels and awaits cleanup. Starting another NFC owner
+waits for the previous owner's tasks and radio resources to close.
+Do not start a separate QR/BLE session at the same time. HCE service
+recreation reuses the owner. A process restart leaves it unarmed.
+Repeated reads reuse the key/UUID/Hs and trigger BLE only once the whole
+Hs has been read. NFC removal after BLE handover leaves BLE running.
+Field loss during NFC-only retrieval ends that session; start a new one
+to recover. NFC-only mode does not require Bluetooth permissions.
+
+On the verifier, enable Android reader mode with NFC-A/NFC-B and
+`FLAG_READER_SKIP_NDEF_CHECK`, then invoke from a coroutine:
+
+```kotlin
+val session = reader.startFromNfc(context, tag, docType, elements)
+```
+
+The reader detects static versus negotiated handover and the selected
+carrier. BLE retrieval needs `ProximityPermissions.reader` granted.
+For NFC-only, keep the phones together through consent and response;
+`session.usesNfcData` identifies this path. The BLE `mode` property has
+meaning only when `usesNfcData` is false. Disable reader mode on pause
+or after leaving the reader screen. Cancellation closes IsoDep, including
+a blocking transceive. Removing the tag after BLE selection is safe.
+
+Android Type 4 supports read-only static Hs and staged TNEP writes,
+with a 32767-byte NDEF file limit and chunked NDEF records rejected.
+Classic NFC-only uses short APDUs, ENVELOPE command chaining, DO53,
+and GET RESPONSE with a Le-only command. It supports a 2 MiB complete
+message; the controller's smaller transceive limit is applied as well.
+The final ENVELOPE remains asynchronous during consent, so hardware
+timeout/WTX behavior must be included in real-device validation.
+
+The demo's presentation settings select QR, static NFC-to-BLE,
+negotiated NFC-to-BLE, or NFC-only. Reader presets offer NFC/Bluetooth
+and NFC-only actions; the latter does not request Bluetooth permissions.

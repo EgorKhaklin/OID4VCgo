@@ -94,7 +94,7 @@ internal class GattServerTransport(
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     mtus.remove(device)
-                    if (device == peer) fail(ProximityTransportException("the other device disconnected", peerEnded = true))
+                    if (device == peer) fail(ProximityTransportException("the other device disconnected"))
                 }
             }
         }
@@ -161,11 +161,16 @@ internal class GattServerTransport(
         val adapter = manager.adapter
         if (adapter == null || !adapter.isEnabled) throw ProximityTransportException("Bluetooth is off")
         val advertiser = adapter.bluetoothLeAdvertiser ?: throw ProximityTransportException("this device can't advertise over BLE")
-        val s = manager.openGattServer(context, callback) ?: throw ProximityTransportException("couldn't open a GATT server")
-        server = s
-        s.addService(service())
+        synchronized(this) {
+            if (closed) throw ProximityTransportException("the session ended")
+            val s = manager.openGattServer(context, callback) ?: throw ProximityTransportException("couldn't open a GATT server")
+            server = s
+            if (!s.addService(service())) throw ProximityTransportException("couldn't add the GATT service")
+        }
         serviceAdded.await()
-        advertiser.startAdvertising(
+        synchronized(this) {
+            if (closed) throw ProximityTransportException("the session ended")
+            advertiser.startAdvertising(
             AdvertiseSettings.Builder()
                 .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
                 .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
@@ -175,6 +180,7 @@ internal class GattServerTransport(
             AdvertiseData.Builder().addServiceUuid(ParcelUuid(serviceUUID)).setIncludeDeviceName(false).build(),
             advertiseCallback,
         )
+        }
         advertising.await()
         started.await()
     }
@@ -254,7 +260,7 @@ internal class GattServerTransport(
         runCatching { manager.adapter?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback) }
     }
 
-    override fun close() {
+    @Synchronized override fun close() {
         if (closed) return
         closed = true
         stopAdvertising()
@@ -276,6 +282,8 @@ internal class GattServerTransport(
         }
         runCatching { s?.close() }
         incoming.close()
+        serviceAdded.cancel()
+        advertising.cancel()
         started.cancel()
     }
 

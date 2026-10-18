@@ -16,6 +16,33 @@ found, and the questions still open; update it as phases land.
 
 ## Goal
 
+NFC engagement: the Go core/mobile facade implement static
+and negotiated Hs/Hr messages for BLE and classic NFC-only carriers. Android
+adds Type 4 read/write staging, TNEP, an app-owned HCE session, IsoDep
+reader, classic DO53/ENVELOPE/GET RESPONSE transports, and demo options.
+Host APDU tests include repeated reads, partial writes, 180 KB responses,
+consent delay and field loss; Go tests verify credentials and Annex D.
+Physical interop and normative specification review remain pending.
+See `ABI.md`'s NFC additions and `../proximity/README.md`.
+
+The Kotlin owner delays BLE resource creation until all Hs bytes have
+been read. Replacing it awaits bounded cleanup; HCE services never
+generate keys, UUIDs or sessions. Services answer on an IO worker and
+discard responses after deactivation/replacement. Static NFC and
+classic NFC-only use the same consent flow. Negotiated BLE transport
+settings are read after Hr selection, avoiding stale UUIDs.
+Type 4 files are limited to 32767 bytes (32765 NDEF bytes); chunked
+NDEF records are rejected. Classic NFC transfer uses short commands
+and chaining, including controllers without extended APDUs, with a
+2 MiB whole-message cap. NFC-only retrieval supports static and negotiated
+engagement; iOS/USB and CCE remain separate work. No conformance or
+independent RF interoperability is claimed by simulated tests.
+
+Reader tap actions explain Bluetooth permission behavior and auto-selection;
+verified results show the actual NFC-only/Bluetooth data transport and BLE
+role. Foreground preference refusal is surfaced to the holder. Focused
+Compose instrumentation checks the transport labels separately from RF tests.
+
 A cross-platform wallet SDK, compiled with `gomobile bind` into an iOS
 XCFramework and an Android AAR, covering the wallet's side of the
 credential lifecycle:

@@ -156,8 +156,15 @@ fun InPersonScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeav
     val state = model.inPersonState
     BackHandler(onBack = onLeave)
     InPersonScaffold("Share in person", onBack = null, bottomBar = bottomBar) {
+        if (model.inPerson != null) model.notice?.let {
+            Text(it, Modifier.padding(16.dp).testTag("in-person-notice"), color = Color(0xFFE65100))
+        }
         when {
             model.inPerson == null -> NoSession(model, start)
+            model.nfcOwner != null && (state == null || state == ProximityPresentation.State.WaitingForReader) ->
+                Waiting(if (model.inPersonEngagement in setOf(InPersonEngagement.NFC_DATA, InPersonEngagement.NFC_NEGOTIATED_DATA))
+                    "Keep the phones together through consent and sharing by NFC."
+                else "Hold the phones together for the NFC tap. Once connected by Bluetooth, you can move them apart.")
             state == null || state == ProximityPresentation.State.WaitingForReader || state == ProximityPresentation.State.Connected ->
                 QRCodeView(model.inPerson?.qrCode.orEmpty(), connected = state == ProximityPresentation.State.Connected)
             state is ProximityPresentation.State.RequestReceived -> InPersonConsent(model, state.request, onCertificates = { certificates = it })
@@ -384,24 +391,33 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
                 }
                 if (denied) item { Text("Allow nearby devices to verify in person.", color = Color(0xFFC62828)) }
                 model.notice?.let { item { Text(it, color = Color(0xFFE65100)) } }
+                model.nfcReadPreset?.let { item { Text("Hold the phones together to request ${it.title}. Keep them together through consent for NFC transfer.", Modifier.padding(vertical = 8.dp)) } }
                 items(readerPresets) { p ->
                     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { preset = p; startScan() }.testTag("reader-preset")) {
                         Column(Modifier.padding(16.dp)) {
                             Text(p.title)
                             Text(p.elements.values.flatten().joinToString { elementLabel(it) }, style = MaterialTheme.typography.bodySmall)
+                            val startNfc = rememberBluetoothPermissions(ProximityPermissions.reader,
+                                then = { preset = p; model.armNfcReader(p) }, denied = { denied = true })
+                            OutlinedButton(startNfc, Modifier.testTag("reader-nfc")) { Text("Tap with Bluetooth allowed") }
+                            TextButton({ preset = p; model.armNfcReader(p) }, Modifier.testTag("reader-nfc-only")) { Text("Tap without asking for Bluetooth") }
+                            Text("The holder chooses NFC or Bluetooth transfer. The second option skips asking for Bluetooth permissions.", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
             }
             state == null || state == ProximityReaderSession.State.Connecting -> Waiting("Connecting to the holder's phone…")
-            state == ProximityReaderSession.State.WaitingForResponse -> Waiting("Waiting for the holder to agree…")
-            else -> ReaderOutcome(state, model.readingPreset, model.reading?.mode, onDone = { model.closeReading(); preset = null })
+            state == ProximityReaderSession.State.WaitingForResponse -> Waiting(if (model.reading?.usesNfcData == true)
+                "Keep the phones together while the holder agrees and shares by NFC…"
+            else "Waiting for the holder to agree…")
+            else -> ReaderOutcome(state, model.readingPreset, model.reading?.usesNfcData == true,
+                model.reading?.takeUnless { it.usesNfcData }?.mode, onDone = { model.closeReading(); preset = null })
         }
     }
 }
 
 @Composable
-private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPreset?, mode: ProximityBLEMode?, onDone: () -> Unit) {
+private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPreset?, usesNfcData: Boolean, mode: ProximityBLEMode?, onDone: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         when (state) {
             is ProximityReaderSession.State.Verified -> {
@@ -422,18 +438,7 @@ private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPre
                 }
                 item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
                 item { Labeled("Document", v.doctype) }
-                mode?.let { m ->
-                    item {
-                        Labeled(
-                            "Bluetooth",
-                            when (m) {
-                                ProximityBLEMode.CENTRAL_CLIENT -> "Central client mode: the holder connected to this reader"
-                                ProximityBLEMode.PERIPHERAL_SERVER -> "Peripheral server mode: this reader connected to the holder"
-                            },
-                            Modifier.testTag("reader-ble-mode"),
-                        )
-                    }
-                }
+                item { ReaderDataTransport(usesNfcData, mode) }
                 item { Labeled("Issued by", "${v.issuer} (trusted via ${v.trustAnchor})") }
                 item { Labeled("Valid", "${dateFormat.format(v.validFrom)} to ${dateFormat.format(v.validUntil)}") }
                 item { Labeled("Holder's device", if (v.deviceAuth == "mac") "authenticated (MAC)" else "authenticated (signature)") }
@@ -455,6 +460,22 @@ private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPre
             else -> {}
         }
         item { Button(onDone, Modifier.padding(vertical = 16.dp).testTag("reader-done")) { Text("Done") } }
+    }
+}
+
+/** Actual session carrier; an NFC tap alone does not identify the data transport. */
+@Composable
+internal fun ReaderDataTransport(usesNfcData: Boolean, mode: ProximityBLEMode?) {
+    if (usesNfcData) {
+        Labeled("Data transfer", "NFC only", Modifier.testTag("reader-data-transport"))
+    } else if (mode != null) {
+        Column {
+            Labeled("Data transfer", "Bluetooth", Modifier.testTag("reader-data-transport"))
+            Labeled("Bluetooth", when (mode) {
+                ProximityBLEMode.CENTRAL_CLIENT -> "Central client mode: the holder connected to this reader"
+                ProximityBLEMode.PERIPHERAL_SERVER -> "Peripheral server mode: this reader connected to the holder"
+            }, Modifier.testTag("reader-ble-mode"))
+        }
     }
 }
 
@@ -488,7 +509,7 @@ fun PresentScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave
 @Composable
 fun rememberShareInPerson(model: WalletModel): () -> Unit =
     rememberBluetoothPermissions(
-        ProximityPermissions.holder(model.bleModes),
+        if (model.inPersonEngagement in setOf(InPersonEngagement.NFC_DATA, InPersonEngagement.NFC_NEGOTIATED_DATA)) emptyList() else ProximityPermissions.holder(model.bleModes),
         then = { model.shareInPerson() },
         denied = { model.notice = "Allow nearby devices to share in person." },
     )

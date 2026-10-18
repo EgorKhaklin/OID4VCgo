@@ -159,6 +159,92 @@ class ProximityTest {
         assertEquals(ProximityPresentation.State.Presented(false), awaitFinal(holder.state) { it.isFinal })
     }
 
+    /** Actual Kotlin/Go bindings and Keystore, simulated NFC APDUs and BLE messages. */
+    @Test
+    fun nfcHandoverAuthenticatesAndVerifies(): Unit = runBlocking {
+        val s = setup()
+        for (negotiated in listOf(false, true)) for (mode in ProximityBLEMode.entries) {
+            val (holderEnd, readerEnd) = PipeTransport.pair()
+            val created = java.util.concurrent.atomic.AtomicInteger()
+            val owner = s.wallet.startNfcPresentation(timeouts, setOf(mode), negotiated) { created.incrementAndGet(); holderEnd }
+            try {
+                assertEquals(0, created.get())
+                val hr = dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile.newNFCHandoverRequest("[\"${mode.rawValue}\"]")
+                val nfc = NfcType4Reader({ checkNotNull(owner.process(it)) }, 128)
+                val hs = nfc.read(hr)
+                val reader = s.reader.startNfcWith(hs, if (negotiated) hr else null, DOC_TYPE,
+                    mapOf(NAMESPACE to listOf("family_name")), timeouts, false, readerEnd)
+                val request = awaitRequest(owner.presentation)
+                assertEquals(ProximityReaderIdentity.Status.Trusted, request.reader.status)
+                assertEquals(1, created.get())
+                assertTrue(hs.contentEquals(nfc.read()))
+                assertEquals(1, created.get())
+                owner.presentation.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name")))
+                val verified = awaitFinal(reader.state) { it.isFinal } as ProximityReaderSession.State.Verified
+                assertEquals("Doe", verified.result.claims[NAMESPACE]!!.jsonObject["family_name"]!!.jsonPrimitive.content)
+            } finally { owner.close() }
+        }
+    }
+
+    /** APDUs carry the real encrypted messages end to end, without an RF field. */
+    @Test
+    fun nfcOnlyAuthenticatesAndVerifies(): Unit = runBlocking {
+        val s = setup()
+        for (negotiated in listOf(false, true)) {
+        val owner = s.wallet.startNfcPresentation(timeouts, emptySet(), negotiated, true) { error("NFC-only started BLE") }
+        try {
+            val hr = dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile.newNFCHandoverRequestWithNFCData("[\"peripheral_server\",\"central_client\"]",255,256)
+            val hs = NfcType4Reader({ checkNotNull(owner.process(it)) }, 128).read(hr)
+            val parameters = decode<NfcDataParametersJSON>(dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile.parseNfcDataParameters(hs))
+            val exchange: (ByteArray) -> ByteArray = { command ->
+                val response = java.util.concurrent.ArrayBlockingQueue<ByteArray>(1)
+                owner.process(command) { response.offer(it) } ?: response.poll(30, java.util.concurrent.TimeUnit.SECONDS) ?: error("APDU timed out")
+            }
+            val transport = NfcDataReaderTransport(exchange, {}, 128, parameters)
+            val reader = s.reader.startNfcWith(hs, if (negotiated) hr else null, DOC_TYPE, mapOf(NAMESPACE to listOf("family_name")), timeouts, true, transport)
+            val request = awaitRequest(owner.presentation)
+            assertEquals(ProximityReaderIdentity.Status.Trusted, request.reader.status)
+            owner.presentation.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name")))
+            val verified = awaitFinal(reader.state) { it.isFinal } as ProximityReaderSession.State.Verified
+            assertEquals("Doe", verified.result.claims[NAMESPACE]!!.jsonObject["family_name"]!!.jsonPrimitive.content)
+        } finally { owner.close() }
+        }
+    }
+
+    @Test
+    fun nfcReplacementAndStartupFailureCleanUp(): Unit = runBlocking {
+        val s = setup()
+        val created = java.util.concurrent.atomic.AtomicInteger()
+        var previous: NfcPresentation? = null
+        repeat(20) {
+            val next = s.wallet.startNfcPresentation(timeouts, setOf(ProximityBLEMode.PERIPHERAL_SERVER), false) {
+                created.incrementAndGet(); error("unread NFC started BLE")
+            }
+            previous?.let {
+                assertEquals(ProximityPresentation.State.Cancelled, it.presentation.state.value)
+                it.presentation.awaitClosed()
+            }
+            previous = next
+        }
+        previous!!.close()
+        assertEquals(0, created.get())
+        val closed = java.util.concurrent.atomic.AtomicInteger()
+        val failed = s.wallet.startNfcPresentation(timeouts, setOf(ProximityBLEMode.PERIPHERAL_SERVER), false) {
+            object : ProximityTransport {
+                override suspend fun connect() { throw ProximityTransportException("advertising failed") }
+                override suspend fun send(message: ByteArray) { error("not connected") }
+                override suspend fun receive(): ByteArray = error("not connected")
+                override fun close() { closed.incrementAndGet() }
+            }
+        }
+        NfcType4Reader({ checkNotNull(failed.process(it)) }, 128).read()
+        assertTrue(awaitFinal(failed.presentation.state) { it.isFinal } is ProximityPresentation.State.Failed)
+        failed.close()
+        assertEquals(1, closed.get())
+        val recovered = s.wallet.startNfcPresentation(timeouts, setOf(ProximityBLEMode.PERIPHERAL_SERVER), false) { error("unread NFC started BLE") }
+        recovered.close()
+    }
+
     /**
      * With MAC preferred and holder keys that agree keys, the reader
      * verifies a deviceMac: from API 31, where Android Keystore agrees

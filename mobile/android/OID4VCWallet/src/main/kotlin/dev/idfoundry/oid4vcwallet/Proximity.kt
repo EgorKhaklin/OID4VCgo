@@ -6,10 +6,13 @@ import android.content.pm.PackageManager
 import android.os.Build
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -254,10 +257,17 @@ public class ProximityPresentation internal constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val transport = transportFor(engagement.toHolderEngagement())
+    private val closed = CompletableDeferred<Unit>()
+    private val runner = scope.launch(start = CoroutineStart.LAZY) { run() }
 
     init {
-        scope.launch { run() }
+        runner.start()
     }
+
+    /** Waits until this presentation's tasks and radio resources have closed. */
+    public suspend fun awaitClosed(): Unit = closed.await()
+
+    internal fun currentHolderEngagement(): HolderEngagement = decode<EngagementJSON>(handle.engagement()).toHolderEngagement()
 
     private suspend fun run() {
         try {
@@ -391,8 +401,16 @@ public class ProximityPresentation internal constructor(
                 // Until the reader disconnects or ends: receive throws then.
                 withTimeoutOrNull(LINGER) { runCatching { while (true) transport.receive() } }
             }
-            transport.close()
-            scope.cancel()
+            try {
+                withTimeout(5.seconds) { runner.cancelAndJoin() }
+                transport.close()
+                closed.complete(Unit)
+            } catch (e: Exception) {
+                runCatching { transport.close() }
+                closed.completeExceptionally(e)
+            } finally {
+                scope.cancel()
+            }
         }
     }
 
@@ -565,6 +583,69 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
 
     internal fun startWith(qrCode: String, docType: String, elements: Map<String, List<String>>, timeouts: ProximityTimeouts, transport: ProximityTransport): ProximityReaderSession =
         ProximityReaderSession(OID4VC.wrap { handle.start(qrCode) }, docType, elements, timeouts) { transport }
+
+    internal fun startNfcWith(hs: ByteArray, hr: ByteArray?, docType: String, elements: Map<String, List<String>>, timeouts: ProximityTimeouts, nfcData: Boolean, transport: ProximityTransport): ProximityReaderSession {
+        val session = OID4VC.wrap {
+            when {
+                nfcData && hr != null -> handle.startFromNegotiatedNFCDataHandover(hs, hr)
+                nfcData -> handle.startFromNFCDataHandover(hs)
+                hr != null -> handle.startFromNegotiatedHandover(hs, hr)
+                else -> handle.startFromHandover(hs)
+            }
+        }
+        return ProximityReaderSession(session, docType, elements, timeouts, usesNfcData = nfcData) { transport }
+    }
+
+    /**
+     * Reads static or negotiated NFC handover from [tag], then starts BLE
+     * or classic NFC-only retrieval according to the selected carrier.
+     * Obtain the tag through Android reader mode with FLAG_READER_SKIP_NDEF_CHECK.
+     * Call from a coroutine; cancellation closes the tag. NFC removal after the
+     * handover does not end BLE. Bluetooth permissions must already be granted
+     * for BLE retrieval; NFC-only retrieval does not require them.
+     */
+    public suspend fun startFromNfc(
+        context: Context,
+        tag: android.nfc.Tag,
+        docType: String,
+        elements: Map<String, List<String>>,
+        timeouts: ProximityTimeouts = ProximityTimeouts(),
+    ): ProximityReaderSession {
+        val hr = OID4VC.wrap { Mobile.newNFCHandoverRequestWithNFCData("[\"peripheral_server\",\"central_client\"]", 255, 256) }
+        val connection = NfcTagConnection(tag)
+        var retained = false
+        try {
+            val handover = try { withTimeout(timeouts.connect) { connection.read(hr) } }
+            catch (e: TimeoutCancellationException) { throw ProximityException(ProximityException.Reason.TimedOut, "NFC handover timed out", e) }
+            val dataParameters = runCatching {
+                decode<NfcDataParametersJSON>(Mobile.parseNfcDataParameters(handover.hs))
+            }.getOrNull()
+            if (dataParameters != null) {
+                val session = OID4VC.wrap {
+                    if (handover.hr == null) handle.startFromNFCDataHandover(handover.hs)
+                    else handle.startFromNegotiatedNFCDataHandover(handover.hs, handover.hr)
+                }
+                connection.allowConsentDelay(timeouts.idle.inWholeMilliseconds.coerceIn(1, Int.MAX_VALUE.toLong()).toInt())
+                val transport = NfcDataReaderTransport(connection::exchange, connection::close, connection.maxTransceive, dataParameters)
+                return ProximityReaderSession(session, docType, elements, timeouts, usesNfcData = true) { transport }.also { retained = true }
+            }
+            connection.close()
+            ProximityPermissions.require(context, ProximityPermissions.reader)
+            val session = OID4VC.wrap {
+                if (handover.hr == null) handle.startFromHandover(handover.hs)
+                else handle.startFromNegotiatedHandover(handover.hs, handover.hr)
+            }
+            return ProximityReaderSession(session, docType, elements, timeouts) { e ->
+            val app = context.applicationContext
+            val uuid = UUID.fromString(e.serviceUUID)
+            if (e.bleMode == "central_client") {
+                GattServerTransport(app, uuid, GattCharacteristics.centralClient, Base64.getDecoder().decode(e.ident))
+            } else {
+                GattClientTransport(app, uuid, GattCharacteristics.peripheralServer)
+            }
+        }
+        } finally { if (!retained) connection.close() }
+    }
 }
 
 /** One reader session: follow [state] to [State.Verified] or another final state. */
@@ -573,6 +654,8 @@ public class ProximityReaderSession internal constructor(
     private val docType: String,
     private val elements: Map<String, List<String>>,
     private val timeouts: ProximityTimeouts,
+    /** Whether this session exchanges messages over NFC rather than BLE. */
+    public val usesNfcData: Boolean = false,
     transportFor: (ReaderEngagementJSON) -> ProximityTransport,
 ) {
     /** Where the session is: follow [state]. */
@@ -612,7 +695,7 @@ public class ProximityReaderSession internal constructor(
     /** Whether requests carry reader authentication. */
     public val signed: Boolean = engagement.signed
 
-    /** The BLE mode this session uses, of those the holder offered: central client mode when it offered both. */
+    /** The BLE mode selected; meaningful only when [usesNfcData] is false. */
     public val mode: ProximityBLEMode = ProximityBLEMode.entries.first { it.rawValue == engagement.bleMode }
 
     private val _state = MutableStateFlow<State>(State.Connecting)

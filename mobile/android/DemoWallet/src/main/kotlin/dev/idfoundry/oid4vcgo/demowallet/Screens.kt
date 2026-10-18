@@ -205,6 +205,14 @@ private fun SettingsMenu(model: WalletModel) {
         }
         HorizontalDivider()
         Text("Presenting in person", Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
+        for (choice in InPersonEngagement.entries) {
+            DropdownMenuItem(
+                text = { Text(choice.label) },
+                leadingIcon = { Icon(if (model.inPersonEngagement == choice) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked, null) },
+                onClick = { model.chooseEngagement(choice); open = false },
+                modifier = Modifier.testTag("engagement-${choice.name}"),
+            )
+        }
         for ((modes, label) in listOf(
             ProximityBLEMode.entries.toSet() to "Both Bluetooth modes (the reader picks)",
             setOf(ProximityBLEMode.PERIPHERAL_SERVER) to "Advertise only (peripheral server)",

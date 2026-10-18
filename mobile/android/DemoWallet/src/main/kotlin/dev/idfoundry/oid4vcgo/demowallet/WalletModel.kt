@@ -26,6 +26,7 @@ import dev.idfoundry.oid4vcwallet.Issuance
 import dev.idfoundry.oid4vcwallet.MdocPresentation
 import dev.idfoundry.oid4vcwallet.ProximityException
 import dev.idfoundry.oid4vcwallet.ProximityPresentation
+import dev.idfoundry.oid4vcwallet.NfcPresentation
 import dev.idfoundry.oid4vcwallet.ProximityReader
 import dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration
 import dev.idfoundry.oid4vcwallet.ProximityBLEMode
@@ -818,6 +819,28 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     var inPersonState by mutableStateOf<ProximityPresentation.State?>(null)
         private set
     private var inPersonJob: Job? = null
+    private var armingJob: Job? = null
+    var nfcOwner by mutableStateOf<NfcPresentation?>(null)
+        private set
+    var inPersonEngagement by mutableStateOf(InPersonEngagement.QR)
+        private set
+
+    fun chooseEngagement(choice: InPersonEngagement) {
+        closeInPerson()
+        inPersonEngagement = choice
+    }
+
+    fun refreshNfcForeground() {
+        val owner = nfcOwner ?: return
+        activity.get()?.let { host ->
+            val preferred = runCatching { owner.preferForeground(host, DemoNfcService::class.java) }.getOrDefault(false)
+            if (!preferred) notice = "Could not prefer this wallet for NFC. Keep this screen open and choose this wallet if Android asks which app to use."
+        }
+    }
+
+    fun releaseNfcForeground() {
+        activity.get()?.let { host -> runCatching { nfcOwner?.releaseForeground(host) } }
+    }
 
     /**
      * Starts sharing in person: the QR code to show, and advertising. The
@@ -825,10 +848,20 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
      */
     fun shareInPerson() {
         val wallet = wallet ?: return
-        if (busy || inPerson != null) return
+        if (busy || inPerson != null || armingJob?.isActive == true) return
         notice = null
+        armingJob = viewModelScope.launch {
         try {
-            val p = wallet.startProximityPresentation(getApplication(), modes = bleModes)
+            val p = if (inPersonEngagement == InPersonEngagement.QR) {
+                wallet.startProximityPresentation(getApplication(), modes = bleModes)
+            } else {
+                wallet.startNfcPresentation(getApplication(), modes = bleModes,
+                    negotiated = inPersonEngagement in setOf(InPersonEngagement.NFC_NEGOTIATED, InPersonEngagement.NFC_NEGOTIATED_DATA),
+                    nfcData = inPersonEngagement in setOf(InPersonEngagement.NFC_DATA, InPersonEngagement.NFC_NEGOTIATED_DATA)).also {
+                    nfcOwner = it
+                    refreshNfcForeground()
+                }.presentation
+            }
             inPerson = p
             // For driving two emulators: the QR code's text, an ephemeral
             // key and a service UUID, in debug builds.
@@ -838,13 +871,18 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             inPersonJob = viewModelScope.launch {
                 p.state.collect { s ->
                     inPersonState = s
-                    if (s.isFinal) refresh()
+                    if (s.isFinal) { releaseNfcForeground(); refresh() }
                 }
             }
         } catch (e: ProximityException) {
             notice = e.description
         } catch (e: WalletException) {
             notice = describe(e)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            notice = describe(e)
+        }
         }
     }
 
@@ -870,6 +908,11 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
 
     /** Leaves the in-person screen, ending the session if it's still going. */
     fun closeInPerson() {
+        armingJob?.cancel()
+        releaseNfcForeground()
+        val owner = nfcOwner
+        nfcOwner = null
+        if (owner != null) viewModelScope.launch { owner.close() }
         inPerson?.cancel()
         inPersonJob?.cancel()
         inPerson = null
@@ -891,6 +934,39 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     var readingPreset by mutableStateOf<ReaderPreset?>(null)
         private set
     private var readingJob: Job? = null
+    private var nfcReadJob: Job? = null
+    var nfcReadPreset by mutableStateOf<ReaderPreset?>(null)
+        private set
+
+    fun armNfcReader(preset: ReaderPreset) {
+        closeReading()
+        notice = null
+        nfcReadPreset = preset
+        refreshNfcReader()
+    }
+
+    fun refreshNfcReader() {
+        val host = activity.get() ?: return
+        val preset = nfcReadPreset ?: return
+        val adapter = android.nfc.NfcAdapter.getDefaultAdapter(host)
+        if (adapter?.isEnabled != true) { notice = "Turn on NFC and try again."; return }
+        adapter.enableReaderMode(host, { tag ->
+            viewModelScope.launch {
+                if (nfcReadPreset !== preset || nfcReadJob?.isActive == true || reading != null) return@launch
+                nfcReadJob = viewModelScope.launch {
+                    try {
+                        val session = reader?.startFromNfc(getApplication(), tag, preset.docType, preset.elements) ?: return@launch
+                        reading = session
+                        readingPreset = preset
+                        readingJob = viewModelScope.launch { session.state.collect { readingState = it } }
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { notice = describe(e) }
+                }
+            }
+        }, android.nfc.NfcAdapter.FLAG_READER_NFC_A or android.nfc.NfcAdapter.FLAG_READER_NFC_B or android.nfc.NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK, null)
+    }
+
+    fun pauseNfcReader() { activity.get()?.let { android.nfc.NfcAdapter.getDefaultAdapter(it)?.disableReaderMode(it) } }
 
     private val reader: ProximityReader? by lazy {
         val r = config?.reader ?: return@lazy null
@@ -920,6 +996,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeReading() {
+        nfcReadPreset = null
+        nfcReadJob?.cancel()
+        pauseNfcReader()
         engagementToRead = null
         reading?.cancel()
         readingJob?.cancel()
