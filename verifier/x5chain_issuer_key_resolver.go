@@ -89,7 +89,12 @@ func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerChains(ctx context.Context, x
 // rootsFor is the trust anchors a document of docType must chain to:
 // RootsByDocType's for a type it names, else Roots.
 func (r X5ChainIssuerKeyResolver) rootsFor(docType string) (*x509.CertPool, error) {
-	if roots, ok := r.RootsByDocType[docType]; ok && roots != nil {
+	if roots, ok := r.RootsByDocType[docType]; ok {
+		// A type named with no roots falls back to none: Roots weren't
+		// chosen for it.
+		if roots == nil {
+			return nil, fmt.Errorf("verifier: no trust anchors for document type %q", docType)
+		}
 		return roots, nil
 	}
 	if r.Roots == nil {

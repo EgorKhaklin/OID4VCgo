@@ -184,6 +184,10 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 // defaultMaxClockSkew is VerifyOptions.MaxClockSkew's zero value's.
 const defaultMaxClockSkew = time.Minute
 
+// DefaultMaxAgeWithoutExp bounds how long ago a Status List Token with
+// no exp may have been issued, when VerifyOptions.MaxAge is unset.
+const DefaultMaxAgeWithoutExp = 24 * time.Hour
+
 // checkTokenTimes checks a Status List Token's iat, which draft-14
 // §5.1 requires, and exp, against opts: issued not in the future (past
 // MaxClockSkew), not longer ago than MaxAge when it's set, and not
@@ -205,8 +209,15 @@ func checkTokenTimes(iat int64, exp *int64, opts VerifyOptions) error {
 	if issued.After(t.Add(skew)) {
 		return fmt.Errorf("statuslist: token was issued in the future")
 	}
-	if opts.MaxAge > 0 && issued.Before(t.Add(-opts.MaxAge)) {
-		return fmt.Errorf("statuslist: token was issued %s ago, over the %s allowed", t.Sub(issued).Round(time.Second), opts.MaxAge)
+	maxAge := opts.MaxAge
+	if maxAge == 0 && exp == nil {
+		// Neither the token nor the caller bounds its freshness: a token
+		// without exp would otherwise be good forever, so a copy cached
+		// or replayed from before a revocation would keep saying valid.
+		maxAge = DefaultMaxAgeWithoutExp
+	}
+	if maxAge > 0 && issued.Before(t.Add(-maxAge)) {
+		return fmt.Errorf("statuslist: token was issued %s ago, over the %s allowed", t.Sub(issued).Round(time.Second), maxAge)
 	}
 	if exp != nil {
 		expires, err := jwtdate.FromUnix(*exp)

@@ -4,7 +4,9 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
+	"slices"
 
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 )
@@ -91,6 +93,11 @@ func (v *Verifier) ParseDirectPostJWTResponse(responseJWE string, decryptionKey 
 	}
 	if _, compressed := header["zip"]; compressed {
 		return ParsedResponse{}, newError(ReasonMalformed, "parse direct_post.jwt response: a compressed (zip) response is not accepted", nil)
+	}
+	// Only a content encryption this Verifier offered in
+	// encrypted_response_enc_values_supported (OpenID4VP §8.3).
+	if enc, _ := header["enc"].(string); !slices.Contains(v.cfg.EncValuesSupported, oid4vci.JWEEnc(enc)) {
+		return ParsedResponse{}, newError(ReasonMalformed, fmt.Sprintf("parse direct_post.jwt response: enc %q isn't one this Verifier offered", enc), nil)
 	}
 	plaintext, err := jwe.Decrypt(decryptionKey, responseJWE)
 	if err != nil {

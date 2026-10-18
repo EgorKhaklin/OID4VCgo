@@ -135,6 +135,10 @@ func checkCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts
 	default:
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: unsupported key type %T", leaf.PublicKey)
 	}
+	// As for a JWT token: Issuer and IssuerKey bind the signer.
+	if err := checkSignerIsIssuer(leaf, opts); err != nil {
+		return 0, TokenClaims{}, err
+	}
 	return CheckCWT(token, leaf.PublicKey, alg, ref, opts)
 }
 
