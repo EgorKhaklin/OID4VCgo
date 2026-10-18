@@ -879,8 +879,14 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 			server.WriteError(w, err)
 			return
 		}
+		details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
+		if err != nil {
+			w.Header().Set("Cache-Control", "no-store")
+			issuer.WriteError(w, err)
+			return
+		}
 		result, err := e.iss.ExchangePreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
-			PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"],
+			PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
 			Verified: &issuer.VerifiedTokenRequest{
 				ClientID: attested.Client.ID().String(), DPoPThumbprint: binding.Thumbprint, NextDPoPNonce: binding.NextDPoPNonce,
 			},
@@ -907,8 +913,14 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 // authentication, under Options.Anonymous: the issuer verifies the
 // request's DPoP proof itself, and no refresh token is issued.
 func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, params map[string]string) {
+	details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
+	if err != nil {
+		w.Header().Set("Cache-Control", "no-store")
+		issuer.WriteError(w, err)
+		return
+	}
 	result, err := e.iss.ExchangePreAuthorizedCode(r.Context(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"],
+		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
 		DPoPProof: r.Header.Get("DPoP"), TokenEndpoint: e.endpoint("/token"),
 	})
 	w.Header().Set("Cache-Control", "no-store")
