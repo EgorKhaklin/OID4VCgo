@@ -66,7 +66,7 @@ func (w *Wallet) verifySignedMetadata(token, issuerURL string) ([]byte, error) {
 	if err := certchain.CheckNoAnchor(x5c); err != nil {
 		return nil, fmt.Errorf("signed metadata: signer certificate: %w", err)
 	}
-	leaf, err := certchain.VerifyLeafWithPolicyAt(x5c, w.cfg.IssuerMetadataRoots, nil, w.deps.Clock.Now())
+	leaf, err := certchain.VerifyLeafWithPolicyAt(x5c, w.cfg.IssuerMetadataRoots, w.cfg.IssuerMetadataLeafPolicy, w.deps.Clock.Now())
 	if err != nil {
 		return nil, fmt.Errorf("signed metadata: signer certificate: %w", err)
 	}
