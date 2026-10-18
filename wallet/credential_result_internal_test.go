@@ -10,7 +10,7 @@ import (
 // challenge (RFC 6750 §3, RFC 9449 §7.1) is read from there.
 func TestParseErrorWithHeader(t *testing.T) {
 	for challenge, want := range map[string]string{
-		`DPoP error="invalid_token", error_description="expired"`:      "invalid_token",
+		`DPoP error="invalid_token", error_description="expired"`:        "invalid_token",
 		`Bearer realm="x", error="insufficient_scope"`:                   "insufficient_scope",
 		`DPoP algs="ES256", error=use_dpop_nonce`:                        "use_dpop_nonce",
 		`Bearer error="invalid_token", error_description="a \"quoted\""`: "invalid_token",
