@@ -13,7 +13,8 @@ import (
 // The credential signed is of the configuration the token authorized:
 // claims of another vct or docType, from a Prepare or PerCredential
 // that built the wrong ones, are refused rather than signed (OpenID4VCI
-// §8). A vct whose aka_vcts lists the configuration's is of it.
+// §8). A derived vct listing the configuration's in aka_vcts is another
+// type: a Wallet checks vct against the configuration it asked for.
 func TestRequestCredential_RefusesAnotherType(t *testing.T) {
 	sdjwt := func(claims *sdjwtvc.Claims) error {
 		f := newCredentialEndpointFixture(t)
@@ -30,8 +31,8 @@ func TestRequestCredential_RefusesAnotherType(t *testing.T) {
 	if err := sdjwt(&sdjwtvc.Claims{VCT: "https://example.com/full_pid"}); err == nil || !strings.Contains(err.Error(), "vct") {
 		t.Errorf("another vct: %v, want it refused for its vct", err)
 	}
-	if err := sdjwt(&sdjwtvc.Claims{VCT: testVCT + ":derived", AkaVCTs: []string{testVCT}}); err != nil {
-		t.Errorf("a derived vct listing the configuration's in aka_vcts: %v", err)
+	if err := sdjwt(&sdjwtvc.Claims{VCT: testVCT + ":derived", AkaVCTs: []string{testVCT}}); err == nil {
+		t.Error("a derived vct listing the configuration's in aka_vcts was signed for the configuration")
 	}
 
 	f := newCredentialEndpointFixture(t)

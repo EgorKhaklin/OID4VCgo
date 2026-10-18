@@ -716,13 +716,16 @@ func (iss *Issuer) ResolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 // checkInstanceType refuses to sign a credential of another type than
 // cc's: its claims come from the deployment (Prepare, PerCredential),
 // but the token authorized cc (OpenID4VCI §8: "Credentials of the same
-// Credential Configuration"). An SD-JWT VC's vct must be cc's, or list
-// it in aka_vcts; an mdoc's docType must be cc's.
+// Credential Configuration"). An SD-JWT VC's vct must be cc's, as
+// OpenID4VCI A.3.2 has vct designate the Credential's type, and a
+// Wallet checks it against the configuration it asked for; an mdoc's
+// docType must be cc's. A credential of a derived type listing cc's in
+// aka_vcts is a configuration of its own.
 func checkInstanceType(cc CredentialConfiguration, instance CredentialInstance) error {
 	switch {
 	case instance.SDJWTClaims != nil:
 		c := instance.SDJWTClaims
-		if c.VCT != cc.VCT && !slices.Contains(c.AkaVCTs, cc.VCT) {
+		if c.VCT != cc.VCT {
 			return fmt.Errorf("the credential's vct %q isn't the configuration's %q", c.VCT, cc.VCT)
 		}
 	case instance.MdocClaims != nil:
