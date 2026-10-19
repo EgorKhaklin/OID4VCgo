@@ -595,7 +595,8 @@ func TestSessions_ResumeIssuance(t *testing.T) {
 	}
 }
 
-// Without development, receiving credentials needs durable stores.
+// Without development, a wallet that receives credentials needs
+// durable stores.
 func TestSessions_ProductionNeedsDurableStores(t *testing.T) {
 	h := newHarness(t, false)
 	var cfg map[string]any
@@ -610,12 +611,9 @@ func TestSessions_ProductionNeedsDurableStores(t *testing.T) {
 	// builds itself: not the test environment's.
 	prev := testHTTP.Swap(nil)
 	defer testHTTP.Store(prev)
-	w, err := NewWallet(string(raw), h.keys, creds, h.env.Provider())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.StartIssuance(NewOperation(0), "openid-credential-offer://?credential_offer=%7B%7D"); err == nil || !strings.Contains(err.Error(), "Durable") {
-		t.Errorf("StartIssuance with a store that isn't durable: %v", err)
+	// Refused when the wallet is made, before it can start an issuance.
+	if _, err := NewWallet(string(raw), h.keys, creds, h.env.Provider()); err == nil || !strings.Contains(err.Error(), "Durable") {
+		t.Errorf("NewWallet with stores that aren't durable: %v", err)
 	}
 }
 
