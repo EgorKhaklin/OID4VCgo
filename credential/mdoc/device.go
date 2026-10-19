@@ -138,6 +138,9 @@ func UnmarshalDeviceSignedMax(data []byte, maxBytes int) (DeviceSigned, error) {
 		return DeviceSigned{}, fmt.Errorf("mdoc: decode DeviceNameSpaces: %w", err)
 	}
 	switch {
+	case len(wire.DeviceAuth.DeviceSignature) > 0 && len(wire.DeviceAuth.DeviceMac) > 0:
+		// §12.4's DeviceAuth CDDL allows exactly one of the two.
+		return DeviceSigned{}, fmt.Errorf("mdoc: deviceAuth has both deviceSignature and deviceMac")
 	case len(wire.DeviceAuth.DeviceSignature) > 0:
 		return DeviceSigned{
 			NameSpaces: nameSpaces, DeviceAuth: []byte(wire.DeviceAuth.DeviceSignature),

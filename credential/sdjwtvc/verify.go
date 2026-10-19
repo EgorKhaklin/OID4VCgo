@@ -2,7 +2,6 @@ package sdjwtvc
 
 import (
 	"crypto"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -11,6 +10,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // KeyBindingRequirement decides whether Verify requires a Key Binding
@@ -98,7 +98,7 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opt
 	}
 
 	var decoded map[string]any
-	if err := json.Unmarshal(rawPayload, &decoded); err != nil {
+	if err := strictjson.Unmarshal(rawPayload, &decoded); err != nil {
 		return nil, nil, fmt.Errorf("sdjwtvc: unmarshal issuer JWT payload: %w", err)
 	}
 	if _, ok := decoded["vct"].(string); !ok {

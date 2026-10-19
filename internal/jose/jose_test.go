@@ -218,3 +218,19 @@ func TestIsSupported(t *testing.T) {
 		}
 	}
 }
+
+// An Ed25519 key of the wrong length is an error, not ed25519.Verify's
+// panic.
+func TestVerifyRefusesShortEd25519Key(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact, err := Sign(EdDSA, priv, map[string]any{"typ": "test+jwt"}, []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Verify(EdDSA, pub[:31], compact); err == nil {
+		t.Error("a 31-byte Ed25519 key verified")
+	}
+}

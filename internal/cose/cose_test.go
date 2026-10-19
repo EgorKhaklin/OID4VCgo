@@ -517,3 +517,19 @@ func TestDecodeUnverifiedRejectsCrit(t *testing.T) {
 		t.Fatal("DecodeUnverified accepted a COSE_Sign1 naming critical header parameters")
 	}
 }
+
+// An Ed25519 key of the wrong length is an error, not ed25519.Verify's
+// panic.
+func TestVerifyRefusesShortEd25519Key(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sign1, err := Sign(EdDSA, priv, Headers{}, Headers{}, []byte(`{}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := Verify(EdDSA, pub[:31], sign1, nil); err == nil {
+		t.Error("a 31-byte Ed25519 key verified")
+	}
+}

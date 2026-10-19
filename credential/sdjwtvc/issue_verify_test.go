@@ -713,3 +713,16 @@ func TestVerify_RejectsDisclosableRegisteredClaim(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// An issuer JWT payload with a member twice is refused: encoding/json
+// would read the last vct, a first-wins parser the other.
+func TestVerify_RefusesDuplicateMembers(t *testing.T) {
+	key := testKey(t)
+	jwt, err := jose.Sign(jose.ES256, key, map[string]any{"typ": TypHeader}, []byte(`{"vct":"https://example.com/a","vct":"https://example.com/b"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Verify(jwt+"~", &key.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired}); err == nil {
+		t.Error("an issuer JWT with vct twice was accepted")
+	}
+}

@@ -98,13 +98,12 @@ func compress(b []byte) ([]byte, error) {
 // limit, a small malicious (or compromised-issuer) "lst" value can
 // exploit zlib's own compression ratio (approaching 1000:1 for
 // degenerate input) to exhaust a caller's memory, a classic
-// decompression-bomb DoS. 128 MiB comfortably exceeds any known real
-// deployment (draft-14's own Appendix worked example, the largest
-// checked into this package's own tests, decompresses to only 128 KiB
-// for a 2^20-entry list — a thousand times smaller) while still
-// bounding the worst case to a fixed, sane amount regardless of how
-// small the compressed input is.
-const maxDecompressedSize = 128 << 20 // 128 MiB
+// decompression-bomb DoS. 16 MiB holds 134 million one-bit statuses,
+// far beyond any known deployment (draft-14's Appendix example, the
+// largest in this package's tests, decompresses to 128 KiB for a
+// 2^20-entry list), while bounding the CPU a signer's degenerate list
+// costs each check: 128 MiB took about 250 ms.
+const maxDecompressedSize = 16 << 20
 
 // decompress reverses compress (draft-14 §8.3 step 5), rejecting
 // output larger than maxDecompressedSize rather than exhausting

@@ -10,6 +10,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // KeyBindingClaims is the input to NewKeyBindingJWT (RFC 9901 §4.3).
@@ -108,7 +109,7 @@ func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg oid4vci.J
 	}
 
 	var claims map[string]any
-	if err := json.Unmarshal(raw, &claims); err != nil {
+	if err := strictjson.Unmarshal(raw, &claims); err != nil {
 		return nil, fmt.Errorf("sdjwtvc: unmarshal key binding claims: %w", err)
 	}
 

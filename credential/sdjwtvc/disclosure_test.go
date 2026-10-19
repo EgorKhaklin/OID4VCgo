@@ -130,3 +130,23 @@ func TestParseDisclosure_RejectsReservedNames(t *testing.T) {
 		t.Errorf("ParseDisclosure accepted claim name \"_sd\"")
 	}
 }
+
+// A Disclosure's salt and claim name are strings (RFC 9901 §4.2.1,
+// §4.2.2): null is refused rather than read as "". A disclosed object
+// with a member twice is refused.
+func TestParseDisclosureRefusesNullAndDuplicates(t *testing.T) {
+	for name, raw := range map[string]string{
+		"a null salt":                 `[null,"given_name","Erika"]`,
+		"a null name":                 `["salt",null,"Erika"]`,
+		"a null array-element salt":   `[null,"Erika"]`,
+		"a numeric name":              `["salt",1,"Erika"]`,
+		"a value with a member twice": `["salt","address",{"city":"A","city":"B"}]`,
+	} {
+		if _, err := ParseDisclosure(b64.EncodeToString([]byte(raw))); err == nil {
+			t.Errorf("%s: parsed", name)
+		}
+	}
+	if _, err := ParseDisclosure(b64.EncodeToString([]byte(`["salt","given_name","Erika"]`))); err != nil {
+		t.Errorf("a valid disclosure: %v", err)
+	}
+}

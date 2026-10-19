@@ -1,9 +1,12 @@
 package sdjwtvc
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // Disclosure is a single SD-JWT Disclosure (RFC 9901 §4.2): either an
@@ -104,15 +107,17 @@ func ParseDisclosure(s string) (Disclosure, error) {
 	if err != nil {
 		return Disclosure{}, fmt.Errorf("sdjwtvc: decode disclosure: %w", err)
 	}
+	// strictjson: a disclosed object with a member twice is refused,
+	// not read last-wins as encoding/json would.
 	var arr []json.RawMessage
-	if err := json.Unmarshal(raw, &arr); err != nil {
+	if err := strictjson.Unmarshal(raw, &arr); err != nil {
 		return Disclosure{}, fmt.Errorf("sdjwtvc: unmarshal disclosure: %w", err)
 	}
 
 	d := Disclosure{encoded: s}
 	switch len(arr) {
 	case 2:
-		if err := json.Unmarshal(arr[0], &d.Salt); err != nil {
+		if err := jsonString(arr[0], &d.Salt); err != nil {
 			return Disclosure{}, fmt.Errorf("sdjwtvc: disclosure salt: %w", err)
 		}
 		var v any
@@ -121,10 +126,10 @@ func ParseDisclosure(s string) (Disclosure, error) {
 		}
 		d.Value = v
 	case 3:
-		if err := json.Unmarshal(arr[0], &d.Salt); err != nil {
+		if err := jsonString(arr[0], &d.Salt); err != nil {
 			return Disclosure{}, fmt.Errorf("sdjwtvc: disclosure salt: %w", err)
 		}
-		if err := json.Unmarshal(arr[1], &d.Name); err != nil {
+		if err := jsonString(arr[1], &d.Name); err != nil {
 			return Disclosure{}, fmt.Errorf("sdjwtvc: disclosure name: %w", err)
 		}
 		d.named = true
@@ -150,4 +155,14 @@ func (d Disclosure) Digest(alg HashAlg) (string, error) {
 		return "", err
 	}
 	return hashString(alg, encoded)
+}
+
+// jsonString decodes raw, which must be a JSON string (RFC 9901 §4.2.1
+// and §4.2.2 make a Disclosure's salt and claim name strings), into s.
+// encoding/json would leave s empty for null.
+func jsonString(raw json.RawMessage, s *string) error {
+	if !bytes.HasPrefix(bytes.TrimSpace(raw), []byte(`"`)) {
+		return fmt.Errorf("not a string")
+	}
+	return json.Unmarshal(raw, s)
 }
