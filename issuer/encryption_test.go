@@ -2,6 +2,7 @@ package issuer_test
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -28,13 +29,21 @@ func testRequestDecryptionKey(t testing.TB, kid string) issuer.RequestDecryption
 
 func testWalletJWK(t *testing.T) json.RawMessage {
 	t.Helper()
-	k, err := jwk.Marshal(&testP256Key(t).PublicKey)
-	if err != nil {
-		t.Fatalf("jwk.Marshal: %v", err)
+	return encryptionJWK(t, &testP256Key(t).PublicKey)
+}
+
+// encryptionJWK is pub as a response-encryption JWK, carrying the alg
+// §10 requires.
+func encryptionJWK(t testing.TB, pub crypto.PublicKey) json.RawMessage {
+	t.Helper()
+	var fields map[string]any
+	if err := json.Unmarshal(jwkJSON(t, pub), &fields); err != nil {
+		t.Fatal(err)
 	}
-	raw, err := json.Marshal(k)
+	fields["alg"] = string(jwe.ECDHES)
+	raw, err := json.Marshal(fields)
 	if err != nil {
-		t.Fatalf("json.Marshal: %v", err)
+		t.Fatal(err)
 	}
 	return raw
 }
@@ -448,7 +457,8 @@ func TestEncryptResponseBody_RoundTrip(t *testing.T) {
 	rawJWK, err := json.Marshal(struct {
 		jwk.JWK
 		Kid string `json:"kid"`
-	}{JWK: walletJWK, Kid: "wallet-kid"})
+		Alg string `json:"alg"`
+	}{JWK: walletJWK, Kid: "wallet-kid", Alg: string(jwe.ECDHES)})
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
@@ -656,14 +666,7 @@ func TestEncryptedCredentialRequestResponseRoundTrip(t *testing.T) {
 	}
 	proof := buildJWTProof(t, walletSigningKey, testIssuer, nonceResult.CNonce)
 
-	walletJWK, err := jwk.Marshal(&walletDecryptionKey.PublicKey)
-	if err != nil {
-		t.Fatalf("jwk.Marshal: %v", err)
-	}
-	rawWalletJWK, err := json.Marshal(walletJWK)
-	if err != nil {
-		t.Fatalf("json.Marshal: %v", err)
-	}
+	rawWalletJWK := encryptionJWK(t, &walletDecryptionKey.PublicKey)
 
 	plainBody, err := json.Marshal(wireCredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
@@ -763,4 +766,12 @@ func TestRequestCredential_RejectsUnusableResponseEncryptionBeforeConsumingNonce
 	if _, err := f.iss.RequestCredential(context.Background(), auth, req); err != nil {
 		t.Fatalf("retry with a usable enc and the same nonce: %v", err)
 	}
+}
+
+// §10: "The alg parameter MUST be present" in the Wallet's
+// response-encryption JWK.
+func TestEncryptResponseBody_RequiresJWKAlg(t *testing.T) {
+	iss, _ := newEncryptionIssuer(t, nil)
+	_, _, err := iss.EncryptResponseBody([]byte(`{}`), &issuer.ResponseEncryptionRequest{Enc: jwe.A128GCM, JWK: jwkJSON(t, &testP256Key(t).PublicKey)})
+	assertIssuerError(t, err, issuer.ErrorInvalidEncryptionParameters)
 }

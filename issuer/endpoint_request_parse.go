@@ -2,12 +2,12 @@ package issuer
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"net/http"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // MaxNotificationRequestBytes caps the Notification Request body
@@ -72,9 +72,13 @@ func ParseNotificationRequest(body []byte) (NotificationRequest, error) {
 }
 
 // decodeJSONObject decodes body, which must be a JSON object, into v.
+// A member must name a field exactly (strictjson): encoding/json would
+// also take {"Proofs": ...} for "proofs", and of two members differing
+// only in case keep the last, where an exact-match parser (or the
+// Wallet) reads the other.
 func decodeJSONObject(body []byte, v any) error {
 	if !bytes.HasPrefix(bytes.TrimSpace(body), []byte("{")) {
 		return fmt.Errorf("not a JSON object")
 	}
-	return json.Unmarshal(body, v)
+	return strictjson.Unmarshal(body, v)
 }

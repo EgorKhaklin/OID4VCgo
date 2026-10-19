@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 	"unicode/utf8"
 
@@ -73,6 +74,12 @@ func (iss *Issuer) CreatePreAuthorizedOffer(ctx context.Context, req CreatePreAu
 		return CredentialOfferResult{}, errors.New("issuer: create pre-authorized offer: credential_configuration_ids is required")
 	case req.Lifetime <= 0:
 		return CredentialOfferResult{}, errors.New("issuer: create pre-authorized offer: lifetime must be positive")
+	case req.Subject == "":
+		// Every holder redeemed without one would share sub "".
+		return CredentialOfferResult{}, errors.New("issuer: create pre-authorized offer: subject is required")
+	}
+	if err := iss.checkPreAuthorizedGrant(req); err != nil {
+		return CredentialOfferResult{}, fmt.Errorf("issuer: create pre-authorized offer: %w", err)
 	}
 	grant := &oid4vci.GrantPreAuthorizedCode{AuthorizationServer: req.AuthorizationServer}
 	if req.TxCode != "" {
@@ -121,4 +128,38 @@ func txCodeFor(txCode, description string) *oid4vci.TxCode {
 		}
 	}
 	return &oid4vci.TxCode{InputMode: mode, Length: utf8.RuneCountInString(txCode), Description: description}
+}
+
+// MinProductionTxCodeLength and MaxProductionPreAuthorizedLifetime bound
+// a pre-authorized offer under AssuranceProduction: a shorter
+// Transaction Code is guessed within Limits.MaxTxCodeAttempts too
+// often (a one-digit code, half the time in 5 tries), and a code meant
+// to be short-lived (OpenID4VCI §3.5) shouldn't outlast a week.
+const (
+	MinProductionTxCodeLength          = 6
+	MaxProductionPreAuthorizedLifetime = 7 * 24 * time.Hour
+)
+
+// checkPreAuthorizedGrant refuses a pre-authorized offer whose code's
+// token wouldn't grant what it offers, by scope or credential
+// identifiers: the code would be spent when the holder redeemed it,
+// and every Credential Request then refused. Under AssuranceProduction
+// it also bounds the Transaction Code and the code's lifetime.
+func (iss *Issuer) checkPreAuthorizedGrant(req CreatePreAuthorizedOfferRequest) error {
+	for _, id := range req.CredentialConfigurationIDs {
+		cc := iss.cfg.CredentialConfigurationsSupported[id]
+		if !req.CredentialIdentifiers && (cc.Scope == "" || !slices.Contains(req.Scopes, cc.Scope)) {
+			return fmt.Errorf("the code wouldn't grant %q: give scopes including its scope, or set credential_identifiers", id)
+		}
+	}
+	if iss.cfg.Assurance != AssuranceProduction {
+		return nil
+	}
+	if req.TxCode != "" && utf8.RuneCountInString(req.TxCode) < MinProductionTxCodeLength {
+		return fmt.Errorf("tx_code must be at least %d characters under AssuranceProduction", MinProductionTxCodeLength)
+	}
+	if req.Lifetime > MaxProductionPreAuthorizedLifetime {
+		return fmt.Errorf("lifetime %s is over the %s allowed under AssuranceProduction", req.Lifetime, MaxProductionPreAuthorizedLifetime)
+	}
+	return nil
 }

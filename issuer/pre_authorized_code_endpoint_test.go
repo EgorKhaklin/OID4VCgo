@@ -343,8 +343,8 @@ func TestExchangePreAuthorizedCodeResult_WriteJSON_RefreshToken(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)
 		}
-		if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
-			t.Errorf("Cache-Control = %q, want no-store", cc)
+		if cc, pragma := rec.Header().Get("Cache-Control"), rec.Header().Get("Pragma"); cc != "no-store" || pragma != "no-cache" {
+			t.Errorf("Cache-Control = %q, Pragma = %q, want no-store and no-cache (RFC 6749 §5.1)", cc, pragma)
 		}
 		got, present := body["refresh_token"]
 		if tc.want == "" && present || tc.want != "" && got != tc.want {

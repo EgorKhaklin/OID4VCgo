@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 
-	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
@@ -155,10 +154,6 @@ func (a *App) fillClaims(e passport.Evidence, req *issuer.CredentialRequest) err
 	}
 	req.MdocClaims = mdocClaims
 	return nil
-}
-
-func (a *App) issuerMetadataHandler() http.HandlerFunc {
-	return issuer.MetadataHandler(a.issuer, a.metadataSigner, oid4vci.ES256, a.metadataCert)
 }
 
 // handleVCTMetadata serves the SD-JWT VC type metadata document for

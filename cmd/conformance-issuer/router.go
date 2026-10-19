@@ -51,7 +51,11 @@ func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires
 	mux.HandleFunc("POST /authorize/decision", consent.handleDecision)
 	mux.HandleFunc("POST /token", tokenHandler(srv))
 
-	mux.HandleFunc("GET /.well-known/openid-credential-issuer", issuer.MetadataHandler(iss, metadataKey.Signer, jose.ES256, metadataKey.Cert))
+	metadata, err := issuer.NewMetadataHandler(iss, &issuer.MetadataSigner{Signer: metadataKey.Signer, Alg: jose.ES256, Certificate: metadataKey.Cert})
+	if err != nil {
+		return nil, err
+	}
+	mux.Handle("GET /.well-known/openid-credential-issuer", metadata)
 	mux.HandleFunc("POST /nonce", nonceHandler(iss))
 	credHandler, err := credentialHandler(iss, resourceVerifier, credentialURL, cfg)
 	if err != nil {

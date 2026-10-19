@@ -63,9 +63,8 @@ type App struct {
 	issuer           *issuer.Issuer
 	resourceVerifier *fapires.Verifier
 	transactions     *transactions
-	consent          *interactioncookie.Cookie // the approval step's state, sealed in the browser
-	metadataSigner   *ecdsa.PrivateKey
-	metadataCert     *x509.Certificate
+	consent          *interactioncookie.Cookie    // the approval step's state, sealed in the browser
+	metadataHandler  http.Handler                 // the Credential Issuer Metadata, signed by the metadata signer
 	providerRoots    *x509.CertPool               // the Wallet Provider CA: Wallet and Key Attestations
 	providerAnchors  server.StaticAttesterAnchors // the same CA, bound to Wallet.ProviderIssuer
 	documentSigner   *ecdsa.PrivateKey            // signs credentials and the status list
@@ -366,7 +365,11 @@ func (a *App) buildIssuer() error {
 	if err != nil {
 		return fmt.Errorf("issuerapp: issuer.New: %w", err)
 	}
-	a.metadataSigner, a.metadataCert = id.metadataSigner, id.metadataSignerCert
+	if a.metadataHandler, err = issuer.NewMetadataHandler(a.issuer, &issuer.MetadataSigner{
+		Signer: id.metadataSigner, Alg: oid4vci.ES256, Certificate: id.metadataSignerCert,
+	}); err != nil {
+		return fmt.Errorf("issuerapp: %w", err)
+	}
 	a.documentSigner, a.documentCert = id.documentSigner, id.documentSignerCert
 	return nil
 }

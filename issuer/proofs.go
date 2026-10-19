@@ -14,6 +14,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // resolveJWTProofKeys verifies every jwt-type key proof in values
@@ -121,21 +122,27 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 	}
 
 	var body struct {
-		Iss   string `json:"iss"`
-		Aud   string `json:"aud"`
-		Iat   int64  `json:"iat"`
-		Nonce string `json:"nonce"`
+		Iss   string   `json:"iss"`
+		Aud   string   `json:"aud"`
+		Iat   *float64 `json:"iat"` // a NumericDate, which may be fractional (RFC 7519 §2)
+		Nonce string   `json:"nonce"`
 	}
-	if err := json.Unmarshal(payload, &body); err != nil {
+	// Exact member names (strictjson): of "aud" and "AUD", encoding/json
+	// would read the last, where an exact-match parser reads "aud".
+	if err := strictjson.Unmarshal(payload, &body); err != nil {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: unmarshal body", i), err)
 	}
 	if body.Aud != iss.cfg.Issuer.String() {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: aud does not match this issuer", i), nil)
 	}
-	if body.Iat == 0 {
+	if body.Iat == nil || *body.Iat == 0 {
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iat is required", i), nil)
 	}
-	if err := iss.checkProofAge(body.Iat, i); err != nil {
+	issued, err := jwtdate.FromFloat(*body.Iat)
+	if err != nil {
+		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: iat", i), err)
+	}
+	if err := iss.checkProofAge(issued.Unix(), i); err != nil {
 		return nil, nil, "", err
 	}
 	// auth.ClientID() == "" here only ever means an explicit
@@ -295,6 +302,17 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 		if err != nil {
 			return nil, err
 		}
+		// Freshness first: a replayed attestation is refused before its
+		// status is fetched, which would otherwise cost a Status List
+		// fetch for each replay of any attestation ever issued.
+		if err := iss.checkProofNonce(ctx, "attestation", i, verified.Nonce, &expectedNonce); err != nil {
+			return nil, err
+		}
+		// Without a Nonce Endpoint, the attestation's iat is its only
+		// freshness (Appendix F.4), as a jwt proof's is.
+		if err := iss.checkProofAge(verified.IssuedAt.Unix(), i); err != nil {
+			return nil, err
+		}
 		if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
 			return nil, err
 		}
@@ -302,9 +320,6 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 			if err := iss.deps.AttestationStatus.CheckAttestationStatus(ctx, verified); err != nil {
 				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: status", i), err)
 			}
-		}
-		if err := iss.checkProofNonce(ctx, "attestation", i, verified.Nonce, &expectedNonce); err != nil {
-			return nil, err
 		}
 		keys, err = appendAttestedKeys(keys, verified, i, maxKeys)
 		if err != nil {

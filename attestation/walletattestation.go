@@ -7,6 +7,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // WalletAttestationTypHeader is the required JOSE "typ" header of a
@@ -62,7 +63,7 @@ func ParseWalletAttestationClaims(compact string) (WalletAttestationExtraClaims,
 		WalletLink string         `json:"wallet_link,omitempty"`
 		Status     map[string]any `json:"status,omitempty"`
 	}
-	if err := json.Unmarshal(payload, &wire); err != nil {
+	if err := strictjson.Unmarshal(payload, &wire); err != nil {
 		return WalletAttestationExtraClaims{}, fmt.Errorf("attestation: unmarshal claims: %w", err)
 	}
 	return WalletAttestationExtraClaims{WalletName: wire.WalletName, WalletLink: wire.WalletLink, Status: wire.Status}, nil
@@ -134,6 +135,9 @@ func IssueWalletAttestation(signer crypto.Signer, alg oid4vci.JOSEAlg, header He
 	}
 	if claims.IssuedAt != 0 && claims.ExpiresAt <= claims.IssuedAt {
 		return "", fmt.Errorf("attestation: WalletAttestationClaims.ExpiresAt must be after IssuedAt")
+	}
+	if err := header.checkX5C(signer); err != nil {
+		return "", err
 	}
 	instanceJWK, err := marshalJWK(claims.InstanceKey)
 	if err != nil {

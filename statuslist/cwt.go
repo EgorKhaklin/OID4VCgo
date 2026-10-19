@@ -76,11 +76,8 @@ func IssueTokenCWT(signer crypto.Signer, alg oid4vci.COSEAlg, claims TokenClaims
 // issueTokenCWT signs claims into a Status List Token in CWT format with
 // the given protected header.
 func issueTokenCWT(signer crypto.Signer, alg cose.Alg, claims TokenClaims, protected cose.Headers) ([]byte, error) {
-	if claims.Sub == "" {
-		return nil, fmt.Errorf("statuslist: TokenClaims.Sub is required")
-	}
-	if !claims.StatusList.Bits.valid() {
-		return nil, fmt.Errorf("statuslist: TokenClaims.StatusList.Bits is invalid")
+	if err := claims.validate(); err != nil {
+		return nil, err
 	}
 
 	cwtSL, err := toCWTStatusList(claims.StatusList)

@@ -44,13 +44,14 @@ func IssueToken(signer crypto.Signer, alg oid4vci.JOSEAlg, claims TokenClaims, k
 // issueToken signs claims into a Status List Token in JWT format with
 // the given JOSE header.
 func issueToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, header map[string]any) (string, error) {
-	if claims.Sub == "" {
-		return "", fmt.Errorf("statuslist: TokenClaims.Sub is required")
+	if err := claims.validate(); err != nil {
+		return "", err
 	}
-	if !claims.StatusList.Bits.valid() {
-		return "", fmt.Errorf("statuslist: TokenClaims.StatusList.Bits is invalid")
-	}
+	return signToken(signer, alg, claims, header)
+}
 
+// signToken is issueToken without its checks on claims.
+func signToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, header map[string]any) (string, error) {
 	payload := make(map[string]any, len(claims.Additional)+5)
 	for k, v := range claims.Additional {
 		payload[k] = v
@@ -229,6 +230,25 @@ func checkTokenTimes(iat int64, exp *int64, opts VerifyOptions) error {
 		if !t.Before(expires) {
 			return fmt.Errorf("statuslist: token is expired")
 		}
+	}
+	return nil
+}
+
+// validate refuses claims a Relying Party would refuse (draft-14 §5.1,
+// §6.1): sub and iat are REQUIRED, ttl "MUST be a positive number",
+// exp is after iat, and bits is 1, 2, 4 or 8.
+func (claims TokenClaims) validate() error {
+	switch {
+	case claims.Sub == "":
+		return fmt.Errorf("statuslist: TokenClaims.Sub is required")
+	case claims.Iat <= 0:
+		return fmt.Errorf("statuslist: TokenClaims.Iat is required")
+	case claims.TTL != nil && *claims.TTL <= 0:
+		return fmt.Errorf("statuslist: TokenClaims.TTL must be positive")
+	case claims.Exp != nil && *claims.Exp <= claims.Iat:
+		return fmt.Errorf("statuslist: TokenClaims.Exp must be after Iat")
+	case !claims.StatusList.Bits.valid():
+		return fmt.Errorf("statuslist: TokenClaims.StatusList.Bits is invalid")
 	}
 	return nil
 }

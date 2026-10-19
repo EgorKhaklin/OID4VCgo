@@ -6,12 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"slices"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // jwtProofTyp is the required JOSE "typ" header of a jwt-type key proof
@@ -322,9 +323,8 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	if err := requireClientIdentityDecision(auth); err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
-	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
-		return oid4vci.CredentialResponse{}, newError(ErrorInvalidEncryptionParameters, 400,
-			"credential_response_encryption requires the request itself to be encrypted", nil)
+	if err := iss.requireRequestEncryption(req.RequestWasEncrypted, req.ResponseEncryption != nil); err != nil {
+		return oid4vci.CredentialResponse{}, err
 	}
 	if err := iss.requireResponseEncryption(req.ResponseEncryption); err != nil {
 		return oid4vci.CredentialResponse{}, err
@@ -348,7 +348,8 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	}
 	ptc, ok := cc.ProofTypesSupported[proofType]
 	if !ok {
-		return oid4vci.CredentialResponse{}, newError(ErrorInvalidProof, 400,
+		// An unsupported parameter value (§8.3.1.2), not an invalid proof.
+		return oid4vci.CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
 			fmt.Sprintf("proof type %q is not supported for this credential_configuration_id", proofType), nil)
 	}
 
@@ -458,6 +459,18 @@ func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 // authorization detail for id carries credential_identifiers, the
 // Wallet MUST use one of those instead (§8.2: credential_configuration_id
 // "MUST NOT be used otherwise").
+// grantsConfiguration reports whether auth grants configuration id at
+// all: through an authorization detail naming it, with or without
+// credential_identifiers, or cc's scope.
+func grantsConfiguration(auth AuthorizedRequest, id string, cc CredentialConfiguration) bool {
+	for _, d := range auth.AuthorizationDetails {
+		if d.Type == oid4vci.AuthorizationDetailsTypeOpenIDCredential && d.CredentialConfigurationID == id {
+			return true
+		}
+	}
+	return cc.Scope != "" && slices.Contains(auth.Scopes, cc.Scope)
+}
+
 func authorizeCredentialConfigurationID(auth AuthorizedRequest, id string, cc CredentialConfiguration) error {
 	for _, d := range auth.AuthorizationDetails {
 		if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential || d.CredentialConfigurationID != id {
@@ -502,12 +515,17 @@ func singleProofType(proofs map[string][]string, cc CredentialConfiguration) (pr
 		return "", nil, newError(ErrorInvalidCredentialRequest, 400,
 			"this credential_configuration_id requires no cryptographic binding, which is not supported", nil)
 	}
-	if len(proofs) != 1 {
-		return "", nil, newError(ErrorInvalidProof, 400, "proofs must contain exactly one proof type", nil)
+	// A missing proofs is invalid_proof; a malformed one is
+	// invalid_credential_request (§8.3.1.2).
+	switch {
+	case len(proofs) == 0:
+		return "", nil, newError(ErrorInvalidProof, 400, "proofs is required", nil)
+	case len(proofs) > 1:
+		return "", nil, newError(ErrorInvalidCredentialRequest, 400, "proofs must contain exactly one proof type", nil)
 	}
 	for pt, v := range proofs {
 		if len(v) == 0 {
-			return "", nil, newError(ErrorInvalidProof, 400, "proofs value must be a non-empty array", nil)
+			return "", nil, newError(ErrorInvalidCredentialRequest, 400, "proofs value must be a non-empty array", nil)
 		}
 		proofType, values = pt, v
 	}
@@ -575,7 +593,11 @@ func (iss *Issuer) issueBatch(ctx context.Context, cc CredentialConfiguration, r
 		}
 		credential, err := iss.issueInstance(cc, instance, key)
 		if err != nil {
-			return nil, newError(ErrorCredentialRequestDenied, 400, "credential issuance failed", err)
+			// The signer's failure, or claims the deployment built that
+			// can't be signed: a server error the Wallet may retry, not
+			// credential_request_denied, which it SHOULD treat as
+			// unrecoverable (§8.3.1.2).
+			return nil, fmt.Errorf("issuer: credential issuance failed: %w", err)
 		}
 		credentials = append(credentials, oid4vci.IssuedCredential{Credential: credential})
 	}
@@ -705,18 +727,80 @@ func (iss *Issuer) ResolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 // checkInstanceType refuses to sign a credential of another type than
 // cc's: its claims come from the deployment (Prepare, PerCredential),
 // but the token authorized cc (OpenID4VCI §8: "Credentials of the same
-// Credential Configuration"). An SD-JWT VC's vct must be cc's, or list
-// it in aka_vcts; an mdoc's docType must be cc's.
+// Credential Configuration"). An SD-JWT VC's vct must be cc's, as
+// OpenID4VCI A.3.2 has vct designate the Credential's type, and a
+// Wallet checks it against the configuration it asked for; an mdoc's
+// docType must be cc's. A credential of a derived type listing cc's in
+// aka_vcts is a configuration of its own.
 func checkInstanceType(cc CredentialConfiguration, instance CredentialInstance) error {
 	switch {
 	case instance.SDJWTClaims != nil:
 		c := instance.SDJWTClaims
-		if c.VCT != cc.VCT && !slices.Contains(c.AkaVCTs, cc.VCT) {
+		if c.VCT != cc.VCT {
 			return fmt.Errorf("the credential's vct %q isn't the configuration's %q", c.VCT, cc.VCT)
+		}
+		if err := checkStatusClaim(c.Status); err != nil {
+			return err
 		}
 	case instance.MdocClaims != nil:
 		if instance.MdocClaims.DocType != cc.DocType {
 			return fmt.Errorf("the credential's docType %q isn't the configuration's %q", instance.MdocClaims.DocType, cc.DocType)
+		}
+	}
+	return checkMandatoryClaims(cc, instance)
+}
+
+// checkStatusClaim refuses a status claim a Wallet or Verifier would
+// refuse: HAIP 1.0 §6.1 "The status claim, if present, MUST contain
+// status_list", with the idx and uri a Token Status List reference
+// requires (draft-14 §6.2). It's read back from JSON, as they'd read it.
+func checkStatusClaim(status map[string]any) error {
+	if status == nil {
+		return nil
+	}
+	raw, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("status claim: %w", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return fmt.Errorf("status claim: %w", err)
+	}
+	if _, err := statuslist.ParseStatusClaim(decoded); err != nil {
+		return fmt.Errorf("status claim: %w", err)
+	}
+	return nil
+}
+
+// checkMandatoryClaims refuses a credential missing a claim cc's
+// credential_metadata marks mandatory: "the Credential Issuer will
+// always include this claim" (Appendix B.2). An SD-JWT VC's path is
+// resolved as its Type Metadata's would be; an mdoc's is [namespace,
+// element identifier] (Appendix B.2).
+func checkMandatoryClaims(cc CredentialConfiguration, instance CredentialInstance) error {
+	if cc.CredentialMetadata == nil {
+		return nil
+	}
+	var mandatory []sdjwtvc.ClaimMetadata
+	for _, c := range cc.CredentialMetadata.Claims {
+		if c.IsMandatory() {
+			mandatory = append(mandatory, sdjwtvc.ClaimMetadata{Path: c.Path, Mandatory: true})
+		}
+	}
+	if len(mandatory) == 0 {
+		return nil
+	}
+	if instance.SDJWTClaims != nil {
+		if err := sdjwtvc.CheckTypeMetadata(*instance.SDJWTClaims, sdjwtvc.TypeMetadata{Claims: mandatory}); err != nil {
+			return fmt.Errorf("credential_metadata: %w", err)
+		}
+		return nil
+	}
+	for _, c := range mandatory {
+		namespace, _ := c.Path[0].(string)
+		element, _ := c.Path[len(c.Path)-1].(string)
+		if _, ok := instance.MdocClaims.NameSpaces[namespace][element]; len(c.Path) != 2 || !ok {
+			return fmt.Errorf("credential_metadata: claim %v is mandatory, but the credential doesn't include it", c.Path)
 		}
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
@@ -29,7 +30,7 @@ func TestIssueVerifyToken(t *testing.T) {
 	exp := time.Now().Add(24 * time.Hour).Unix()
 	claims := TokenClaims{
 		Sub:        "https://example.com/statuslists/1",
-		Iat:        time.Now().Unix(),
+		Iat:        time.Now().Add(-2 * time.Hour).Unix(),
 		Exp:        &exp,
 		StatusList: sl,
 	}
@@ -99,7 +100,7 @@ func TestVerifyToken_RejectsExpired(t *testing.T) {
 	exp := time.Now().Add(-time.Hour).Unix()
 	token, err := IssueToken(key, jose.ES256, TokenClaims{
 		Sub:        "https://example.com/statuslists/1",
-		Iat:        time.Now().Unix(),
+		Iat:        time.Now().Add(-2 * time.Hour).Unix(),
 		Exp:        &exp,
 		StatusList: sl,
 	}, "")
@@ -147,5 +148,31 @@ func TestIssueToken_RequiresSub(t *testing.T) {
 	}
 	if _, err := IssueToken(key, jose.ES256, TokenClaims{Iat: 1, StatusList: sl}, ""); err == nil {
 		t.Errorf("IssueToken accepted TokenClaims with no Sub")
+	}
+}
+
+// IssueToken and IssueTokenCWT refuse claims a Relying Party would
+// refuse (draft-14 §5.1): no iat, a ttl that isn't positive, an exp not
+// after iat.
+func TestIssueToken_RefusesInvalidClaims(t *testing.T) {
+	key := testKey(t)
+	sl, err := New(Bits1, []uint8{0}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now, zero := time.Now().Unix(), int64(0)
+	before := now - 1
+	for name, claims := range map[string]TokenClaims{
+		"no iat":             {Sub: "https://example.com/statuslists/1", StatusList: sl},
+		"a zero ttl":         {Sub: "https://example.com/statuslists/1", Iat: now, TTL: &zero, StatusList: sl},
+		"exp before iat":     {Sub: "https://example.com/statuslists/1", Iat: now, Exp: &before, StatusList: sl},
+		"no sub (as before)": {Iat: now, StatusList: sl},
+	} {
+		if _, err := IssueToken(key, jose.ES256, claims, ""); err == nil {
+			t.Errorf("%s: JWT issued", name)
+		}
+		if _, err := IssueTokenCWT(key, cose.ES256, claims, nil); err == nil {
+			t.Errorf("%s: CWT issued", name)
+		}
 	}
 }

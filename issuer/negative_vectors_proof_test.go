@@ -178,7 +178,7 @@ var proofNegativeVectors = []proofVector{
 		proofs: func(t *testing.T, _ credentialEndpointFixture, n string) map[string][]string {
 			return jwtProofs(proofWith(t, newP256(t), nil, n, nil, nil), proofWith(t, newP256(t), nil, n, nil, nil), proofWith(t, newP256(t), nil, n, nil, nil))
 		}},
-	{id: "proofs-an-unsupported-type", clause: "§8.2 (proof_types_supported)", code: issuer.ErrorInvalidProof,
+	{id: "proofs-an-unsupported-type", clause: "§8.3.1.2 (an unsupported parameter value)", code: issuer.ErrorInvalidCredentialRequest,
 		proofs: func(*testing.T, credentialEndpointFixture, string) map[string][]string {
 			return map[string][]string{"ldp_vp": {"{}"}}
 		}},

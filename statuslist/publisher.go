@@ -1,6 +1,8 @@
 package statuslist
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -74,6 +76,7 @@ type Publisher struct {
 
 type cachedToken struct {
 	token    []byte
+	gzipped  []byte // token, gzip-compressed once first asked for
 	signedAt time.Time
 }
 
@@ -92,7 +95,8 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cwt := strings.Contains(r.Header.Get("Accept"), CWTTokenMediaType)
-	token, err := p.cachedTokenFor(r.Context(), cwt)
+	gz := acceptsGzip(r.Header.Values("Accept-Encoding"))
+	token, err := p.cachedTokenFor(r.Context(), cwt, gz)
 	if err != nil {
 		http.Error(w, "the status list is unavailable", http.StatusInternalServerError)
 		return
@@ -100,6 +104,11 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mediaType := TokenMediaType
 	if cwt {
 		mediaType = CWTTokenMediaType
+	}
+	w.Header().Set("Vary", "Accept, Accept-Encoding")
+	if gz {
+		// draft-14 §8.2: the response "SHOULD use gzip Content-Encoding".
+		w.Header().Set("Content-Encoding", "gzip")
 	}
 	w.Header().Set("Content-Type", mediaType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -112,12 +121,17 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // cachedTokenFor returns the form's cached token, signing a new one
-// once the cached one is older than the cache window. Signing happens
-// under the lock, so concurrent requests share one signature.
-func (p *Publisher) cachedTokenFor(ctx context.Context, cwt bool) ([]byte, error) {
+// once the cached one is older than the cache window, gzip-compressed
+// when gz is set. Signing and compressing happen under the lock, so
+// concurrent requests share one signature and one compression.
+func (p *Publisher) cachedTokenFor(ctx context.Context, cwt, gz bool) ([]byte, error) {
 	window := p.cacheWindow()
 	if window <= 0 {
-		return p.Token(ctx, cwt)
+		token, err := p.Token(ctx, cwt)
+		if err != nil || !gz {
+			return token, err
+		}
+		return gzipBytes(token)
 	}
 	i := 0
 	if cwt {
@@ -126,15 +140,59 @@ func (p *Publisher) cachedTokenFor(ctx context.Context, cwt bool) ([]byte, error
 	now := p.now()
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if c := p.cached[i]; c.token != nil && now.Sub(c.signedAt) < window && !now.Before(c.signedAt) {
+	c := &p.cached[i]
+	if c.token == nil || now.Sub(c.signedAt) >= window || now.Before(c.signedAt) {
+		token, err := p.Token(ctx, cwt)
+		if err != nil {
+			return nil, err
+		}
+		*c = cachedToken{token: token, signedAt: now}
+	}
+	if !gz {
 		return c.token, nil
 	}
-	token, err := p.Token(ctx, cwt)
-	if err != nil {
+	if c.gzipped == nil {
+		gzipped, err := gzipBytes(c.token)
+		if err != nil {
+			return nil, err
+		}
+		c.gzipped = gzipped
+	}
+	return c.gzipped, nil
+}
+
+func gzipBytes(b []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(b); err != nil {
 		return nil, err
 	}
-	p.cached[i] = cachedToken{token: token, signedAt: now}
-	return token, nil
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// acceptsGzip reports whether an Accept-Encoding header accepts gzip
+// with a q above zero (RFC 9110 §12.5.3).
+func acceptsGzip(acceptEncoding []string) bool {
+	for _, line := range acceptEncoding {
+		for _, part := range strings.Split(line, ",") {
+			coding, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+			if !strings.EqualFold(strings.TrimSpace(coding), "gzip") {
+				continue
+			}
+			q := 1.0
+			if name, value, ok := strings.Cut(strings.TrimSpace(params), "="); ok && strings.EqualFold(strings.TrimSpace(name), "q") {
+				var err error
+				if q, err = strconv.ParseFloat(strings.TrimSpace(value), 64); err != nil {
+					continue
+				}
+			}
+			return q > 0
+		}
+	}
+	return false
 }
 
 // Invalidate drops the cached tokens, so the next request is signed

@@ -2,6 +2,8 @@ package haip
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/issuer"
@@ -100,13 +102,23 @@ func ValidateIssuerConfig(cfg issuer.Config) error {
 	case issuer.AnonymousPreAuthorizedCode, *issuer.AnonymousPreAuthorizedCode:
 		return fmt.Errorf("haip: pre_authorized_code_client_authentication: anonymous pre-authorized code redemption has no client authentication at the Token Endpoint, which HAIP 1.0 §4.4.1 requires")
 	}
-	for id, c := range cfg.CredentialConfigurationsSupported {
+	// HAIP 1.0 §4.3: "The scope value MUST map to a specific Credential
+	// Type": configurations sharing a scope must be of one type, or a
+	// token for it grants more than one.
+	types := map[string]string{}
+	for _, id := range slices.Sorted(maps.Keys(cfg.CredentialConfigurationsSupported)) {
+		c := cfg.CredentialConfigurationsSupported[id]
 		if c.Scope == "" {
 			return fmt.Errorf("haip: credential_configurations_supported[%q]: scope is required", id)
 		}
 		if len(c.CryptographicBindingMethodsSupported) > 0 && cfg.Endpoints.Nonce.IsZero() {
 			return fmt.Errorf("haip: credential_configurations_supported[%q]: requires cryptographic key binding, so endpoints.nonce is required", id)
 		}
+		credentialType := c.Format + " " + c.VCT + c.DocType
+		if seen, ok := types[c.Scope]; ok && seen != credentialType {
+			return fmt.Errorf("haip: credential_configurations_supported[%q]: scope %q is another configuration's, of another Credential Type (HAIP 1.0 §4.3)", id, c.Scope)
+		}
+		types[c.Scope] = credentialType
 	}
 	return nil
 }
