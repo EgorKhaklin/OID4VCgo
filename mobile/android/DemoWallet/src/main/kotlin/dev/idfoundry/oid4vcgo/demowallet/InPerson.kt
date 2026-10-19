@@ -5,6 +5,11 @@ import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -27,6 +32,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Contactless
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -53,6 +59,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -167,7 +176,7 @@ fun InPersonScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeav
             model.inPerson is InPersonSession.Nfc && (state == null || state == ProximityPresentation.State.WaitingForReader) ->
                 Waiting(if (model.inPersonEngagement.nfcData)
                     "Keep the phones together through consent and sharing by NFC."
-                else "Hold the phones together for the NFC tap. Once connected by Bluetooth, you can move them apart.")
+                else "Hold the phones together for the NFC tap. Once connected by Bluetooth, you can move them apart.", nfcTap = true)
             state == null || state == ProximityPresentation.State.WaitingForReader || state == ProximityPresentation.State.Connected ->
                 QRCodeView(model.inPerson?.qrCode.orEmpty(), connected = state == ProximityPresentation.State.Connected,
                     orTap = model.inPerson is InPersonSession.Combined)
@@ -211,6 +220,8 @@ internal fun QRCodeView(qrCode: String, connected: Boolean, orTap: Boolean = fal
             // QR and NFC both offered: whichever reader engages first gets the request.
             if (orTap) {
                 Spacer(Modifier.height(16.dp))
+                NfcTapIndicator(if (bitmap == null) 120.dp else 48.dp)
+                Spacer(Modifier.height(8.dp))
                 Text(
                     if (bitmap == null) "Hold the phones together for the NFC tap."
                     else "Or hold the phones together for the NFC tap. The first reader to connect gets the request.",
@@ -222,12 +233,26 @@ internal fun QRCodeView(qrCode: String, connected: Boolean, orTap: Boolean = fal
 }
 
 @Composable
-private fun Waiting(text: String) {
-    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        CircularProgressIndicator()
+private fun Waiting(text: String, nfcTap: Boolean = false) {
+    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        if (nfcTap) NfcTapIndicator() else CircularProgressIndicator()
         Spacer(Modifier.height(16.dp))
-        Text(text)
+        Text(text, textAlign = TextAlign.Center)
     }
+}
+
+/** The contactless symbol, pulsing: waiting for the phones to be held together. */
+@Composable
+internal fun NfcTapIndicator(size: Dp = 120.dp) {
+    val pulse by rememberInfiniteTransition(label = "nfc-tap").animateFloat(
+        initialValue = 0.85f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "nfc-tap-scale",
+    )
+    Icon(
+        Icons.Default.Contactless, "NFC tap",
+        Modifier.size(size).graphicsLayer { scaleX = pulse; scaleY = pulse; alpha = pulse }.testTag("nfc-tap-indicator"),
+        tint = MaterialTheme.colorScheme.primary,
+    )
 }
 
 /** Who is asking, what for, and the holder's choice of elements. */
@@ -451,7 +476,7 @@ internal fun NfcReaderWaiting(preset: ReaderPreset, notice: String?, onCancel: (
         Text("NFC verification", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(16.dp))
         if (notice == null) {
-            CircularProgressIndicator()
+            NfcTapIndicator()
             Spacer(Modifier.height(16.dp))
             Text("Waiting for an NFC tap", Modifier.testTag("reader-nfc-ready"))
         }

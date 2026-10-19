@@ -23,6 +23,7 @@ class NfcTransportUiTest {
         compose.onNodeWithText("NFC verification").assertIsDisplayed()
         compose.onNodeWithText("Test mdoc: name").assertIsDisplayed()
         compose.onNodeWithTag("reader-nfc-ready").assertIsDisplayed()
+        compose.onNodeWithTag("nfc-tap-indicator").assertIsDisplayed()
         compose.onNodeWithTag("reader-nfc-cancel").performClick()
         compose.runOnIdle { org.junit.Assert.assertTrue(cancelled) }
     }

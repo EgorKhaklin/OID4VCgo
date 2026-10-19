@@ -52,5 +52,6 @@ class InPersonSettingsUiTest {
         compose.setContent { MaterialTheme { QRCodeView("mdoc:owBjMS4w", connected = false, orTap = true) } }
         compose.onNodeWithTag("in-person-qr").assertIsDisplayed()
         compose.onNodeWithTag("in-person-or-tap").assertIsDisplayed()
+        compose.onNodeWithTag("nfc-tap-indicator").assertIsDisplayed()
     }
 }
