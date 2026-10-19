@@ -1,6 +1,9 @@
 package verifier
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // AssuranceLevel gates how strict this package's own validation is —
 // the same mechanism issuer.AssuranceLevel and FAPIgo's own
@@ -90,6 +93,12 @@ func checkProductionKeySources(req VerifyResponseRequest) error {
 	if req.MdocIssuerKeys != nil {
 		if err := checkKeySourceAssurance("mdoc_issuer_keys", req.MdocIssuerKeys); err != nil {
 			return err
+		}
+		// Without the chain, ISO/IEC 18013-5's document signer checks
+		// (the IACA's country, the DS validity) don't run, and status
+		// binding can't tell the DS's CA.
+		if _, ok := mdocChainResolver(req.MdocIssuerKeys); !ok {
+			return errors.New("mdoc_issuer_keys must verify issuer chains (verifier.MdocIssuerChainResolver, or Unwrap to one) under AssuranceProduction")
 		}
 	}
 	return nil

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -195,6 +196,31 @@ func TestParseDirectPostJWTResponseMalformed(t *testing.T) {
 		var verr *verifier.Error
 		if !errors.As(err, &verr) || verr.Reason() != verifier.ReasonMalformed {
 			t.Errorf("ResponseKeyID, %s: %v, want ReasonMalformed", name, err)
+		}
+	}
+}
+
+// A response encrypted with a content encryption this Verifier didn't
+// offer is refused (OpenID4VP §8.3), not decrypted.
+func TestParseDirectPostJWTResponse_RefusesAnUnofferedEnc(t *testing.T) {
+	cfg, deps := validConfig(t)
+	cfg.EncValuesSupported = []oid4vci.JWEEnc{jwe.A256GCM}
+	v, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: testQuery(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"vp_token":{"identity_credential":["x"]},"state":"s"}`)
+	for enc, ok := range map[oid4vci.JWEEnc]bool{jwe.A256GCM: true, jwe.A128GCM: false} {
+		responseJWE, err := jwe.Encrypt(&built.ResponseDecryptionKey.PublicKey, enc, body, jwe.EncryptOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := v.ParseDirectPostJWTResponse(responseJWE, built.ResponseDecryptionKey); (err == nil) != ok {
+			t.Errorf("%s: %v", enc, err)
 		}
 	}
 }

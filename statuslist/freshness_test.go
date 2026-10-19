@@ -27,6 +27,7 @@ func TestVerifyToken_Freshness(t *testing.T) {
 		return token
 	}
 	outOfRange := int64(math.MaxInt64 - 10)
+	inAnHour := now.Add(time.Hour).Unix()
 	for name, tc := range map[string]struct {
 		token string
 		opts  VerifyOptions
@@ -37,6 +38,8 @@ func TestVerifyToken_Freshness(t *testing.T) {
 		"older than MaxAge":    {issue(now.Add(-2*time.Hour).Unix(), nil), VerifyOptions{MaxAge: time.Hour}},
 		"exp out of range":     {issue(now.Unix(), &outOfRange), VerifyOptions{}},
 		"beyond a stated skew": {issue(now.Add(10*time.Second).Unix(), nil), VerifyOptions{MaxClockSkew: time.Second}},
+		// Neither exp nor MaxAge bounds it: DefaultMaxAgeWithoutExp does.
+		"old, no exp, no MaxAge": {issue(now.Add(-48*time.Hour).Unix(), nil), VerifyOptions{}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := VerifyToken(tc.token, &key.PublicKey, jose.ES256, tc.opts); err == nil {
@@ -48,10 +51,10 @@ func TestVerifyToken_Freshness(t *testing.T) {
 		token string
 		opts  VerifyOptions
 	}{
-		"fresh":               {issue(now.Unix(), nil), VerifyOptions{}},
-		"a little ahead":      {issue(now.Add(30*time.Second).Unix(), nil), VerifyOptions{}},
-		"old, without MaxAge": {issue(now.Add(-48*time.Hour).Unix(), nil), VerifyOptions{}},
-		"within MaxAge":       {issue(now.Add(-30*time.Minute).Unix(), nil), VerifyOptions{MaxAge: time.Hour}},
+		"fresh":                  {issue(now.Unix(), nil), VerifyOptions{}},
+		"a little ahead":         {issue(now.Add(30*time.Second).Unix(), nil), VerifyOptions{}},
+		"old, with a future exp": {issue(now.Add(-48*time.Hour).Unix(), &inAnHour), VerifyOptions{}},
+		"within MaxAge":          {issue(now.Add(-30*time.Minute).Unix(), nil), VerifyOptions{MaxAge: time.Hour}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := VerifyToken(tc.token, &key.PublicKey, jose.ES256, tc.opts); err != nil {

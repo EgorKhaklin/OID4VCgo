@@ -52,7 +52,16 @@ func ExampleNewTransactions() {
 	txs, err := verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
 		RequestURIBase: "https://verifier.example.com/request",
 		Verify: verifier.VerifyResponseRequest{
-			IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: issuerRoots}, MaxKeyBindingAge: time.Hour,
+			IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: issuerRoots}, MaxKeyBindingAge: 5 * time.Minute,
+			// Which issuers may issue which types: here issuerCA issues
+			// PIDs and nothing else. Under AssuranceProduction this, or
+			// AnyIssuerForAnyType, is required.
+			IssuerAuthorized: func(_ context.Context, a verifier.IssuerAuthorization) error {
+				if a.Type != "urn:eudi:pid:1" {
+					return fmt.Errorf("issuerCA doesn't issue %q", a.Type)
+				}
+				return nil
+			},
 		},
 	})
 	if err != nil {

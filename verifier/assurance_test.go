@@ -160,6 +160,7 @@ func TestVerifyResponseKeySourceAssurance(t *testing.T) {
 			req.Query = testIdentityQuery(t)
 			req.ExpectedNonce = "nonce"
 			req.MaxKeyBindingAge = time.Hour
+			req.AnyIssuerForAnyType, req.NoStatusCheck = true, true
 
 			// req carries no real response, so VerifyResponse always
 			// fails; what matters is whether it fails on the assurance
@@ -186,4 +187,58 @@ func caIssuedClientCert(t *testing.T, cfg *verifier.Config, deps *verifier.Depen
 	ca, caKey := testcert.CA(t, "verifier test CA")
 	cert, key := testcert.Leaf(t, "verifier test", ca, caKey)
 	cfg.ClientCertificate, deps.Signer = cert, key
+}
+
+// A direct VerifyResponse under AssuranceProduction must decide which
+// issuers may issue which types, and whether revocation is checked, as
+// Transactions must: left undecided, each accepts what it shouldn't.
+func TestVerifyResponse_ProductionDecisions(t *testing.T) {
+	cfg, deps := validConfig(t)
+	caIssuedClientCert(t, &cfg, &deps)
+	cfg.Assurance = verifier.AssuranceProduction
+	v, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accept := func(context.Context, string, verifier.VerifyResponseResult) error { return nil }
+	authorized := func(context.Context, verifier.IssuerAuthorization) error { return nil }
+	for name, tc := range map[string]struct {
+		set    func(*verifier.VerifyResponseRequest)
+		refuse string
+	}{
+		"neither":                     {func(*verifier.VerifyResponseRequest) {}, "any_issuer_for_any_type"},
+		"issuers decided, no status":  {func(r *verifier.VerifyResponseRequest) { r.AnyIssuerForAnyType = true }, "no_status_check"},
+		"status decided, no issuers":  {func(r *verifier.VerifyResponseRequest) { r.NoStatusCheck = true }, "any_issuer_for_any_type"},
+		"IssuerAuthorized and Accept": {func(r *verifier.VerifyResponseRequest) { r.IssuerAuthorized, r.Accept = authorized, accept }, ""},
+	} {
+		req := verifier.VerifyResponseRequest{
+			Query: testIdentityQuery(t), ExpectedNonce: "nonce", MaxKeyBindingAge: time.Hour,
+			IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()},
+		}
+		tc.set(&req)
+		_, err := v.VerifyResponse(context.Background(), req)
+		switch {
+		case tc.refuse != "" && (err == nil || !strings.Contains(err.Error(), tc.refuse)):
+			t.Errorf("%s: %v, want refused naming %s", name, err, tc.refuse)
+		case tc.refuse == "" && err != nil && strings.Contains(err.Error(), "under AssuranceProduction"):
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// MaxClockSkew and MaxKeyBindingAge are bounded: a year's skew would
+// take a credential that expired long ago as current.
+func TestVerifyResponse_TimeBounds(t *testing.T) {
+	v := newTestVerifier(t)
+	for name, req := range map[string]verifier.VerifyResponseRequest{
+		"skew of a day":       {MaxClockSkew: 24 * time.Hour, MaxKeyBindingAge: time.Minute},
+		"negative skew":       {MaxClockSkew: -time.Second, MaxKeyBindingAge: time.Minute},
+		"KB-JWT age of a day": {MaxKeyBindingAge: 24 * time.Hour},
+	} {
+		req.Query, req.ExpectedNonce = testIdentityQuery(t), "nonce"
+		req.IssuerKeys = verifier.X5CIssuerKeyResolver{Roots: x509.NewCertPool()}
+		if _, err := v.VerifyResponse(context.Background(), req); err == nil || !strings.Contains(err.Error(), "outside") {
+			t.Errorf("%s: %v, want refused", name, err)
+		}
+	}
 }

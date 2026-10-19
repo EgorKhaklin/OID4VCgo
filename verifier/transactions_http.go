@@ -83,9 +83,12 @@ func (t *Transactions) ResponseHandler() http.Handler {
 		}
 		if r.PostForm.Get("response") == "" && r.PostForm.Get("error") != "" {
 			// An unencrypted error response, which a Wallet that can't
-			// encrypt may send (§8.3.1). Without a response key it can't
-			// be tied to a request, so it's acknowledged, not recorded.
-			writeResponseJSON(w, map[string]string{})
+			// encrypt may send (§8.3.1): tied to its request by state.
+			body := map[string]string{}
+			if answered := t.HandleUnencryptedError(r.Context(), r.PostForm.Get("error"), r.PostForm.Get("state")); answered.RedirectURI != "" {
+				body["redirect_uri"] = answered.RedirectURI
+			}
+			writeResponseJSON(w, body)
 			return
 		}
 		answered, err := t.HandleResponse(r.Context(), r.PostForm.Get("response"))

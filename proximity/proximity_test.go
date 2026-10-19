@@ -154,6 +154,9 @@ func TestRoundTripAgeOver18(t *testing.T) {
 	if v.DocType != mDL || v.IssuerCN != "Test Document Signer" || v.TrustAnchorCN != "Test IACA" {
 		t.Errorf("Verified = %+v", v)
 	}
+	if n := len(v.IssuerChain); n < 2 || v.IssuerChain[0].Subject.CommonName != "Test Document Signer" || v.IssuerChain[n-1].Subject.CommonName != "Test IACA" {
+		t.Errorf("IssuerChain = %v, want the document signer's verified path to the IACA", v.IssuerChain)
+	}
 	if v.DeviceAuth != mdoc.DeviceAuthSignature {
 		t.Errorf("DeviceAuth = %v, want signature", v.DeviceAuth)
 	}
