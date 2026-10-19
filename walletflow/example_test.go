@@ -10,20 +10,22 @@ import (
 )
 
 // A wallet: its registration, the issuers and Verifiers it trusts, and
-// where it keeps keys and credentials. The memory stores are for tests;
-// a wallet holders use keeps them durably, and its keys in hardware
-// (the mobile libraries' Keychain and Keystore stores), which New
-// requires unless Development is set.
+// where it keeps keys and credentials. A wallet holders use keeps them
+// durably, and its keys in hardware (the mobile libraries' Keychain and
+// Keystore stores): New refuses memory stores in production. Give each
+// role its own trust anchors; where they share one, a leaf policy (an
+// extended key usage) on each.
 func ExampleNew() {
-	var issuerRoots, verifierRoots *x509.CertPool // the ecosystem's trust anchors
+	var (
+		issuerRoots, verifierRoots *x509.CertPool                // the ecosystem's trust anchors, one pool per role
+		keys                       walletflow.KeyStore           // hardware-backed, declaring durable custody
+		credentials                walletflow.CredentialStore    // durable, under the platform's data protection
+		authorizations             walletflow.AuthorizationStore // durable, so an authorization survives a suspension
+	)
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: "https://wallet.example.com", RedirectURI: "https://wallet.example.com/callback",
 		IssuerRoots: issuerRoots, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
-		Development: true, // for the memory stores: never in a wallet holders use
-	}, walletflow.Dependencies{
-		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(),
-		Authorizations: walletflow.NewMemoryAuthorizationStore(), Deferred: walletflow.NewMemoryDeferredStore(),
-	})
+	}, walletflow.Dependencies{Keys: keys, Credentials: credentials, Authorizations: authorizations})
 	if err != nil {
 		panic(err)
 	}

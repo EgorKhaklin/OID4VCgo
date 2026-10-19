@@ -93,7 +93,23 @@ func FuzzParseCredentialResult(f *testing.F) {
 	f.Add(http.StatusInternalServerError, []byte(`not json either`))
 
 	f.Fuzz(func(t *testing.T, statusCode int, body []byte) {
-		_, _ = parseCredentialResult(statusCode, body)
+		_, _ = parseCredentialResult(statusCode, nil, body)
+	})
+}
+
+// FuzzChallengeParam: a WWW-Authenticate challenge, untrusted text from
+// the issuer, never panics or hangs, and yields no more than it holds.
+func FuzzChallengeParam(f *testing.F) {
+	f.Add(`DPoP error="invalid_token", error_description="a \"quoted\" one"`)
+	f.Add(`Bearer error=insufficient_scope`)
+	f.Add(`Bearer error="unterminated`)
+	f.Add(`=`)
+	f.Fuzz(func(t *testing.T, challenge string) {
+		for _, name := range []string{"error", "error_description"} {
+			if v := challengeParam(challenge, name); len(v) > len(challenge) {
+				t.Fatalf("challengeParam(%q, %q) = %q, longer than the challenge", challenge, name, v)
+			}
+		}
 	})
 }
 

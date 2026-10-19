@@ -588,9 +588,16 @@ func TestNew_RequiresConfiguration(t *testing.T) {
 	deps := walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), Provider: &walletflowtest.Provider{},
 	}
-	good := walletflow.Config{ClientID: "c", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool()}
+	good := walletflow.Config{ClientID: "c", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool(), Development: true}
 	if _, err := walletflow.New(good, deps); err != nil {
-		t.Fatalf("New(production config) = %v", err)
+		t.Fatalf("New(development config) = %v", err)
+	}
+	// In production, memory keys and stores are refused when the wallet
+	// is made, not when a holder first tries to receive a credential.
+	production := good
+	production.Development = false
+	if _, err := walletflow.New(production, deps); err == nil {
+		t.Error("New(production config over memory stores) succeeded")
 	}
 	for name, d := range map[string]walletflow.Dependencies{
 		"no key store": {Credentials: deps.Credentials},

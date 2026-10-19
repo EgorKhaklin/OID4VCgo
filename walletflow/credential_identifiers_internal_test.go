@@ -1,6 +1,7 @@
 package walletflow
 
 import (
+	"fmt"
 	"github.com/idfoundry/oid4vcgo"
 	"reflect"
 	"slices"
@@ -44,5 +45,29 @@ func TestRequestUnits(t *testing.T) {
 	}
 	if want[0].key() == want[1].key() || s.firstIdentifier("pid") != "pid-alice" || s.firstIdentifier("mdl") != "" {
 		t.Error("keys or first identifier wrong")
+	}
+}
+
+// The credential_identifiers a token grants are requested once each,
+// and only up to a bound, per configuration and in all: each is a
+// request with its own holder keys and key attestation.
+func TestIdentifiersByConfiguration_Bounded(t *testing.T) {
+	many := func(prefix string, n int) []string {
+		var out []string
+		for i := range n {
+			out = append(out, fmt.Sprintf("%s-%d", prefix, i))
+		}
+		return out
+	}
+	detail := func(config string, ids ...string) oid4vci.AuthorizationDetail {
+		return oid4vci.AuthorizationDetail{Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: config, CredentialIdentifiers: ids}
+	}
+	ids := identifiersByConfiguration([]oid4vci.AuthorizationDetail{detail("pid", "a", "a", "b", "")})
+	if !slices.Equal(ids["pid"], []string{"a", "b"}) {
+		t.Errorf("duplicates and empties: %v", ids["pid"])
+	}
+	ids = identifiersByConfiguration([]oid4vci.AuthorizationDetail{detail("pid", many("p", 1000)...), detail("mdl", many("m", 1000)...), detail("x", many("x", 10)...)})
+	if len(ids["pid"]) != maxIdentifiersPerConfiguration || len(ids["mdl"]) != maxIdentifiersPerConfiguration || len(ids["x"]) != 0 {
+		t.Errorf("per configuration %d, %d, then %d; want %d, %d and none past %d in all", len(ids["pid"]), len(ids["mdl"]), len(ids["x"]), maxIdentifiersPerConfiguration, maxIdentifiersPerConfiguration, maxIdentifiers)
 	}
 }

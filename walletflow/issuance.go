@@ -747,6 +747,7 @@ func credentialIdentifiers(raw json.RawMessage) (map[string][]string, error) {
 // Wallet MUST ignore them).
 func identifiersByConfiguration(details []oid4vci.AuthorizationDetail) map[string][]string {
 	var ids map[string][]string
+	total := 0
 	for _, d := range details {
 		if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential || len(d.CredentialIdentifiers) == 0 {
 			continue
@@ -754,10 +755,33 @@ func identifiersByConfiguration(details []oid4vci.AuthorizationDetail) map[strin
 		if ids == nil {
 			ids = map[string][]string{}
 		}
-		ids[d.CredentialConfigurationID] = append(ids[d.CredentialConfigurationID], d.CredentialIdentifiers...)
+		for _, id := range d.CredentialIdentifiers {
+			// Each is a Credential Request, with its own nonce, holder
+			// keys and key attestation: an offer, which anyone can make,
+			// mustn't make the wallet generate keys without bound.
+			if id == "" || slices.Contains(ids[d.CredentialConfigurationID], id) ||
+				len(ids[d.CredentialConfigurationID]) >= maxIdentifiersPerConfiguration || total >= maxIdentifiers {
+				continue
+			}
+			ids[d.CredentialConfigurationID] = append(ids[d.CredentialConfigurationID], id)
+			total++
+		}
 	}
 	return ids
 }
+
+// maxIdentifiersPerConfiguration and maxIdentifiers bound the
+// credential_identifiers an issuance requests: a household's datasets
+// fit, a flood doesn't. The rest are not requested.
+const (
+	maxIdentifiersPerConfiguration = 16
+	maxIdentifiers                 = 32
+)
+
+// maxConsecutiveRefusals is how many Credential Requests in a row an
+// issuer may refuse for good before RequestCredentials stops asking:
+// each costs holder keys and a key attestation.
+const maxConsecutiveRefusals = 3
 
 type clientClock func() time.Time
 
@@ -786,15 +810,26 @@ func (s *Issuance) RequestCredentials(ctx context.Context) (IssuanceResult, erro
 	if s.handled == nil {
 		s.handled = map[string]bool{}
 	}
+	refusals := 0
 	for _, u := range s.requestUnits() {
 		if s.handled[u.key()] {
 			continue
 		}
+		if refusals >= maxConsecutiveRefusals {
+			s.handled[u.key()] = true
+			s.obtained.Failed = append(s.obtained.Failed, FailedCredential{ConfigurationID: u.configID, CredentialIdentifier: u.identifier,
+				Err: fmt.Errorf("walletflow: credential %q: not requested: the issuer refused %d requests in a row", u.configID, refusals)})
+			continue
+		}
 		stored, deferred, err := s.request(ctx, u.configID, u.identifier, requestEnc, responseEnc)
 		if err != nil && permanent(err) {
+			refusals++
 			s.handled[u.key()] = true
 			s.obtained.Failed = append(s.obtained.Failed, FailedCredential{ConfigurationID: u.configID, CredentialIdentifier: u.identifier, Err: err})
 			continue
+		}
+		if err == nil {
+			refusals = 0
 		}
 		if err != nil {
 			return s.obtained, err
@@ -858,7 +893,9 @@ func permanent(err error) bool {
 		return true
 	}
 	var protocol *wallet.Error
-	if !errors.As(err, &protocol) || protocol.HTTPStatus < 400 || protocol.HTTPStatus >= 500 || protocol.HTTPStatus == 429 {
+	// A 401 is the access token's or DPoP proof's (RFC 6750 §3, RFC 9449
+	// §7.1), which a retry renews, whatever error it names.
+	if !errors.As(err, &protocol) || protocol.HTTPStatus < 400 || protocol.HTTPStatus >= 500 || protocol.HTTPStatus == 429 || protocol.HTTPStatus == 401 {
 		return false
 	}
 	switch protocol.Code {
