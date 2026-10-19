@@ -96,7 +96,7 @@ func TestParseAuthorizationDetails(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0].CredentialConfigurationID != "pid" || len(got[0].Locations) != 1 {
 		t.Errorf("one detail: %+v, %v", got, err)
 	}
-	for _, bad := range []string{"[]", "{}", "not json"} {
+	for _, bad := range []string{"[]", "{}", "not json", `[{"type":"a","Type":"b"}]`} {
 		_, err := issuer.ParseAuthorizationDetails(bad)
 		assertIssuerError(t, err, issuer.ErrorInvalidAuthorizationDetails)
 	}
