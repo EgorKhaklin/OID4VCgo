@@ -1,6 +1,7 @@
 package issuer
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"encoding/json"
@@ -27,14 +28,14 @@ import (
 // proof, and requires every other proof to declare that same value,
 // matching NonceStore's own doc comment ("Consume is still called once
 // per request, not once per proof").
+//
+// A proof carrying a key_attestation header (Appendix D.1, F.1) is
+// resolved to the keys that attestation attests: see
+// resolveKeyAttestationHeader. ptc.KeyAttestationsRequired makes the
+// header required.
 func (iss *Issuer) resolveJWTProofKeys(
 	ctx context.Context, auth AuthorizedRequest, values []string, ptc oid4vci.ProofTypeConfiguration,
 ) ([]resolvedKey, error) {
-	if ptc.KeyAttestationsRequired != nil {
-		return nil, newError(ErrorInvalidCredentialRequest, 400,
-			"this credential_configuration_id requires a key attestation on the jwt proof type, which is not supported", nil)
-	}
-
 	keys := make([]resolvedKey, 0, len(values))
 	var expectedNonce string
 	for i, raw := range values {
@@ -45,9 +46,108 @@ func (iss *Issuer) resolveJWTProofKeys(
 		if err := iss.checkProofNonce(ctx, "proof", i, nonce, &expectedNonce); err != nil {
 			return nil, err
 		}
-		keys = append(keys, resolvedKey{Public: pub, JWKRaw: jwkRaw})
+		keyAttestation, err := keyAttestationHeader(raw, i)
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case keyAttestation != "":
+			attested, err := iss.resolveKeyAttestationHeader(ctx, keyAttestation, pub, expectedNonce, i, ptc)
+			if err != nil {
+				return nil, err
+			}
+			keys = appendUniqueKeys(keys, attested)
+			if limit := iss.maxBatchSize(); len(keys) > limit {
+				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: the key attestations attest more keys than this issuer's batch_size (%d)", i, limit), nil)
+			}
+		case ptc.KeyAttestationsRequired != nil:
+			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: this credential_configuration_id requires a key_attestation header", i), nil)
+		default:
+			// Not de-duplicated: checkDistinctKeys refuses one key proved
+			// twice.
+			keys = append(keys, resolvedKey{Public: pub, JWKRaw: jwkRaw})
+		}
 	}
 	return keys, nil
+}
+
+// keyAttestationHeader is the jwt proof raw's key_attestation header,
+// "" when it has none. raw's signature is already verified, so its
+// header is the Wallet's.
+func keyAttestationHeader(raw string, i int) (string, error) {
+	header, _, err := jose.DecodeUnverified(raw)
+	if err != nil {
+		return "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d is malformed", i), err)
+	}
+	value, present := header["key_attestation"]
+	if !present {
+		return "", nil
+	}
+	compact, ok := value.(string)
+	if !ok || compact == "" {
+		return "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: key_attestation isn't a JWT", i), nil)
+	}
+	return compact, nil
+}
+
+// resolveKeyAttestationHeader verifies the key attestation a jwt proof
+// carries in its key_attestation header (Appendix D.1, F.1) and returns
+// the keys it attests:
+//   - its signature, by a key Dependencies.AttestationVerifier trusts,
+//     with an alg in proof_signing_alg_values_supported (F.1);
+//   - its exp, which D.1 requires "if the attestation is used with the
+//     JWT proof type";
+//   - its nonce, which must be the c_nonce the proof itself carried
+//     (F.1: "the nonce claim in the key attestation MUST be set to a
+//     server-provided c_nonce"), or, without a Nonce Endpoint, its iat
+//     within Limits.MaxProofAge;
+//   - that the proof is "signed by a key contained in the attestation"
+//     (D.1);
+//   - key_attestations_required, and its status, after its freshness.
+func (iss *Issuer) resolveKeyAttestationHeader(
+	ctx context.Context, compact string, proofKey crypto.PublicKey, nonce string, i int, ptc oid4vci.ProofTypeConfiguration,
+) ([]resolvedKey, error) {
+	if iss.deps.AttestationVerifier == nil {
+		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: key_attestation isn't supported by this issuer", i), nil)
+	}
+	verified, err := iss.verifyOneAttestation(ctx, compact, i, iss.deps.Clock.Now(), ptc.ProofSigningAlgValuesSupported)
+	if err != nil {
+		return nil, err
+	}
+	if verified.ExpiresAt == nil {
+		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: its key_attestation has no exp, which the jwt proof type requires (Appendix D.1)", i), nil)
+	}
+	if !iss.cfg.Endpoints.Nonce.IsZero() && verified.Nonce != nonce {
+		return nil, newError(ErrorInvalidNonce, 400, fmt.Sprintf("proof %d: its key_attestation's nonce isn't the proof's c_nonce", i), nil)
+	}
+	if err := iss.checkProofAge(verified.IssuedAt.Unix(), i); err != nil {
+		return nil, err
+	}
+	attested, err := verified.KeyAttested(proofKey)
+	if err != nil || !attested {
+		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d isn't signed by a key its key_attestation attests (Appendix D.1)", i), err)
+	}
+	if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
+		return nil, err
+	}
+	if iss.deps.AttestationStatus != nil {
+		if err := iss.deps.AttestationStatus.CheckAttestationStatus(ctx, verified); err != nil {
+			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: key_attestation status", i), err)
+		}
+	}
+	return appendAttestedKeys(nil, verified, i, iss.maxBatchSize())
+}
+
+// appendUniqueKeys appends each of add to keys unless keys already has
+// it: a Wallet sending one jwt proof per attested key may repeat the
+// key attestation in each.
+func appendUniqueKeys(keys, add []resolvedKey) []resolvedKey {
+	for _, k := range add {
+		if !slices.ContainsFunc(keys, func(have resolvedKey) bool { return bytes.Equal(have.JWKRaw, k.JWKRaw) }) {
+			keys = append(keys, k)
+		}
+	}
+	return keys
 }
 
 // checkProofNonce applies the c_nonce rule to proof (or attestation) i

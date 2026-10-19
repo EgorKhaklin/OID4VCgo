@@ -1367,11 +1367,11 @@ changes whether *every* bullet below is `(done)`.
   builders — the latter requiring a Key Attestation with no further
   constraint, §4.5.1's own recommended posture for Ecosystems that want
   key-attestation-level interoperability. §4.5.1's other combination,
-  "jwt proof type using key_attestation," is deliberately not offered:
-  `issuer`'s own `resolveJWTProofKeys` rejects
-  `KeyAttestationsRequired` on the jwt proof type outright, so
-  recommending it would describe a configuration `issuer` can't
-  actually serve. `RecommendedIssuerConfig()` bundles both proof types
+  "jwt proof type using key_attestation," is
+  `RecommendedJWTKeyAttestationProofType()`: `issuer` verifies the
+  header's attestation (its signer, exp, the proof's c_nonce, and that
+  it attests the proof's key) and issues for each key it attests.
+  `RecommendedIssuerConfig()` bundles both proof types
   into an `IssuerRecommendations`, deliberately not a complete
   `issuer.Config` — an Issuer's own identifier/endpoint URLs, a
   Credential Configuration's own Format/VCT/DocType/Scope, and every

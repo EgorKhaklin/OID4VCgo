@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/idfoundry/fapigo/client"
@@ -44,6 +45,12 @@ func BuildAuthorizationRequest(offer oid4vci.CredentialOffer, scopes []string) (
 	if len(scopes) == 0 {
 		return client.BeginAuthorizationRequest{}, fmt.Errorf("wallet: build authorization request: at least one scope is required")
 	}
+	return buildAuthorizationRequest(offer, scopes)
+}
+
+// buildAuthorizationRequest is BuildAuthorizationRequest without its
+// check for a scope.
+func buildAuthorizationRequest(offer oid4vci.CredentialOffer, scopes []string) (client.BeginAuthorizationRequest, error) {
 	req := client.BeginAuthorizationRequest{Scope: scopes}
 	if offer.CredentialIssuer != "" {
 		// OpenID4VCI §5.1.2, RFC 8707: the token is for this Credential
@@ -57,6 +64,27 @@ func BuildAuthorizationRequest(offer oid4vci.CredentialOffer, scopes []string) (
 	}
 	if err := extension.Set(&req.Extensions, oid4vci.IssuerStateExtension, offer.Grants.AuthorizationCode.IssuerState); err != nil {
 		return client.BeginAuthorizationRequest{}, fmt.Errorf("wallet: build authorization request: attach issuer_state: %w", err)
+	}
+	return req, nil
+}
+
+// BuildAuthorizationRequestForPlan is BuildAuthorizationRequest for
+// plan: its scopes, and its authorization_details for the offered
+// configurations without a scope (RFC 9396, OpenID4VCI §5.1.1).
+func BuildAuthorizationRequestForPlan(offer oid4vci.CredentialOffer, plan AuthorizationPlan) (client.BeginAuthorizationRequest, error) {
+	if len(plan.Scopes) == 0 && len(plan.AuthorizationDetails) == 0 {
+		return client.BeginAuthorizationRequest{}, fmt.Errorf("wallet: build authorization request: the plan requests nothing")
+	}
+	req, err := buildAuthorizationRequest(offer, plan.Scopes)
+	if err != nil {
+		return client.BeginAuthorizationRequest{}, err
+	}
+	for i, d := range plan.AuthorizationDetails {
+		raw, err := json.Marshal(d)
+		if err != nil {
+			return client.BeginAuthorizationRequest{}, fmt.Errorf("wallet: build authorization request: authorization_details[%d]: %w", i, err)
+		}
+		req.AuthorizationDetails = append(req.AuthorizationDetails, raw)
 	}
 	return req, nil
 }

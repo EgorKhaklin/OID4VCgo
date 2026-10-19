@@ -385,7 +385,7 @@ func (s *Issuance) BeginAuthorizationWith(ctx context.Context, opts Authorizatio
 	if err := s.newClient(ctx, plan.AuthorizationServer, true); err != nil {
 		return "", err
 	}
-	authReq, err := wallet.BuildAuthorizationRequest(s.offer, plan.Scopes)
+	authReq, err := wallet.BuildAuthorizationRequestForPlan(s.offer, plan)
 	if err != nil {
 		return "", fmt.Errorf("walletflow: %w", err)
 	}
@@ -961,9 +961,12 @@ func (s *Issuance) proofs(ctx context.Context, plan proofPlan) ([]Key, wallet.Cr
 		}
 		nonce = n.CNonce
 	}
-	if plan == proofAttestation {
+	switch plan {
+	case proofAttestation:
 		holders, attestation, err := s.attestedHolders(ctx, nonce)
 		return holders, wallet.CredentialRequest{Attestation: attestation}, err
+	case proofJWTKeyAttestation:
+		return s.jwtProofsWithKeyAttestation(ctx, nonce)
 	}
 	holders := make([]Key, 0, s.batchSize())
 	req := wallet.CredentialRequest{CredentialIssuer: s.offer.CredentialIssuer, Nonce: nonce}
@@ -1015,6 +1018,28 @@ func (s *Issuance) attestedHolders(ctx context.Context, nonce string) ([]Key, st
 		return nil, "", fmt.Errorf("walletflow: key attestation: %w", err)
 	}
 	return holders, keyAttestation, nil
+}
+
+// jwtProofsWithKeyAttestation creates one holder key per copy to
+// request, has the Wallet Provider attest them together for nonce, and
+// proves possession of each with a jwt proof carrying that attestation
+// in its key_attestation header (Appendix D.1, F.1). A key created
+// before a failure is deleted.
+func (s *Issuance) jwtProofsWithKeyAttestation(ctx context.Context, nonce string) ([]Key, wallet.CredentialRequest, error) {
+	holders, keyAttestation, err := s.attestedHolders(ctx, nonce)
+	if err != nil {
+		return nil, wallet.CredentialRequest{}, err
+	}
+	req := wallet.CredentialRequest{CredentialIssuer: s.offer.CredentialIssuer, Nonce: nonce}
+	for _, holder := range holders {
+		proof, err := s.w.core.GenerateProofWithKeyAttestation(holder, s.offer.CredentialIssuer, nonce, keyAttestation)
+		if err != nil {
+			s.w.deleteKeys(context.WithoutCancel(ctx), holders)
+			return nil, wallet.CredentialRequest{}, fmt.Errorf("walletflow: proof: %w", err)
+		}
+		req.JWTProofs = append(req.JWTProofs, proof)
+	}
+	return holders, req, nil
 }
 
 // deferred keeps a credential the issuer deferred, with holders, to poll.

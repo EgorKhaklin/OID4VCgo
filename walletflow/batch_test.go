@@ -383,3 +383,21 @@ func TestRespond_RefusesACopyThatBecameLinkable(t *testing.T) {
 		t.Errorf("Respond knowing it's linkable = %+v, %v; want it reported", presented, err)
 	}
 }
+
+// An issuer taking only jwt proofs with a key attestation (HAIP 1.0
+// §4.5.1's "jwt proof type using key_attestation") is sent a jwt proof
+// per key, each carrying one Key Attestation of them all, and issues a
+// copy bound to each.
+func TestBatch_JWTProofsWithKeyAttestation(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 3, JWTKeyAttestation: true})
+	before := f.env.Provider.KeyAttestations()
+	w := f.newWalletTrusting(t, f.env.IssuerRoots, nil)
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	if len(c.Copies) != 3 || f.keys.Len() != 3 {
+		t.Fatalf("copies = %d, keys = %d; want 3 of each", len(c.Copies), f.keys.Len())
+	}
+	assertDistinct(t, c.Copies)
+	if n := f.env.Provider.KeyAttestations() - before; n != 1 {
+		t.Errorf("key attestations = %d, want one for the batch", n)
+	}
+}

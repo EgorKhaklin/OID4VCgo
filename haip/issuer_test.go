@@ -144,3 +144,13 @@ func TestValidateIssuerConfig_ScopeMapsToOneType(t *testing.T) {
 		t.Error("an SD-JWT VC and an mdoc under one scope were accepted")
 	}
 }
+
+// HAIP 1.0 §4.5.1's "jwt proof type using key_attestation": the
+// configuration requires a key attestation and is one issuer.New
+// accepts with an AttestationVerifier.
+func TestRecommendedJWTKeyAttestationProofType(t *testing.T) {
+	ptc := haip.RecommendedJWTKeyAttestationProofType()
+	if ptc.KeyAttestationsRequired == nil || len(ptc.ProofSigningAlgValuesSupported) != 1 || ptc.ProofSigningAlgValuesSupported[0] != string(haip.RecommendedJOSEAlgorithm) {
+		t.Errorf("RecommendedJWTKeyAttestationProofType() = %+v", ptc)
+	}
+}

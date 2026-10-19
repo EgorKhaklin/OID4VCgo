@@ -59,6 +59,10 @@ const (
 	ErrorInvalidTokenRequest ErrorCode = "invalid_request"
 	ErrorInvalidGrant        ErrorCode = "invalid_grant"
 
+	// ErrorInvalidAuthorizationDetails refuses a Token Request's
+	// authorization_details (RFC 9396 §5).
+	ErrorInvalidAuthorizationDetails ErrorCode = "invalid_authorization_details"
+
 	// ErrorUseDPoPNonce indicates a DPoP proof presented to
 	// ExchangePreAuthorizedCode was otherwise valid but carried no
 	// nonce, or one this issuer didn't just issue (unknown, already

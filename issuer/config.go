@@ -751,11 +751,10 @@ func validateSignerDependencies(cfg Config, deps Dependencies) error {
 		if err := checkIssuable(c, deps); err != nil {
 			return fmt.Errorf("credential_configurations_supported[%q]: %w", id, err)
 		}
-		if jwt, ok := c.ProofTypesSupported[oid4vci.ProofTypeJWT]; ok && jwt.KeyAttestationsRequired != nil {
-			// A jwt proof's key_attestation header (Appendix F.1) isn't
-			// verified, so every such request would be refused: offer the
-			// attestation proof type instead.
-			return fmt.Errorf("credential_configurations_supported[%q]: key_attestations_required on the %q proof type is not supported; use the %q proof type", id, oid4vci.ProofTypeJWT, oid4vci.ProofTypeAttestation)
+		if jwt, ok := c.ProofTypesSupported[oid4vci.ProofTypeJWT]; ok && jwt.KeyAttestationsRequired != nil && deps.AttestationVerifier == nil {
+			// A jwt proof's key_attestation header (Appendix F.1) is
+			// verified by AttestationVerifier.
+			return fmt.Errorf("credential_configurations_supported[%q]: attestation_verifier is required when the %q proof type has key_attestations_required", id, oid4vci.ProofTypeJWT)
 		}
 		if _, ok := c.ProofTypesSupported[oid4vci.ProofTypeAttestation]; ok && deps.AttestationVerifier == nil {
 			return fmt.Errorf("credential_configurations_supported[%q]: attestation_verifier is required when proof_types_supported includes %q", id, oid4vci.ProofTypeAttestation)

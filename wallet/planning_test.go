@@ -70,7 +70,7 @@ func TestPlanAuthorization(t *testing.T) {
 		"one listed, offer names another":      {offer("https://attacker.example.com", "mdl"), metadata(two[0]), ""},
 		"none listed, offer names another":     {offer("https://attacker.example.com", "mdl"), metadata(), ""},
 		"unknown configuration":                {offer("", "nope"), metadata(), ""},
-		"configuration without a scope":        {offer("", "noscope"), metadata(), ""},
+		"configuration without a scope":        {offer("", "noscope"), metadata(), issuer},
 		"no configurations":                    {offer(""), metadata(), ""},
 		"pre-authorized only": {oid4vci.CredentialOffer{
 			CredentialIssuer: issuer, CredentialConfigurationIDs: []string{"mdl"},
@@ -310,6 +310,52 @@ func TestPlanPreAuthorizedCode(t *testing.T) {
 	} {
 		if _, err := wallet.PlanPreAuthorizedCode(o, metadata()); err == nil {
 			t.Errorf("%s: planned", name)
+		}
+	}
+}
+
+// A configuration without a scope is requested by authorization_details
+// (§12.2.4), with locations naming the Credential Issuer when its
+// metadata lists authorization_servers (§5.1.1); one with a scope by
+// scope. BuildAuthorizationRequestForPlan sends both.
+func TestPlanAuthorization_AuthorizationDetails(t *testing.T) {
+	const issuer = "https://issuer.example.com"
+	mustURL := func(t *testing.T, raw string) fapi.URL {
+		u, err := fapi.ParseIssuerURL(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	conf := func(scope string) oid4vci.CredentialConfigurationMetadata {
+		return oid4vci.CredentialConfigurationMetadata{Format: "dc+sd-jwt", Scope: scope}
+	}
+	meta := oid4vci.Metadata{
+		CredentialIssuer: mustURL(t, issuer),
+		CredentialConfigurationsSupported: map[string]oid4vci.CredentialConfigurationMetadata{
+			"scoped": conf("pid"), "unscoped": conf(""),
+		},
+	}
+	offer := oid4vci.CredentialOffer{CredentialIssuer: issuer, CredentialConfigurationIDs: []string{"scoped", "unscoped", "unscoped"}}
+	for _, servers := range []bool{false, true} {
+		m := meta
+		if servers {
+			m.AuthorizationServers = []fapi.URL{mustURL(t, "https://as.example.com")}
+			offer.Grants = &oid4vci.Grants{AuthorizationCode: &oid4vci.GrantAuthorizationCode{AuthorizationServer: "https://as.example.com"}}
+		}
+		plan, err := wallet.PlanAuthorization(offer, m)
+		if err != nil {
+			t.Fatalf("servers=%v: %v", servers, err)
+		}
+		if len(plan.Scopes) != 1 || len(plan.AuthorizationDetails) != 1 || plan.AuthorizationDetails[0].CredentialConfigurationID != "unscoped" {
+			t.Fatalf("servers=%v: plan = %+v", servers, plan)
+		}
+		if got := plan.AuthorizationDetails[0].Locations; servers != (len(got) == 1 && got[0] == issuer) {
+			t.Errorf("servers=%v: locations = %v", servers, got)
+		}
+		req, err := wallet.BuildAuthorizationRequestForPlan(offer, plan)
+		if err != nil || len(req.Scope) != 1 || len(req.AuthorizationDetails) != 1 {
+			t.Errorf("servers=%v: request = %+v, %v", servers, req, err)
 		}
 	}
 }

@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/dpop"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // DPoPReplayChecker detects DPoP proof replay by "jti" (RFC 9449
@@ -54,6 +56,33 @@ type ExchangePreAuthorizedCodeRequest struct {
 	// by the Authorization Server. Required under VerifiedPreAuthorizedCode,
 	// which then needs no DPoPProof or TokenEndpoint; refused otherwise.
 	Verified *VerifiedTokenRequest
+
+	// AuthorizationDetails is the Token Request's authorization_details
+	// (§6.1.1, RFC 9396), OPTIONAL: ParseAuthorizationDetails reads the
+	// form parameter. Each must be an openid_credential entry for a
+	// configuration the code grants, by credential identifiers or scope,
+	// whose locations, if any, include this Credential Issuer. The token
+	// then carries a credential_identifier for each, and the Token
+	// Response echoes them (§6.2: "REQUIRED when the
+	// authorization_details parameter is used in ... the Token Request").
+	// Their form is checked before the code is consumed; whether the
+	// code grants them, after, so a request for more than it grants
+	// spends it.
+	AuthorizationDetails []oid4vci.AuthorizationDetail
+}
+
+// ParseAuthorizationDetails reads a Token Request's
+// authorization_details form parameter (RFC 9396 §2): "" is none, and
+// anything but a JSON array of objects is invalid_authorization_details.
+func ParseAuthorizationDetails(value string) ([]oid4vci.AuthorizationDetail, error) {
+	if value == "" {
+		return nil, nil
+	}
+	var details []oid4vci.AuthorizationDetail
+	if err := strictjson.Unmarshal([]byte(value), &details); err != nil || len(details) == 0 {
+		return nil, newError(ErrorInvalidAuthorizationDetails, 400, "authorization_details isn't a non-empty JSON array of objects", err)
+	}
+	return details, nil
 }
 
 // ExchangePreAuthorizedCodeResult is returned by a successful
@@ -171,8 +200,9 @@ func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
 //	// refuse a client_id parameter naming another client
 //	b, err := srv.VerifyTokenRequestBinding(ctx, c.Client, tr)
 //	// require b.SenderConstrain to be storage.SenderConstrainDPoP
+//	details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
 //	res, err := iss.ExchangePreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
-//		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"],
+//		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
 //		Verified: &issuer.VerifiedTokenRequest{
 //			ClientID: c.Client.ID().String(), DPoPThumbprint: b.Thumbprint, NextDPoPNonce: b.NextDPoPNonce,
 //		},
@@ -389,6 +419,11 @@ func (iss *Issuer) redeemPreAuthorizedCode(ctx context.Context, req ExchangePreA
 	}
 	*clientID = binding.ClientID
 
+	requested, err := iss.requestedConfigurations(req.AuthorizationDetails)
+	if err != nil {
+		return RedeemedPreAuthorizedCode{}, err
+	}
+
 	record, err := iss.consumePreAuthorizedCode(ctx, req)
 	if err != nil {
 		return RedeemedPreAuthorizedCode{}, err
@@ -396,9 +431,18 @@ func (iss *Issuer) redeemPreAuthorizedCode(ctx context.Context, req ExchangePreA
 	if now.After(record.ExpiresAt) {
 		return RedeemedPreAuthorizedCode{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code has expired", nil)
 	}
+	mint := record.CredentialConfigurationIDs
+	if requested != nil {
+		for _, id := range requested {
+			if !iss.recordGrants(record, id) {
+				return RedeemedPreAuthorizedCode{}, newError(ErrorInvalidAuthorizationDetails, 400, fmt.Sprintf("the pre-authorized_code doesn't grant %q", id), nil)
+			}
+		}
+		mint = requested
+	}
 	var authDetails []oid4vci.AuthorizationDetail
-	if len(record.CredentialConfigurationIDs) > 0 {
-		authDetails, err = iss.mintAuthorizationDetails(record.CredentialConfigurationIDs)
+	if len(mint) > 0 {
+		authDetails, err = iss.mintAuthorizationDetails(mint)
 		if err != nil {
 			return RedeemedPreAuthorizedCode{}, fmt.Errorf("issuer: exchange pre-authorized code: %w", err)
 		}
@@ -496,6 +540,49 @@ func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePre
 // actually support is this deployment's own bug, not anything the
 // Wallet did wrong, so this returns a plain error rather than a
 // wallet-facing *Error.
+// requestedConfigurations checks a Token Request's authorization_details
+// by their form, before the code is consumed, and returns the
+// configurations they name (nil for none): openid_credential entries
+// for configurations this issuer supports, each once, with no
+// credential_identifiers (the Authorization Server's to mint), and
+// locations, if any, including this Credential Issuer.
+func (iss *Issuer) requestedConfigurations(details []oid4vci.AuthorizationDetail) ([]string, error) {
+	if len(details) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(details))
+	for i, d := range details {
+		var problem string
+		switch _, supported := iss.cfg.CredentialConfigurationsSupported[d.CredentialConfigurationID]; {
+		case d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential:
+			problem = fmt.Sprintf("type %q isn't %q", d.Type, oid4vci.AuthorizationDetailsTypeOpenIDCredential)
+		case !supported:
+			problem = fmt.Sprintf("credential_configuration_id %q isn't supported", d.CredentialConfigurationID)
+		case slices.Contains(ids, d.CredentialConfigurationID):
+			problem = fmt.Sprintf("credential_configuration_id %q is requested twice", d.CredentialConfigurationID)
+		case len(d.CredentialIdentifiers) > 0:
+			problem = "credential_identifiers are the Authorization Server's to issue"
+		case len(d.Locations) > 0 && !slices.Contains(d.Locations, iss.cfg.Issuer.String()):
+			problem = "locations doesn't include this Credential Issuer"
+		}
+		if problem != "" {
+			return nil, newError(ErrorInvalidAuthorizationDetails, 400, fmt.Sprintf("authorization_details[%d]: %s", i, problem), nil)
+		}
+		ids = append(ids, d.CredentialConfigurationID)
+	}
+	return ids, nil
+}
+
+// recordGrants reports whether a pre-authorized code's record grants
+// configuration id: by its credential identifiers, or its scope.
+func (iss *Issuer) recordGrants(record PreAuthorizedCodeRecord, id string) bool {
+	if slices.Contains(record.CredentialConfigurationIDs, id) {
+		return true
+	}
+	scope := iss.cfg.CredentialConfigurationsSupported[id].Scope
+	return scope != "" && slices.Contains(record.Scopes, scope)
+}
+
 func (iss *Issuer) mintAuthorizationDetails(configIDs []string) ([]oid4vci.AuthorizationDetail, error) {
 	details := make([]oid4vci.AuthorizationDetail, len(configIDs))
 	for i, configID := range configIDs {
@@ -509,6 +596,11 @@ func (iss *Issuer) mintAuthorizationDetails(configIDs []string) ([]oid4vci.Autho
 		details[i] = oid4vci.AuthorizationDetail{
 			Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: configID,
 			CredentialIdentifiers: []string{identifier},
+		}
+		if len(iss.cfg.AuthorizationServers) > 0 {
+			// §5.1.1: with authorization_servers in the metadata, locations
+			// "MUST be set to the Credential Issuer Identifier value".
+			details[i].Locations = []string{iss.cfg.Issuer.String()}
 		}
 	}
 	return details, nil
