@@ -48,6 +48,15 @@ class InPersonSettingsUiTest {
         compose.onNodeWithTag("ble-modes-CENTRAL_CLIENT").assertIsEnabled()
     }
 
+    @Test fun sharedShowsGreenTickAndDeclinedDoesNot() {
+        var state by mutableStateOf<dev.idfoundry.oid4vcwallet.ProximityPresentation.State>(dev.idfoundry.oid4vcwallet.ProximityPresentation.State.Presented(false))
+        compose.setContent { MaterialTheme { InPersonOutcome(state, onDone = {}) } }
+        compose.onNodeWithTag("in-person-shared").assertIsDisplayed()
+        state = dev.idfoundry.oid4vcwallet.ProximityPresentation.State.Declined
+        compose.onNodeWithTag("in-person-shared").assertDoesNotExist()
+        compose.onNodeWithTag("in-person-ended").assertIsDisplayed()
+    }
+
     @Test fun combinedOfferAsksForTheTapUnderTheQrCode() {
         compose.setContent { MaterialTheme { QRCodeView("mdoc:owBjMS4w", connected = false, orTap = true) } }
         compose.onNodeWithTag("in-person-qr").assertIsDisplayed()

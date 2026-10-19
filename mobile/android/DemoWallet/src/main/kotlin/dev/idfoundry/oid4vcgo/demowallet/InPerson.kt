@@ -33,6 +33,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Contactless
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -328,7 +330,7 @@ private fun ReaderCard(reader: ProximityReaderIdentity, onCertificates: (List<X5
 }
 
 @Composable
-private fun InPersonOutcome(state: ProximityPresentation.State, onDone: () -> Unit) {
+internal fun InPersonOutcome(state: ProximityPresentation.State, onDone: () -> Unit) {
     val text = when (state) {
         is ProximityPresentation.State.Presented -> "Shared with the reader." + if (state.linkable) " That copy had been shown to another verifier before." else ""
         ProximityPresentation.State.Declined -> "Declined: nothing was shared."
@@ -341,8 +343,16 @@ private fun InPersonOutcome(state: ProximityPresentation.State, onDone: () -> Un
         }
         else -> ""
     }
+    // Shared: a green tick; failed: red; declined, cancelled or ended: neutral.
+    val (icon, tint, tag) = when (state) {
+        is ProximityPresentation.State.Presented -> Triple(Icons.Default.CheckCircle, Color(0xFF2E7D32), "in-person-shared")
+        is ProximityPresentation.State.Failed -> Triple(Icons.Default.Error, Color(0xFFC62828), "in-person-failed")
+        else -> Triple(Icons.Default.Info, MaterialTheme.colorScheme.onSurfaceVariant, "in-person-ended")
+    }
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Text(text, Modifier.testTag("in-person-outcome"))
+        Icon(icon, null, Modifier.size(96.dp).testTag(tag), tint = tint)
+        Spacer(Modifier.height(16.dp))
+        Text(text, Modifier.testTag("in-person-outcome"), textAlign = TextAlign.Center)
         Spacer(Modifier.height(24.dp))
         Button(onDone, Modifier.testTag("in-person-done")) { Text("Done") }
     }
