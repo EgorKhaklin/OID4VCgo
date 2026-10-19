@@ -176,7 +176,7 @@ func TestCheckTokenTimes_ExpiredAtExp(t *testing.T) {
 	exp := iat + 60
 	for at, ok := range map[int64]bool{exp - 1: true, exp: false} {
 		opts := VerifyOptions{Now: func() time.Time { return time.Unix(at, 0) }}
-		if err := checkTokenTimes(iat, &exp, opts); (err == nil) != ok {
+		if err := checkTokenTimes(iat, &exp, nil, opts); (err == nil) != ok {
 			t.Errorf("at exp%+d: %v", at-exp, err)
 		}
 	}

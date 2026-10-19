@@ -9,6 +9,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 )
 
 // CWTTokenMediaType is the media type a Status List Token in CWT format
@@ -25,6 +26,7 @@ const CWTTokenMediaType = "application/statuslist+cwt" //nolint:gosec // a conte
 const (
 	cwtClaimSub        = 2
 	cwtClaimExp        = 4
+	cwtClaimNbf        = 5
 	cwtClaimIat        = 6
 	cwtClaimTTL        = 65534
 	cwtClaimStatusList = 65533
@@ -146,7 +148,15 @@ func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opt
 		return TokenClaims{}, fmt.Errorf("statuslist: token's status_list.bits is invalid")
 	}
 
-	if err := checkTokenTimes(claims.Iat, claims.Exp, opts); err != nil {
+	var nbf *int64
+	if v, ok := decoded[cwtClaimNbf]; ok {
+		n, err := toNumericDateClaim(v)
+		if err != nil {
+			return TokenClaims{}, fmt.Errorf("statuslist: nbf claim: %w", err)
+		}
+		nbf = &n
+	}
+	if err := checkTokenTimes(claims.Iat, claims.Exp, nbf, opts); err != nil {
 		return TokenClaims{}, err
 	}
 
@@ -158,14 +168,14 @@ func parseCWTClaims(decoded map[int]interface{}) (TokenClaims, error) {
 	if !ok || sub == "" {
 		return TokenClaims{}, fmt.Errorf("statuslist: CWT is missing the required sub claim")
 	}
-	iat, err := toInt64Claim(decoded[cwtClaimIat])
+	iat, err := toNumericDateClaim(decoded[cwtClaimIat])
 	if err != nil {
 		return TokenClaims{}, fmt.Errorf("statuslist: iat claim: %w", err)
 	}
 
 	var exp *int64
 	if v, ok := decoded[cwtClaimExp]; ok {
-		i, err := toInt64Claim(v)
+		i, err := toNumericDateClaim(v)
 		if err != nil {
 			return TokenClaims{}, fmt.Errorf("statuslist: exp claim: %w", err)
 		}
@@ -206,6 +216,25 @@ func decodeCBORValue(v interface{}, out interface{}) error {
 		return fmt.Errorf("statuslist: unmarshal CBOR value: %w", err)
 	}
 	return nil
+}
+
+// toNumericDateClaim reads a CWT NumericDate (RFC 8392 §2: an integer
+// or a floating-point number of seconds), dropping any fraction.
+func toNumericDateClaim(v interface{}) (int64, error) {
+	var f float64
+	switch n := v.(type) {
+	case float64:
+		f = n
+	case float32:
+		f = float64(n)
+	default:
+		return toInt64Claim(v)
+	}
+	at, err := jwtdate.FromFloat(f)
+	if err != nil {
+		return 0, err
+	}
+	return at.Unix(), nil
 }
 
 func toInt64Claim(v interface{}) (int64, error) {

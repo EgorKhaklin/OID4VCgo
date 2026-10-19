@@ -10,6 +10,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // TokenTyp is the required JOSE "typ" header of a Status List Token in
@@ -148,16 +149,35 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 		return TokenClaims{}, fmt.Errorf("statuslist: token typ is %q, want %q", typ, TokenTyp)
 	}
 
+	// NumericDates may be fractional (RFC 7519 §2), so they're read as
+	// numbers; member names must match exactly (strictjson).
 	var decoded struct {
 		Iss        string     `json:"iss"`
 		Sub        string     `json:"sub"`
-		Iat        int64      `json:"iat"`
-		Exp        *int64     `json:"exp"`
+		Iat        *float64   `json:"iat"`
+		Exp        *float64   `json:"exp"`
+		Nbf        *float64   `json:"nbf"`
 		TTL        *int64     `json:"ttl"`
 		StatusList StatusList `json:"status_list"`
 	}
-	if err := json.Unmarshal(raw, &decoded); err != nil {
+	if err := strictjson.Unmarshal(raw, &decoded); err != nil {
 		return TokenClaims{}, fmt.Errorf("statuslist: unmarshal token claims: %w", err)
+	}
+	var times [3]*int64
+	for i, v := range []*float64{decoded.Iat, decoded.Exp, decoded.Nbf} {
+		if v == nil {
+			continue
+		}
+		at, err := jwtdate.FromFloat(*v)
+		if err != nil {
+			return TokenClaims{}, fmt.Errorf("statuslist: token %s: %w", [3]string{"iat", "exp", "nbf"}[i], err)
+		}
+		unix := at.Unix()
+		times[i] = &unix
+	}
+	var iat int64
+	if times[0] != nil {
+		iat = *times[0]
 	}
 	if decoded.Sub == "" {
 		return TokenClaims{}, fmt.Errorf("statuslist: token is missing the required sub claim")
@@ -169,14 +189,14 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 		return TokenClaims{}, fmt.Errorf("statuslist: token's status_list.bits is invalid")
 	}
 
-	if err := checkTokenTimes(decoded.Iat, decoded.Exp, opts); err != nil {
+	if err := checkTokenTimes(iat, times[1], times[2], opts); err != nil {
 		return TokenClaims{}, err
 	}
 
 	return TokenClaims{
 		Sub:        decoded.Sub,
-		Iat:        decoded.Iat,
-		Exp:        decoded.Exp,
+		Iat:        iat,
+		Exp:        times[1],
 		TTL:        decoded.TTL,
 		StatusList: decoded.StatusList,
 	}, nil
@@ -190,10 +210,11 @@ const defaultMaxClockSkew = time.Minute
 const DefaultMaxAgeWithoutExp = 24 * time.Hour
 
 // checkTokenTimes checks a Status List Token's iat, which draft-14
-// §5.1 requires, and exp, against opts: issued not in the future (past
-// MaxClockSkew), not longer ago than MaxAge when it's set, and not
-// expired.
-func checkTokenTimes(iat int64, exp *int64, opts VerifyOptions) error {
+// §5.1 requires, exp and nbf, against opts: issued not in the future
+// (past MaxClockSkew), not longer ago than MaxAge when it's set, not
+// expired, and not before its nbf (RFC 7519 §4.1.5: it "MUST NOT be
+// accepted for processing" before then, past MaxClockSkew).
+func checkTokenTimes(iat int64, exp, nbf *int64, opts VerifyOptions) error {
 	now := time.Now
 	if opts.Now != nil {
 		now = opts.Now
@@ -209,6 +230,15 @@ func checkTokenTimes(iat int64, exp *int64, opts VerifyOptions) error {
 	}
 	if issued.After(t.Add(skew)) {
 		return fmt.Errorf("statuslist: token was issued in the future")
+	}
+	if nbf != nil {
+		notBefore, err := jwtdate.FromUnix(*nbf)
+		if err != nil {
+			return fmt.Errorf("statuslist: token nbf is out of range")
+		}
+		if notBefore.After(t.Add(skew)) {
+			return fmt.Errorf("statuslist: token isn't valid before %s", notBefore.UTC().Format(time.RFC3339))
+		}
 	}
 	maxAge := opts.MaxAge
 	if maxAge == 0 && exp == nil {
