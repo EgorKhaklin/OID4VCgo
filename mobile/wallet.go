@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -52,9 +51,13 @@ type config struct {
 	// required (MdocReaderRequireEKU for MdocReaderRoots) when its roots
 	// share a trust anchor with another role's, which would otherwise
 	// take that role's certificates for its own.
-	VerifierRequireEKU       string `json:"verifier_require_eku,omitempty"`
-	RegistrarRequireEKU      string `json:"registrar_require_eku,omitempty"`
-	IssuerRequireEKU         string `json:"issuer_require_eku,omitempty"`
+	VerifierRequireEKU  string `json:"verifier_require_eku,omitempty"`
+	RegistrarRequireEKU string `json:"registrar_require_eku,omitempty"`
+	IssuerRequireEKU    string `json:"issuer_require_eku,omitempty"`
+	// IssuerMetadataRequireEKU recognizes only issuer metadata signed
+	// by a certificate under IssuerMetadataRoots with this extended key
+	// usage (walletflow.Config.IssuerMetadataLeafPolicy).
+	IssuerMetadataRequireEKU string `json:"issuer_metadata_require_eku,omitempty"`
 	RequireTrustedMdocReader bool   `json:"require_trusted_mdoc_reader,omitempty"`
 	// RequireSignedDCAPIRequests refuses an unsigned OpenID4VP request
 	// over the Digital Credentials API, as untrusted_verifier
@@ -192,9 +195,7 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	var cfg config
 	// A misspelled key, a require_* option say, is refused rather than
 	// silently left at its default.
-	dec := json.NewDecoder(strings.NewReader(configJSON))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&cfg); err != nil {
+	if err := decodeConfig(configJSON, &cfg); err != nil {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("configuration: %w", err))
 	}
 	if keys == nil || credentials == nil {
@@ -276,6 +277,9 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 	}
 	if verifierRoots != nil {
 		wcfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: verifierRoots, LeafPolicy: verifierPolicy}
+	}
+	if wcfg.IssuerMetadataLeafPolicy, err = roleEKU("issuer_metadata_require_eku", cfg.IssuerMetadataRequireEKU); err != nil {
+		return walletflow.Config{}, err
 	}
 	if wcfg.IssuerLeafPolicy, err = roleEKU("issuer_require_eku", cfg.IssuerRequireEKU); err != nil {
 		return walletflow.Config{}, err

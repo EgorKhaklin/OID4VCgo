@@ -64,14 +64,16 @@ type Config struct {
 	// another's name.
 	RequireIssuerName bool
 
-	// IssuerMetadataRoots, RequireSignedIssuerMetadata,
-	// RequireIssuerMetadataName and MaxIssuerMetadataAge are the
+	// IssuerMetadataRoots, IssuerMetadataLeafPolicy,
+	// RequireSignedIssuerMetadata, RequireIssuerMetadataName and
+	// MaxIssuerMetadataAge are the
 	// Credential Issuer Metadata trust settings of wallet.Config: with
 	// IssuerMetadataRoots set, signed metadata (OpenID4VCI §12.2.3, HAIP
 	// 1.0 §4.1) is asked for and verified, and RequireSignedIssuerMetadata
 	// refuses an issuer without it, before the holder authenticates or
 	// enters a transaction code. See wallet.Config for each.
 	IssuerMetadataRoots         *x509.CertPool
+	IssuerMetadataLeafPolicy    func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 	RequireSignedIssuerMetadata bool
 	RequireIssuerMetadataName   bool
 	MaxIssuerMetadataAge        time.Duration
@@ -331,8 +333,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	core, err := wallet.New(wallet.Config{
 		Assurance: cfg.assurance(), ProofSigningAlg: oid4vci.ES256, VerifierTrust: cfg.VerifierTrust,
 		RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
-		IssuerMetadataRoots:        cfg.IssuerMetadataRoots, RequireSignedIssuerMetadata: cfg.RequireSignedIssuerMetadata,
-		RequireIssuerMetadataName: cfg.RequireIssuerMetadataName, MaxIssuerMetadataAge: cfg.MaxIssuerMetadataAge,
+		IssuerMetadataRoots:        cfg.IssuerMetadataRoots, IssuerMetadataLeafPolicy: cfg.IssuerMetadataLeafPolicy,
+		RequireSignedIssuerMetadata: cfg.RequireSignedIssuerMetadata,
+		RequireIssuerMetadataName:   cfg.RequireIssuerMetadataName, MaxIssuerMetadataAge: cfg.MaxIssuerMetadataAge,
 		Fetch: fapihttp.Config{
 			MaxResponseBytes: maxResponseBytes, RequestTimeout: httpTimeout, MaxRedirects: 2,
 			AllowLoopbackHosts: cfg.Development,

@@ -10,8 +10,9 @@ public struct WalletConfiguration: Codable, Sendable {
     /// app opens, registered with the issuers' Authorization Servers. Empty
     /// for a wallet that receives only pre-authorized codes.
     public var redirectURI: String
-    /// PEM certificates: the trust anchors for issuers' credentials, and
-    /// for Verifiers' requests.
+    /// PEM certificates: the trust anchors for issuers' credentials. A
+    /// credential signed by a certificate that doesn't chain to them is
+    /// refused.
     public var issuerRoots: String
     /// PEM certificates: the trust anchors for Verifiers' requests. A request
     /// signed by a certificate that doesn't chain to them is refused unread.
@@ -44,6 +45,16 @@ public struct WalletConfiguration: Codable, Sendable {
     /// `development`, required when `registrarRoots` shares a trust anchor
     /// with another role's roots.
     public var registrarRequireEKU: String
+    /// A dotted object identifier: recognizes only issuer certificates
+    /// under `issuerRoots` with that extended key usage. Outside
+    /// `development`, required when `issuerRoots` may share a trust
+    /// anchor with another role's roots.
+    public var issuerRequireEKU: String
+    /// A dotted object identifier: recognizes only issuer metadata signed
+    /// by a certificate under `issuerMetadataRoots` with that extended key
+    /// usage. Outside `development`, required when `issuerMetadataRoots`
+    /// may share a trust anchor with another role's roots.
+    public var issuerMetadataRequireEKU: String
     /// Relaxes what production requires, for a wallet talking to services
     /// on a development machine. Never ship an app with it set. It lets
     /// issuers, Authorization Servers, Verifiers and status lists be on
@@ -154,6 +165,7 @@ public struct WalletConfiguration: Codable, Sendable {
                 copyPolicy: CopyPolicy = .perPresentation, issuanceProfile: IssuanceProfile = .openID4VCI,
                 tlsPins: [String: [String]] = [:], proximityDeviceAuth: ProximityDeviceAuth = .signature,
                 verifierRequireEKU: String = "", registrarRequireEKU: String = "",
+                issuerRequireEKU: String = "", issuerMetadataRequireEKU: String = "",
                 statusIssuers: [String: [String]] = [:], requireIssuerName: Bool = false,
                 issuerMetadataRoots: String = "", requireSignedIssuerMetadata: Bool = false,
                 requireIssuerMetadataName: Bool = false, maxIssuerMetadataAgeSeconds: Int = 0) {
@@ -175,6 +187,8 @@ public struct WalletConfiguration: Codable, Sendable {
         self.proximityDeviceAuth = proximityDeviceAuth
         self.verifierRequireEKU = verifierRequireEKU
         self.registrarRequireEKU = registrarRequireEKU
+        self.issuerRequireEKU = issuerRequireEKU
+        self.issuerMetadataRequireEKU = issuerMetadataRequireEKU
         self.statusIssuers = statusIssuers
         self.requireIssuerName = requireIssuerName
         self.issuerMetadataRoots = issuerMetadataRoots
@@ -191,12 +205,20 @@ public struct WalletConfiguration: Codable, Sendable {
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy", issuanceProfile = "issuance_profile"
         case tlsPins = "tls_pins", proximityDeviceAuth = "proximity_device_auth"
         case verifierRequireEKU = "verifier_require_eku", registrarRequireEKU = "registrar_require_eku"
+        case issuerRequireEKU = "issuer_require_eku", issuerMetadataRequireEKU = "issuer_metadata_require_eku"
         case statusIssuers = "status_issuers", requireIssuerName = "require_issuer_name"
         case issuerMetadataRoots = "issuer_metadata_roots", requireSignedIssuerMetadata = "require_signed_issuer_metadata"
         case requireIssuerMetadataName = "require_issuer_metadata_name", maxIssuerMetadataAgeSeconds = "max_issuer_metadata_age_seconds"
     }
 
+    /// Decodes a configuration, refusing a key it doesn't know: a
+    /// misspelled option would otherwise be dropped here, before the
+    /// wallet could refuse it, and silently left at its default.
     public init(from decoder: Decoder) throws {
+        let all = try decoder.container(keyedBy: AnyCodingKey.self)
+        if let unknown = all.allKeys.first(where: { CodingKeys(stringValue: $0.stringValue) == nil }) {
+            throw DecodingError.dataCorruptedError(forKey: unknown, in: all, debugDescription: "unknown configuration key \(unknown.stringValue)")
+        }
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(clientID: try c.decodeIfPresent(String.self, forKey: .clientID) ?? "",
                   redirectURI: try c.decodeIfPresent(String.self, forKey: .redirectURI) ?? "",
@@ -216,6 +238,8 @@ public struct WalletConfiguration: Codable, Sendable {
                   proximityDeviceAuth: try c.decodeIfPresent(ProximityDeviceAuth.self, forKey: .proximityDeviceAuth) ?? .signature,
                   verifierRequireEKU: try c.decodeIfPresent(String.self, forKey: .verifierRequireEKU) ?? "",
                   registrarRequireEKU: try c.decodeIfPresent(String.self, forKey: .registrarRequireEKU) ?? "",
+                  issuerRequireEKU: try c.decodeIfPresent(String.self, forKey: .issuerRequireEKU) ?? "",
+                  issuerMetadataRequireEKU: try c.decodeIfPresent(String.self, forKey: .issuerMetadataRequireEKU) ?? "",
                   statusIssuers: try c.decodeIfPresent([String: [String]].self, forKey: .statusIssuers) ?? [:],
                   requireIssuerName: try c.decodeIfPresent(Bool.self, forKey: .requireIssuerName) ?? false,
                   issuerMetadataRoots: try c.decodeIfPresent(String.self, forKey: .issuerMetadataRoots) ?? "",
@@ -1162,4 +1186,12 @@ func codingPath(_ error: Error) -> String {
     default: return "the top"
     }
     return path.isEmpty ? "the top" : path.map { $0.intValue.map { "[\($0)]" } ?? $0.stringValue }.joined(separator: ".")
+}
+
+/// Any key, to list every key a JSON object has.
+struct AnyCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+    init(stringValue: String) { self.stringValue = stringValue; intValue = nil }
+    init?(intValue: Int) { stringValue = String(intValue); self.intValue = intValue }
 }
