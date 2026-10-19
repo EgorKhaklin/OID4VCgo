@@ -33,9 +33,10 @@ func (w *Wallet) StartDCAPIPresentation(ctx context.Context, protocol string, da
 	req, err := w.core.ParseDCAPIRequestData(protocol, data, origin)
 	var rejected *wallet.RequestRejectedError
 	if errors.As(err, &rejected) {
-		// Returned to the page through the platform (Appendix A.4's
-		// error shape, as Decline's).
-		response, encErr := json.Marshal(map[string]string{"error": rejected.Code, "error_description": rejected.Description})
+		// Returned to the page through the platform, in Appendix A.4's
+		// error shape, as Decline's: "a single property with the name
+		// error".
+		response, encErr := json.Marshal(map[string]string{"error": rejected.Code})
 		if encErr != nil {
 			return nil, fmt.Errorf("walletflow: dc api request: %w", encErr)
 		}

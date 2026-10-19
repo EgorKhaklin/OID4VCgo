@@ -148,14 +148,21 @@ public data class ProximityReaderIdentity(
     /** Whether the request was signed, and by a reader the wallet recognizes. */
     public val status: Status,
     /**
-     * The reader certificate's subject common name: its verified name only
-     * when [status] is [Status.Trusted]; "" when the request wasn't signed.
+     * The reader's name, from a certificate that chains to
+     * [WalletConfiguration.mdocReaderRoots]: set only when [status] is
+     * [Status.Trusted].
      */
     public val name: String,
     /** The certificate chain the request carried, leaf first. */
     public val chain: List<X509Certificate>,
     /** Why [status] isn't [Status.Trusted], for logs. */
     public val error: String?,
+    /**
+     * The name an untrusted or invalid request's certificate gives itself:
+     * anyone can claim any name, so never show it as the reader's. "" when
+     * the reader is trusted or didn't sign.
+     */
+    public val claimedName: String = "",
 ) {
     /** How far a request's reader authentication goes. */
     public enum class Status {
@@ -468,6 +475,7 @@ internal fun transportFailure(e: ProximityTransportException): ProximityExceptio
 internal data class ReaderJSON(
     val status: String,
     val name: String = "",
+    @SerialName("claimed_name") val claimedName: String = "",
     val chain: List<String> = emptyList(),
     val error: String? = null,
 ) {
@@ -482,7 +490,7 @@ internal data class ReaderJSON(
             "invalid" -> ProximityReaderIdentity.Status.Invalid
             else -> ProximityReaderIdentity.Status.Unauthenticated
         }
-        return ProximityReaderIdentity(identityStatus, name, certs, error)
+        return ProximityReaderIdentity(identityStatus, name, certs, error, claimedName)
     }
 }
 

@@ -945,9 +945,10 @@ public final class Presentation: @unchecked Sendable {
         public let credentialID: String
         /// The claims it would disclose, as paths.
         public let claims: [[PathElement]]
-        /// An SD-JWT VC's claims its issuer didn't make selectively
-        /// disclosable: the Verifier receives them whatever the
-        /// selection. Show them with `claims`.
+        /// The SD-JWT VC claims the Verifier receives beyond `claims`:
+        /// those its issuer didn't make selectively disclosable, and the
+        /// plaintext members of a disclosed object a claim sits within.
+        /// Show them with `claims`.
         public let alwaysDisclosed: [[PathElement]]
         /// The claims the Verifier says it will keep (an mdoc query's
         /// `intent_to_retain`): show that with them.

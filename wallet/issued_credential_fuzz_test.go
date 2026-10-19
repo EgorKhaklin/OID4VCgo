@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -121,8 +123,11 @@ func FuzzSubmitDirectPostResponse(f *testing.F) {
 			return
 		}
 		result, err := wallet.SubmitDirectPostResponse(context.Background(), fuzzReplyClient{status, contentType, body}, "https://verifier.example/response", "the-jwe")
-		if err == nil && result.RedirectURI != "" && !strings.HasPrefix(result.RedirectURI, "https://") {
-			t.Fatalf("returned non-https redirect_uri %q", result.RedirectURI)
+		if err == nil && result.RedirectURI != "" {
+			u, perr := url.Parse(result.RedirectURI)
+			if perr != nil || !u.IsAbs() || slices.Contains([]string{"http", "javascript", "data", "file", "vbscript", "blob", "about"}, strings.ToLower(u.Scheme)) {
+				t.Fatalf("returned a redirect_uri the Wallet mustn't follow: %q", result.RedirectURI)
+			}
 		}
 		if rejected, ok := err.(*wallet.DirectPostRejectedError); ok {
 			for _, r := range rejected.Code + rejected.Description {

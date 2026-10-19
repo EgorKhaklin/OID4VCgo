@@ -165,10 +165,12 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("verify: %w", err)
 	}
-	if issRaw, present := payload["iss"]; present && p.RequireIssuerName {
-		iss, ok := issRaw.(string)
-		if !ok {
-			return VerifiedIssuedCredential{}, errors.New("iss is not a string")
+	if p.RequireIssuerName {
+		// Required means present: a credential naming no issuer would
+		// pass a check of the one it names.
+		iss, ok := payload["iss"].(string)
+		if !ok || iss == "" {
+			return VerifiedIssuedCredential{}, errors.New("RequireIssuerName: the credential names no issuer (iss)")
 		}
 		if err := certchain.CheckIssuerName(leaf, iss); err != nil {
 			return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)

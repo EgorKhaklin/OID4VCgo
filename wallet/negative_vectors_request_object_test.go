@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -274,4 +275,70 @@ func TestRequestObjectNegativeVectors(t *testing.T) {
 func sha256Sum(b []byte) []byte {
 	h := sha256.Sum256(b)
 	return h[:]
+}
+
+// A Request Object addressed to another audience, expired, or not yet
+// valid is refused (RFC 7519 §4.1.3–§4.1.5, OpenID4VP 1.0 §5.8); the
+// self-issued audience, as a string or in an array, and a fractional
+// NumericDate in the future are accepted.
+func TestRequestObjectAudienceAndTimes(t *testing.T) {
+	now := time.Now()
+	for name, tc := range map[string]struct {
+		set func(map[string]any)
+		ok  bool
+	}{
+		"another audience":          {func(p map[string]any) { p["aud"] = "https://another-wallet.example" }, false},
+		"expired":                   {func(p map[string]any) { p["exp"] = now.Add(-time.Hour).Unix() }, false},
+		"not valid yet":             {func(p map[string]any) { p["nbf"] = now.Add(time.Hour).Unix() }, false},
+		"aud not a string":          {func(p map[string]any) { p["aud"] = 7 }, false},
+		"self-issued in an array":   {func(p map[string]any) { p["aud"] = []any{"https://self-issued.me/v2", "x"} }, true},
+		"no aud at all":             {func(p map[string]any) { delete(p, "aud") }, true},
+		"fractional exp in a while": {func(p map[string]any) { p["exp"] = float64(now.Add(time.Hour).Unix()) + 0.5 }, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newRequestFixture(t)
+			_, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
+				RequestObject: f.sign(t, f.key, nil, tc.set), ClientID: f.clientID, VerifierTrust: f.trust,
+			})
+			if (err == nil) != tc.ok {
+				t.Errorf("err = %v, want accepted %v", err, tc.ok)
+			}
+		})
+	}
+}
+
+// A request's DCQL query is checked when it's parsed: an exact
+// duplicate claims query is ignored (OpenID4VP 1.0 §6.1: "Wallets
+// SHOULD ignore such duplicate claim queries"), and a query beyond the
+// size bounds, or otherwise invalid, is answered invalid_request.
+func TestRequestObjectDCQLCheckedAtParse(t *testing.T) {
+	query := func(n int, claims ...map[string]any) map[string]any {
+		var creds []any
+		for i := range n {
+			creds = append(creds, map[string]any{"id": fmt.Sprintf("q%d", i), "format": "dc+sd-jwt", "meta": map[string]any{"vct_values": []any{"urn:x"}}, "claims": claims})
+		}
+		return map[string]any{"credentials": creds}
+	}
+	given := map[string]any{"path": []any{"given_name"}}
+	f := newRequestFixture(t)
+	req, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
+		RequestObject: f.sign(t, f.key, nil, func(p map[string]any) { p["dcql_query"] = query(1, given, given) }),
+		ClientID:      f.clientID, VerifierTrust: f.trust,
+	})
+	if err != nil || len(req.Query.Credentials[0].Claims) != 1 {
+		t.Fatalf("a duplicate claims query: %v, %v; want it ignored", req.Query, err)
+	}
+	for name, q := range map[string]map[string]any{
+		"too many credential queries":  query(65, given),
+		"the same path, different ids": query(1, map[string]any{"id": "a", "path": []any{"given_name"}}, map[string]any{"id": "b", "path": []any{"given_name"}}),
+	} {
+		_, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
+			RequestObject: f.sign(t, f.key, nil, func(p map[string]any) { p["dcql_query"] = q }),
+			ClientID:      f.clientID, VerifierTrust: f.trust,
+		})
+		var rejected *wallet.RequestRejectedError
+		if !errors.As(err, &rejected) || rejected.Code != "invalid_request" {
+			t.Errorf("%s: %v, want answered invalid_request", name, err)
+		}
+	}
 }

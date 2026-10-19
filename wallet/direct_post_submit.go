@@ -29,7 +29,10 @@ type DirectPostResult struct {
 	// RedirectURI, when the Verifier returned one, is where the Wallet
 	// MUST now send the user agent — the same-device flow's way back to
 	// the Verifier (§8.2; HAIP 1.0 §5.1 requires Wallets to follow it).
-	// It is an absolute https URL: anything else is refused.
+	// It is an absolute URI: an https page, or a scheme the Verifier's
+	// own app registered. Plain http, and one that runs code or reads
+	// local data (javascript:, data:, file:), are refused. Open a non-https one only
+	// through the platform's handling of app links, never in a web view.
 	RedirectURI string
 }
 
@@ -139,8 +142,12 @@ func readDirectPostReply(resp *http.Response) (DirectPostResult, error) {
 	if reply.RedirectURI == "" {
 		return DirectPostResult{}, nil
 	}
-	if u, err := url.Parse(reply.RedirectURI); err != nil || u.Scheme != "https" || u.Host == "" {
-		return DirectPostResult{}, fmt.Errorf("redirect_uri %q isn't an absolute https URL", reply.RedirectURI)
+	// OpenID4VP §8.2: "an absolute URI", which HAIP 1.0 §5.1 has the
+	// Wallet follow: an https page, or the Verifier's own app's scheme.
+	// Not one that runs code or reads local data in what opens it.
+	u, err := url.Parse(reply.RedirectURI)
+	if err != nil || !u.IsAbs() || unsafeRedirectSchemes[strings.ToLower(u.Scheme)] {
+		return DirectPostResult{}, fmt.Errorf("redirect_uri %q isn't an absolute URI the Wallet can follow", reply.RedirectURI)
 	}
 	return DirectPostResult{RedirectURI: reply.RedirectURI}, nil
 }
@@ -189,3 +196,9 @@ func doWithoutRedirects(client fapihttp.HTTPClient, req *http.Request) (*http.Re
 	}
 	return resp, nil
 }
+
+// unsafeRedirectSchemes are the URI schemes a redirect_uri may not
+// have: each runs code, or reads local data, in whatever opens it.
+// Plain http too: HAIP requires TLS, and a same-device return over it
+// could be read or rewritten on the way.
+var unsafeRedirectSchemes = map[string]bool{"http": true, "javascript": true, "data": true, "file": true, "vbscript": true, "blob": true, "about": true}

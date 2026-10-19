@@ -155,7 +155,9 @@ func logoOf(l *oid4vci.Logo) *Logo {
 	case err != nil:
 		return nil
 	case u.Scheme == "https" && u.Host != "",
-		u.Scheme == "data" && strings.HasPrefix(u.Opaque, "image/"):
+		// A raster image only: SVG can carry script, which a web view
+		// showing the logo would run.
+		u.Scheme == "data" && strings.HasPrefix(u.Opaque, "image/") && !strings.HasPrefix(strings.ToLower(u.Opaque), "image/svg"):
 		return &Logo{URI: l.URI, AltText: displayText(l.AltText, maxDisplayName)}
 	}
 	return nil

@@ -211,7 +211,14 @@ public object DigitalCredentials {
      */
     private fun callerOrigin(caller: CallingAppInfo, privilegedBrowsers: String): String? {
         val browserOrigin = runCatching { caller.getOrigin(privilegedBrowsers) }.getOrElse { return null }
-        return browserOrigin ?: appOrigin(caller.signingInfoCompat.signingCertificateHistory.firstOrNull()?.toByteArray())
+        if (browserOrigin != null) return browserOrigin
+        val signing = caller.signingInfoCompat
+        // An app signed by several keys has no one origin. Otherwise its
+        // current key: the history runs from the original to the current
+        // one, and an app that rotated away from a compromised key mustn't
+        // share its origin with what that key still signs.
+        if (signing.hasMultipleSigners) return null
+        return appOrigin(signing.signingCertificateHistory.lastOrNull()?.toByteArray())
     }
 
     /**

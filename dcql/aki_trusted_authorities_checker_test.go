@@ -268,3 +268,28 @@ func TestAKITrustedAuthoritiesChecker_AtTheVerificationTime(t *testing.T) {
 		t.Error("accepted a chain at a verification time after the leaf expired")
 	}
 }
+
+// Without Roots (a Wallet choosing what to present), an "aki" value
+// matches any certificate's authority key identifier in the chain
+// (OpenID4VP 1.0 §6.1.1.1): a credential under an intermediate answers
+// a query naming the root, whose certificate the chain omits.
+func TestAKITrustedAuthoritiesChecker_NoRoots_MatchesAnyCertificateInTheChain(t *testing.T) {
+	root, rootKey := testcert.CA(t, "test-root")
+	intermediateKey := newKey(t)
+	intermediate := issue(t, &x509.Certificate{
+		SerialNumber: big.NewInt(20), Subject: pkix.Name{CommonName: "test-intermediate"},
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}, &intermediateKey.PublicKey, root, rootKey, nil)
+	leaf := issue(t, &x509.Certificate{SerialNumber: big.NewInt(21), Subject: pkix.Name{CommonName: "test-leaf"}},
+		&newKey(t).PublicKey, intermediate, intermediateKey, nil)
+	chain := [][]byte{leaf.Raw, intermediate.Raw}
+	for name, ca := range map[string]*x509.Certificate{"root": root, "intermediate": intermediate} {
+		if err := (dcql.AKITrustedAuthoritiesChecker{}).CheckTrustedAuthorities(context.Background(), verifiedAKI(ca), chain); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	other, _ := testcert.CA(t, "another root")
+	if err := (dcql.AKITrustedAuthoritiesChecker{}).CheckTrustedAuthorities(context.Background(), verifiedAKI(other), chain); err == nil {
+		t.Error("an authority the chain doesn't name matched")
+	}
+}

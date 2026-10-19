@@ -348,3 +348,29 @@ func TestPresentation_PreviewRetained(t *testing.T) {
 		t.Errorf("Retained = %v, want only %v", disclosed[0].Retained, q.Claims[0].Path)
 	}
 }
+
+// One credential selected for two queries is presented with one copy:
+// two would give the Verifier two holder keys of one credential, burn
+// a copy, and link the two to one holder.
+func TestRespond_OneCopyPerCredential(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 3})
+	v := f.env.StartVerifier(t)
+	w := f.newWalletTrusting(t, f.env.IssuerRoots, v.Trust)
+	held := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	ctx := context.Background()
+	_, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "a", "given_name"), f.env.SDJWTQuery(t, "b", "family_name")}})
+	p, err := w.StartPresentation(ctx, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Respond(ctx, walletflow.Selection{"a": {held.ID}, "b": {held.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := f.store.Get(ctx, held.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left := stored.CopiesLeft(); left != 2 {
+		t.Errorf("copies left = %d, want 2: one copy for both queries", left)
+	}
+}

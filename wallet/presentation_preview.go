@@ -2,7 +2,6 @@ package wallet
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
-	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // PreviewedCredential is one credential PresentCredentials would present.
@@ -28,12 +26,14 @@ type PreviewedCredential struct {
 	// other always-visible claim) are seen by every Verifier regardless.
 	Claims []dcql.Path
 
-	// AlwaysDisclosed are an SD-JWT VC's claims the issuer didn't make
-	// selectively disclosable, which every presentation of it discloses
-	// whatever the selection: the issuer-signed payload's plaintext
-	// members, the registered JWT and SD-JWT VC ones (iss, vct, cnf,
-	// iat, nbf, exp, status, jti) aside. Show them with Claims. None for
-	// an mdoc, whose every element is selectively disclosed.
+	// AlwaysDisclosed are the SD-JWT VC claims this presentation
+	// discloses beyond Claims, which the Verifier receives whatever the
+	// selection: the claims the issuer didn't make selectively
+	// disclosable, and the plaintext members of a disclosed object a
+	// claim in Claims sits within. The registered JWT and SD-JWT VC
+	// claims (iss, vct, cnf, iat, nbf, exp, status, jti) aside. Show
+	// them with Claims. None for an mdoc, whose every element is
+	// selectively disclosed.
 	AlwaysDisclosed []dcql.Path
 
 	// Retained are the Claims the Verifier says it intends to keep: an
@@ -87,7 +87,7 @@ func PreviewPresentation(ctx context.Context, query dcql.Query, candidates []Hel
 			if err != nil {
 				return nil, fmt.Errorf("wallet: preview presentation: credential query %q: %w", id, err)
 			}
-			preview = append(preview, PreviewedCredential{QueryID: id, Credential: held, Claims: paths, AlwaysDisclosed: alwaysDisclosed(held), Retained: retainedClaims(byID[id], paths)})
+			preview = append(preview, PreviewedCredential{QueryID: id, Credential: held, Claims: paths, AlwaysDisclosed: alwaysDisclosed(held, paths), Retained: retainedClaims(byID[id], paths)})
 		}
 	}
 	return preview, nil
@@ -101,32 +101,73 @@ var registeredClaims = map[string]bool{
 	"_sd": true, "_sd_alg": true,
 }
 
-// alwaysDisclosed is held's plaintext claim paths, for an SD-JWT VC.
-func alwaysDisclosed(held HeldCredential) []dcql.Path {
+// alwaysDisclosed is what presenting held for paths discloses beyond
+// paths themselves, for an SD-JWT VC: every claim the Verifier would
+// receive, from the Disclosures a presentation for paths sends resolved
+// against the payload, that no path covers. That's the claims the
+// issuer didn't make selectively disclosable, and the plaintext
+// members of a disclosed object a path selects within (RFC 9901 lets an
+// issuer mix the two: selecting address.street sends the address
+// Disclosure, and with it address.country).
+func alwaysDisclosed(held HeldCredential, paths []dcql.Path) []dcql.Path {
 	if held.Format != sdjwtvc.CredentialFormat {
 		return nil
 	}
-	pres, err := sdjwtvc.Parse(held.Credential)
+	pres, hashAlg, _, err := resolveHeldSDJWTVC(held.Credential)
 	if err != nil {
 		return nil
 	}
-	_, raw, err := jose.DecodeUnverifiedMax(pres.IssuerJWT, sdjwtvc.MaxBytes)
+	payload, err := rawSDJWTVCPayload(pres)
 	if err != nil {
 		return nil
 	}
-	var payload map[string]any
-	if json.Unmarshal(raw, &payload) != nil {
+	selected, err := sdjwtvc.SelectDisclosuresAt(payload, hashAlg, pres.Disclosures, sdjwtvcDisclosurePaths(paths))
+	if err != nil {
+		return nil
+	}
+	revealed, err := sdjwtvc.ResolveDisclosures(payload, hashAlg, selected)
+	if err != nil {
 		return nil
 	}
 	var out []dcql.Path
-	keys := slices.Sorted(maps.Keys(payload))
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(revealed)) {
 		if registeredClaims[k] {
 			continue
 		}
-		out = append(out, plaintextPaths(dcql.Path{dcql.PathKey(k)}, payload[k])...)
+		for _, leaf := range plaintextPaths(dcql.Path{dcql.PathKey(k)}, revealed[k]) {
+			if !coveredBy(leaf, paths) {
+				out = append(out, leaf)
+			}
+		}
 	}
 	return out
+}
+
+// coveredBy reports whether one of paths selects leaf, or something
+// within it: one is a prefix of the other, a wildcard matching any
+// element.
+func coveredBy(leaf dcql.Path, paths []dcql.Path) bool {
+	for _, p := range paths {
+		n := min(len(p), len(leaf))
+		match := true
+		for i := range n {
+			a, b := p[i], leaf[i]
+			switch {
+			case a.IsWildcard() || b.IsWildcard():
+			case a.IsKey() && b.IsKey() && a.Key() == b.Key():
+			case a.IsIndex() && b.IsIndex() && a.Index() == b.Index():
+			default:
+				match = false
+			}
+			if !match {
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 // plaintextPaths are the plaintext leaves of v, at path: a nested object

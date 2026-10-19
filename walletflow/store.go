@@ -116,20 +116,30 @@ func (c StoredCredential) Linkable() bool {
 }
 
 // copyFor is the copy to present to the Verifier verifierHash names
-// under policy, and whether it's one that Verifier has seen already.
-// Per Verifier, that's the copy it has seen, if any; otherwise, as per
-// presentation, the next copy (nextCopy).
-func (c StoredCredential) copyFor(policy CopyPolicy, verifierHash string) (int, CredentialCopy, bool) {
+// under policy at now, and whether it's one that Verifier has seen
+// already. Per Verifier, that's the copy it has seen, if any still
+// valid; otherwise, as per presentation, the next copy (nextCopy).
+func (c StoredCredential) copyFor(policy CopyPolicy, verifierHash string, now time.Time) (int, CredentialCopy, bool) {
 	copies := c.AllCopies()
 	if policy == CopyPerVerifier {
 		for i, cp := range copies {
-			if slices.Contains(cp.ShownTo, verifierHash) {
+			if slices.Contains(cp.ShownTo, verifierHash) && !c.copyExpired(cp, now) {
 				return i, cp, true
 			}
 		}
 	}
-	i, cp := c.nextCopy()
+	i, cp := c.nextCopy(now)
 	return i, cp, false
+}
+
+// copyExpired reports whether cp, one of c's copies, has expired at
+// now: by its own ValidUntil, or c's for a copy stored without one.
+func (c StoredCredential) copyExpired(cp CredentialCopy, now time.Time) bool {
+	until := cp.ValidUntil
+	if until.IsZero() {
+		until = c.ValidUntil
+	}
+	return !until.IsZero() && !now.Before(until)
 }
 
 // AllCopies are c's copies: Copies, or its one copy when it has none.
@@ -151,22 +161,31 @@ func (c StoredCredential) CopiesLeft() int {
 	return n
 }
 
-// nextCopy is the copy to present next: the first not yet presented,
-// else — every copy has been — the one shown to the fewest Verifiers,
-// which Verifiers may link to earlier presentations: reusing the least
-// shown keeps each set of Verifiers that can link the holder small.
-func (c StoredCredential) nextCopy() (int, CredentialCopy) {
+// nextCopy is the copy to present next at now: the first not yet
+// presented, else (every copy has been) the one shown to the fewest
+// Verifiers, which Verifiers may link to earlier presentations: reusing
+// the least shown keeps each set of Verifiers that can link the holder
+// small. A copy still valid comes before an expired one, which a
+// Verifier would refuse after the holder disclosed its claims.
+func (c StoredCredential) nextCopy(now time.Time) (int, CredentialCopy) {
 	copies := c.AllCopies()
-	least := 0
-	for i, cp := range copies {
-		if !cp.Presented {
-			return i, cp
+	better := func(i, j int) bool { // i before j
+		ei, ej := c.copyExpired(copies[i], now), c.copyExpired(copies[j], now)
+		if ei != ej {
+			return !ei
 		}
-		if len(cp.ShownTo) < len(copies[least].ShownTo) {
-			least = i
+		if copies[i].Presented != copies[j].Presented {
+			return !copies[i].Presented
+		}
+		return len(copies[i].ShownTo) < len(copies[j].ShownTo)
+	}
+	best := 0
+	for i := range copies {
+		if better(i, best) {
+			best = i
 		}
 	}
-	return least, copies[least]
+	return best, copies[best]
 }
 
 // CredentialStore holds the wallet's credentials. They carry personal
