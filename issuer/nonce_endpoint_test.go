@@ -2,6 +2,7 @@ package issuer_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -125,5 +126,61 @@ func TestNonceResult_WriteJSON(t *testing.T) {
 	want := `{"c_nonce":"abc123"}`
 	if got := rec.Body.String(); got != want {
 		t.Errorf("body = %q, want %q", got, want)
+	}
+}
+
+// fakeCredentialDPoPNonces is a CredentialDPoPNonceIssuer handing out
+// nonce, or failing with err.
+type fakeCredentialDPoPNonces struct {
+	nonce string
+	err   error
+}
+
+func (f fakeCredentialDPoPNonces) IssueDPoPNonce(context.Context) (string, error) {
+	return f.nonce, f.err
+}
+
+// TestRequestNonce_CarriesACredentialDPoPNonce: with
+// Dependencies.CredentialDPoPNonces, the Nonce Response carries a DPoP
+// nonce from it in its DPoP-Nonce header (§7.2), for the Wallet to use
+// at the Credential Endpoint; a failing issuer fails the request; none
+// configured, or none given, sends no header.
+func TestRequestNonce_CarriesACredentialDPoPNonce(t *testing.T) {
+	newIssuer := func(dpop issuer.CredentialDPoPNonceIssuer) *issuer.Issuer {
+		cfg := validConfig(t)
+		deps := validDependencies(t)
+		deps.CredentialDPoPNonces = dpop
+		iss, err := issuer.New(cfg, deps)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		return iss
+	}
+	ctx := context.Background()
+
+	result, err := newIssuer(fakeCredentialDPoPNonces{nonce: "dpop-1"}).RequestNonce(ctx)
+	if err != nil || result.DPoPNonce != "dpop-1" {
+		t.Fatalf("RequestNonce = %+v, %v; want DPoPNonce dpop-1", result, err)
+	}
+	rec := httptest.NewRecorder()
+	result.WriteJSON(rec)
+	if got := rec.Header().Get("DPoP-Nonce"); got != "dpop-1" {
+		t.Errorf("DPoP-Nonce header = %q, want dpop-1", got)
+	}
+
+	if _, err := newIssuer(fakeCredentialDPoPNonces{err: errors.New("store down")}).RequestNonce(ctx); err == nil {
+		t.Error("RequestNonce with a failing CredentialDPoPNonces = nil error, want error")
+	}
+
+	for name, dpop := range map[string]issuer.CredentialDPoPNonceIssuer{"none configured": nil, "none given": fakeCredentialDPoPNonces{}} {
+		result, err := newIssuer(dpop).RequestNonce(ctx)
+		if err != nil {
+			t.Fatalf("%s: RequestNonce: %v", name, err)
+		}
+		rec := httptest.NewRecorder()
+		result.WriteJSON(rec)
+		if _, sent := rec.Header()["Dpop-Nonce"]; sent {
+			t.Errorf("%s: a DPoP-Nonce header was sent", name)
+		}
 	}
 }
