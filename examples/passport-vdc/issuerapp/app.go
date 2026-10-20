@@ -346,6 +346,10 @@ func (a *App) buildIssuer() error {
 	}, issuer.Dependencies{
 		Nonces:               oid4vcgostorage.NewNonceStore(),
 		DeferredTransactions: oid4vcgostorage.NewDeferredTransactionStore(),
+		// The Nonce Response carries a DPoP nonce for the Credential
+		// Endpoint (OpenID4VCI §7.2), from the verifier that checks it, so
+		// the wallet's first Credential Request isn't challenged.
+		CredentialDPoPNonces: a.resourceVerifier,
 		// The pre-authorized code grant (preauth.go): tokens signed with
 		// the Authorization Server's keys, for a Wallet Attestation the
 		// Authorization Server authenticates.
