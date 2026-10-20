@@ -95,6 +95,8 @@ func (a *App) handlePreAuthorizedToken(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	clientID := attested.Client.ID().String()
+	// AuthenticateAttestedClient already refused a client_id naming
+	// another client; checked again here, where the token is issued.
 	if id, ok := params["client_id"]; ok && id != clientID {
 		server.NewError(server.ErrorInvalidClient, http.StatusUnauthorized, "client_id doesn't name the attested client").WriteJSON(w)
 		return

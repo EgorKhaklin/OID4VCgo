@@ -206,7 +206,7 @@ func (a *App) buildAuthorizationServer() error {
 		Clients: clients, Transactions: memstore.NewTransactionStore(), Grants: memstore.NewGrantStore(),
 		Replay: memstore.NewReplayStore(), ClientKeys: clientKeys, Keys: keyManager, AccessTokens: accessTokens,
 		Revocation: memstore.NewRevocationStore(), Clock: server.SystemClock{}, Random: rand.Reader,
-		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
+		ClientCertificateTrust: server.NoPKIClientAuthentication{},
 		// Wallet Attestations are trusted by their x5c chain to the
 		// Wallet Provider CA (HAIP 1.0 §4.4.1), not by registered keys,
 		// from a certificate naming the wallet's registered Wallet

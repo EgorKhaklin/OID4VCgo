@@ -270,7 +270,7 @@ func New(opts Options) (env *Env, err error) {
 		Clients: memstore.NewClientRepository([]storage.RegisteredClient{client}), Transactions: memstore.NewTransactionStore(),
 		Grants: memstore.NewGrantStore(), Replay: memstore.NewReplayStore(), ClientKeys: clientKeys, Keys: accessKeys,
 		AccessTokens: e.accessTokens, Revocation: memstore.NewRevocationStore(), Clock: server.SystemClock{}, Random: rand.Reader,
-		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
+		ClientCertificateTrust: server.NoPKIClientAuthentication{},
 		// The Wallet Provider CA may vouch for the Wallet Provider alone.
 		AttesterTrust: server.X5CAttesterChain{
 			Anchors:       server.StaticAttesterAnchors{{Certificate: e.Provider.CA, Issuers: []string{ProviderIssuer}}},

@@ -196,8 +196,8 @@ func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
 //
 //	tr, _ := server.TokenEndpointRequestFromHTTP(r)
 //	params, _ := tr.Parameters()
+//	// Also refuses a client_id parameter naming another client.
 //	c, err := srv.AuthenticateAttestedClient(ctx, tr.AttestedClientAuthentication())
-//	// refuse a client_id parameter naming another client
 //	b, err := srv.VerifyTokenRequestBinding(ctx, c.Client, tr)
 //	// require b.SenderConstrain to be storage.SenderConstrainDPoP
 //	details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
