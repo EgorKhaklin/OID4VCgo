@@ -39,6 +39,13 @@ type Config struct {
 	// — passed directly to fapihttp.New. REQUIRED.
 	Fetch fapihttp.Config
 
+	// Locales are the holder's preferred languages (BCP 47 tags, most
+	// preferred first). FetchCredentialIssuerMetadata sends them as
+	// Accept-Language, as OpenID4VCI 1.0 §12.2.2 recommends, so display
+	// metadata comes in them. A tag that isn't letters, digits and
+	// hyphens is left out. None sends no Accept-Language.
+	Locales []string
+
 	// VerifierTrust decides which Verifiers' Request Objects this
 	// Wallet accepts (OID4VP §5.9.3) — see VerifierTrust's own doc
 	// comment. Required by FetchAuthorizationRequest, so optional for a

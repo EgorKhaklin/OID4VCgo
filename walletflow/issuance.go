@@ -998,6 +998,12 @@ func (s *Issuance) proofs(ctx context.Context, plan proofPlan) ([]Key, wallet.Cr
 			return nil, wallet.CredentialRequest{}, fmt.Errorf("walletflow: nonce: %w", err)
 		}
 		nonce = n.CNonce
+		// §7.2: a DPoP nonce the Nonce Response carries is for the
+		// Credential Request, which then needn't be challenged first.
+		if user, ok := s.resource.(wallet.DPoPNonceUser); ok && n.DPoPNonce != "" {
+			endpoint := s.metadata.CredentialEndpoint.URL()
+			user.UseDPoPNonce(ctx, &endpoint, n.DPoPNonce)
+		}
 	}
 	switch plan {
 	case proofAttestation:

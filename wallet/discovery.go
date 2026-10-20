@@ -41,6 +41,9 @@ func (w *Wallet) FetchCredentialIssuerMetadata(ctx context.Context, issuerURL st
 	if w.cfg.IssuerMetadataRoots != nil {
 		req.Accept = acceptSignedMetadata
 	}
+	// §12.2.2: "The Wallet is RECOMMENDED to send an Accept-Language
+	// Header".
+	req.AcceptLanguage = acceptLanguage(w.cfg.Locales)
 	res, err := w.fetcher.Fetch(ctx, req)
 	if err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: %w", err)
@@ -195,4 +198,40 @@ func wellKnownURL(issuerURL, suffix string, stripTrailingSlash bool) (*url.URL, 
 	u.Path = "/.well-known/" + suffix + path
 	u.RawPath = ""
 	return u, nil
+}
+
+// acceptLanguage is an Accept-Language value (RFC 9110 §12.5.4) for
+// locales, most preferred first: each tag in turn, weighted down from
+// 1 by tenths to no less than 0.1. A tag that isn't letters, digits and
+// hyphens, or a repeat, is left out.
+func acceptLanguage(locales []string) string {
+	var tags []string
+	for _, tag := range locales {
+		if isLanguageTag(tag) && !slices.Contains(tags, tag) {
+			tags = append(tags, tag)
+		}
+	}
+	parts := make([]string, len(tags))
+	for i, tag := range tags {
+		if i == 0 {
+			parts[i] = tag
+			continue
+		}
+		parts[i] = fmt.Sprintf("%s;q=0.%d", tag, max(10-i, 1))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// isLanguageTag reports whether tag is made only of BCP 47's characters
+// (letters, digits and hyphens), at most 35 of them.
+func isLanguageTag(tag string) bool {
+	if tag == "" || len(tag) > 35 {
+		return false
+	}
+	for _, c := range tag {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+	return true
 }
