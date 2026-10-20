@@ -10,9 +10,11 @@ the app's job is to:
 4. pass whole messages to and from this package.
 
 This file covers BLE GATT and NFC engagement. Go supports QR, static
-and negotiated handover for BLE and NFC-only carriers. Android's
-native adapters implement Type 4/TNEP and classic NFC message transfer;
-see the [Android guide](../mobile/android/docs/PresentingInPerson.md).
+and negotiated handover for BLE and NFC-only carriers. Over NFC, the
+byte protocols — the Type 4 Tag, TNEP, and classic NFC message transfer
+— are Go too, in [`nfcapdu`](nfcapdu): the app only moves APDUs (see
+[NFC APDUs](#nfc-apdus) and the
+[Android guide](../mobile/android/docs/PresentingInPerson.md)).
 BLE L2CAP is not supported.
 
 ## NFC engagement messages
@@ -45,8 +47,8 @@ available through `ParseNFCDataHandover`. For TNEP NFC-only, use
 `NewNFCNegotiatedDataDeviceSession`,
 `NewNFCHandoverRequestWithNFCData`, and `NewNFCNegotiatedDataReaderSession`.
 The reader checks the selected limits against its original offer.
-Native code wraps complete encrypted messages in DO53 and
-implements ENVELOPE/GET RESPONSE. Unit tests include the exact Annex D
+`nfcapdu` wraps complete encrypted messages in DO53 and implements
+ENVELOPE/GET RESPONSE. Unit tests include the exact Annex D
 negotiated transcript and credential verification for all three paths;
 real-device interoperability and specification review remain required
 before claiming conformance.
@@ -216,6 +218,26 @@ onMessage { msg ->            // a reassembled Client2Server message
   }
 }
 ```
+
+## NFC APDUs
+
+Package `nfcapdu` does every NFC exchange byte by byte, with no I/O:
+
+- **Holder.** `nfcapdu.NewHolder` serves the handover as a Type 4 Tag:
+  the static `HandoverSelect()`, or TNEP with `HandleHandoverRequest`
+  as `Negotiate`; with `Data` set, it also serves NFC data retrieval.
+  The app's host card emulation service passes each command APDU to
+  `Process` and sends back `Step.Response`. `Step.HandoverRead` is the
+  moment to commit NFC (for BLE retrieval); `Step.Message` is a session
+  message, answered later with `Respond` once the user consents. On
+  field loss call `Deactivate`, and end the presentation if it reports
+  `Cancel`.
+- **Reader.** `nfcapdu.ReadHandover` and `nfcapdu.Transact` return an
+  `Exchange`: send `Command()` over the tag connection after waiting
+  `Wait()`, pass the response to `Next`, and repeat until `Command()`
+  is nil; `Result()` is then the Hs, or the mdoc's answer. TNEP's
+  waits come back as `Wait()` so the app can cancel them; `Close` an
+  abandoned `Exchange`.
 
 ## Combined QR and NFC offers
 

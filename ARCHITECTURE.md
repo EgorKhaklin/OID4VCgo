@@ -1030,9 +1030,17 @@ changes whether *every* bullet below is `(done)`.
   sharing `internal/readerauth` with `mdocdcapi`. A request the holder
   can't parse or answer gets an in-session `ErrorResponse` (status 11
   or 12). The transport — BLE GATT, and chunking — stays in the mobile
-  app, as does NFC (Type 4 tag emulation or reading, TNEP, and the
-  ENVELOPE/GET RESPONSE wrapping); see `proximity/README.md`. Not yet:
+  app, as does the NFC radio; see `proximity/README.md`. Not yet:
   BLE L2CAP, and more than one request per session.
+- **`proximity/nfcapdu`** (done) — NFC's byte protocols for
+  `proximity`, with no I/O: ISO/IEC 7816-4 command APDUs, the Type 4
+  Tag the mdoc emulates (`Holder`, which also serves TNEP negotiated
+  handover and NFC data retrieval's DO53 ENVELOPE / GET RESPONSE
+  chaining), and the reader's side as an `Exchange` that yields one
+  command at a time and returns TNEP's waits rather than sleeping, so
+  native code keeps cancellation. The native app passes it APDUs.
+  Fuzzed at every parser (commands, DO53, TNEP records, the holder
+  over command sequences, and the reader over fuzzed responses).
 - **`verifier`** (done, `dc+sd-jwt`+`mso_mdoc`) — the OID4VP Verifier role.
   `BuildAuthorizationRequest` builds and signs a HAIP-§5-profiled
   redirect-flow Authorization Request: a JAR Request Object
