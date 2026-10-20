@@ -17,11 +17,16 @@ found, and the questions still open; update it as phases land.
 ## Goal
 
 NFC engagement: the Go core/mobile facade implement static
-and negotiated Hs/Hr messages for BLE and classic NFC-only carriers. Android
-adds Type 4 read/write staging, TNEP, an app-owned HCE session, IsoDep
-reader, classic DO53/ENVELOPE/GET RESPONSE transports, and demo options.
-Host APDU tests include repeated reads, partial writes, 180 KB responses,
-consent delay and field loss; Go tests verify credentials and Annex D.
+and negotiated Hs/Hr messages for BLE and classic NFC-only carriers, and
+(`proximity/nfcapdu`, through `NFCHolder` and `NFCExchange`) every APDU
+exchanged over NFC: the Type 4 Tag with its read/write staging, TNEP,
+and classic DO53/ENVELOPE/GET RESPONSE transfer, for both roles. Android
+adds the app-owned HCE session, the IsoDep reader, QR/NFC arbitration and
+demo options, and passes Go one APDU at a time. Go tests cover repeated
+reads, partial writes, 180 KB responses, consent delay, field loss and
+every refusal's status word, fuzz each parser, and verify credentials and
+Annex D; Kotlin host tests cover arbitration, the handover gate,
+transports and cancellation.
 Physical interop and normative specification review remain pending.
 See `ABI.md`'s NFC additions and `../proximity/README.md`.
 

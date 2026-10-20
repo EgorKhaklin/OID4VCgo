@@ -529,8 +529,8 @@ signs during `Respond`. A malformed request is `protocol`.
 ### NFC engagement additions
 
 The following calls are additive within ABI 12. They provide Go
-handover messages for native Type 4/TNEP integration; they do not
-register an Android NFC service or perform NFC I/O. They have not yet
+handover messages, and (in the next table) the APDU protocols carrying
+them; they do not register an Android NFC service or perform NFC I/O. They have not yet
 been published in a release.
 
 | Call | Contract |
@@ -555,13 +555,34 @@ Reader signing, issuer roots, per-document trust policy and clock skew
 remain those of `NewProximityReader`. Consent and response methods are
 the existing presentation methods. Malformed handover input is
 `invalid_input`; calls after the wallet presentation has progressed are
-`wrong_step`. The platform owns message staging, TNEP, lifecycle and
-radio cleanup. For NFC-only holders, `ble_modes` is an empty array,
+`wrong_step`. The platform owns lifecycle and radio cleanup; Go does
+message staging and TNEP. For NFC-only holders, `ble_modes` is an empty array,
 `service_uuid` and `ble_mode` are empty, and no BLE radio is needed.
 Reader `Engagement`'s BLE fields are meaningful only for BLE sessions;
 the native adapter retains the selected NFC data parameters separately.
 Whole encrypted messages still go through `HandleMessage`/`Request`/
-`Respond`; native code adds/removes DO53 and implements APDU chaining.
+`Respond`; Go's `NFCHolder` and `NFCExchange` add and remove DO53 and
+chain APDUs.
+
+#### NFC APDUs (additive, ABI 12)
+
+Every byte exchanged over NFC is built and parsed in Go
+(`proximity/nfcapdu`). Native code moves APDUs and keeps threads, timers
+and cancellation.
+
+| Call | Contract |
+|---|---|
+| `ProximityPresentation.NFCHolder(negotiated, nfcData)` | The mdoc's NFC tag for this presentation: static (`HandoverSelect`) or TNEP (`HandleHandoverRequest`) handover, and NFC data retrieval when `nfcData`; limits must fit short APDUs. `invalid_input` otherwise |
+| `NFCHolder.Process(apdu)` | One command APDU to an `NFCStep`: `Response`; `HandoverRead` (commit NFC-to-BLE now); `DataSelected`; `HasMessage`/`Message` (a session message: `Response` is nil and the answer goes through `Respond`); `Delivered` (the reader read the whole answer) |
+| `NFCHolder.Respond(message)` | Answer the pending message: the `NFCStep` whose `Response` is the final ENVELOPE's response (GET RESPONSE fetches the rest). `wrong_step` with no message pending |
+| `NFCHolder.RefuseMessage()` | Drop a message the session couldn't take; returns the `6985` response |
+| `NFCHolder.Deactivate(handoverCommitted, qrSelected)` | Field loss: `NFCDeactivation.Cancel` (a negotiated Hs was answered but not read: end the presentation) and `DataClosed` (NFC data retrieval ended) |
+| `NFCHolder.Close()` | End NFC data retrieval |
+| `ClassifyNFCCommand(apdu)` | `NFCCommandOther`, `NFCCommandSelectNDEF`, `NFCCommandSelectData`, `NFCCommandSelectDataNoFCI` or `NFCCommandSelectOther`, for QR/NFC arbitration |
+| `NewNFCHandoverRead(maxTransceive, hr)` | Reader: an `NFCExchange` reading the Hs, negotiating with `hr` when the tag offers TNEP (refused when `hr` is nil). `Negotiated()` afterwards |
+| `NewNFCTransact(maxTransceive, maxCommand, maxResponse, message)` | Reader: an `NFCExchange` sending one session message to the NFC data application and reading the answer |
+| `NFCExchange.Done()`, `Command()`, `WaitMillis()`, `Next(response)`, `Result()`, `Close()` | Until `Done`: wait `WaitMillis` (TNEP's waiting time; native code sleeps, so cancellation can interrupt it), send `Command`, pass the response to `Next`. Then `Result` is the Hs or the answer (`invalid_input` on a protocol failure). `Close` an abandoned exchange |
+| `NFCSelectDataApplication()`, `CheckNFCDataApplicationSelected(response)` | Reader: select the NFC data application and check its response |
 
 ### QR and BLE presentation
 

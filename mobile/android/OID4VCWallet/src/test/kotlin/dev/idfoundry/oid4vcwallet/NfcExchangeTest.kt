@@ -14,44 +14,50 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NfcExchangeTest {
-    @Test fun successfulHandoverRetainsTagForDataSelection(): Unit = runBlocking {
-        val closed = AtomicBoolean(false)
-        val handover = NfcTnep.record("Hs", byteArrayOf(1, 2, 3))
-        val tag = NfcType4(handover) {}
-        assertArrayEquals(handover, runNfcExchange({ closed.set(true) }) {
-            NfcType4Reader(tag::process, 258).read()
-        })
-        val data = NfcDataReaderTransport({
-            assertFalse("handover closed the tag before data selection", closed.get())
-            nfcResponse(0x9000)
-        }, { closed.set(true) }, 258, NfcDataParametersJSON(255, 256))
-        data.connect()
-        assertFalse(closed.get())
-        data.close()
-        assertTrue(closed.get())
+    /** A sequence of [commands], each awaiting one response, after [waitMillis] each. */
+    private class Sequence(private val commands: List<ByteArray>, private val waitMillis: Long = 0) : NfcCommandSequence {
+        private var index = 0
+        var closed = false
+        override fun done() = index == commands.size
+        override fun waitMillis() = waitMillis
+        override fun command() = commands[index]
+        override fun next(response: ByteArray) { index++ }
+        override fun result() = byteArrayOf(9)
+        override fun close() { closed = true }
     }
 
-    @Test fun cancellationInterruptsNegotiatedHandoverWait(): Unit = runBlocking {
-        val parameters = NfcTnep.payload(NfcTnep.parameters, "Tp")!!
-        parameters[parameters.size - 4] = 63 // A valid TNEP wait of about 27 seconds.
-        val selected = CountDownLatch(1)
+    @Test fun successfulExchangeRetainsTheTag(): Unit = runBlocking {
+        val closed = AtomicBoolean(false)
+        val sequence = Sequence(listOf(byteArrayOf(1), byteArrayOf(2)))
+        assertArrayEquals(byteArrayOf(9), runNfcExchange({ closed.set(true) }) { sequence.drive { nfcResponse(0x9000) } })
+        assertFalse("a successful handover closed the tag before data selection", closed.get())
+        assertTrue("the Go exchange was left open", sequence.closed)
+    }
+
+    @Test fun cancellationInterruptsTheTnepWait(): Unit = runBlocking {
+        val waiting = CountDownLatch(1)
         val finished = CountDownLatch(1)
         val closed = AtomicBoolean(false)
         val thread = AtomicReference<Thread>()
-        val tag = NfcType4(NfcTnep.record("Tp", parameters), {
-            selected.countDown()
-            NfcTnep.success
-        }) {}
+        // TNEP's longest wait (WT 63) is about 27 seconds.
+        val sequence = object : NfcCommandSequence {
+            override fun done() = false
+            override fun waitMillis(): Long { waiting.countDown(); return 27_000 }
+            override fun command() = byteArrayOf(1)
+            override fun next(response: ByteArray) {}
+            override fun result() = byteArrayOf()
+            override fun close() {}
+        }
         val job = launch(Dispatchers.Default) {
             runNfcExchange({ closed.set(true) }) {
                 thread.set(Thread.currentThread())
-                try { NfcType4Reader(tag::process, 258).read(byteArrayOf(1)) }
+                try { sequence.drive { nfcResponse(0x9000) } }
                 finally { finished.countDown() }
             }
         }
         var stopped = false
         try {
-            assertTrue("TNEP selection did not start", selected.await(5, TimeUnit.SECONDS))
+            assertTrue("the TNEP wait did not start", waiting.await(5, TimeUnit.SECONDS))
             job.cancel()
             stopped = finished.await(1, TimeUnit.SECONDS)
         } finally {
@@ -61,6 +67,12 @@ class NfcExchangeTest {
         }
         assertTrue("cancelled TNEP reader continued sleeping", stopped)
         assertTrue(closed.get())
+    }
+
+    @Test fun aFailedExchangeClosesTheSequence() {
+        val sequence = Sequence(listOf(byteArrayOf(1)))
+        assertThrows(java.io.IOException::class.java) { sequence.drive { throw java.io.IOException("field lost") } }
+        assertTrue(sequence.closed)
     }
 
     @Test fun timeoutClosesNativeHandleAndWaitsForWorker(): Unit = runBlocking {

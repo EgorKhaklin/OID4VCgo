@@ -1,56 +1,48 @@
 package dev.idfoundry.oid4vcwallet
 
-/** Application-owned APDU state, shared by HCE and host tests without Android or Go handles. */
+/**
+ * Application-owned NFC engagement state: [holder] (Go) answers every APDU;
+ * this adds QR/NFC arbitration, the handover gate and NFC data's transport.
+ */
 internal class NfcEngagement(
-    initialMessage: ByteArray,
-    negotiate: ((ByteArray) -> ByteArray)?,
+    private val holder: NfcHolderCore,
     private val dataTransport: NfcDataHolderTransport?,
     private val combined: CombinedEngagementArbiter?,
     private val cancel: () -> Unit,
 ) {
     val gate = NfcHandoverGate()
-    private val tnep = negotiate?.let { NfcTnepHolder(it) }
-    private val type4 = NfcType4(initialMessage, tnep?.let { it::transact }) {
+
+    init { dataTransport?.attach(holder) }
+
+    @Synchronized fun process(command: ByteArray, respond: (ByteArray) -> Unit = {}): ByteArray? {
+        val kind = holder.classify(command)
+        if (combined?.acceptNfc(kind, gate.isComplete) == false) return nfcResponse(0x6985)
+        if (kind == NfcCommandKind.SELECT_NDEF) ProximityDiagnostics.event("NFC Type 4 SELECT accepted (discovery)")
+        val step = holder.process(command)
         // NFC data commits on its own AID SELECT. BLE commits only after reading Hs.
-        val handoverRead = tnep == null || tnep.handoverReady
-        if (handoverRead && (dataTransport != null || combined == null || combined.select(true))) {
+        if (step.handoverRead && (dataTransport != null || combined == null || combined.select(true))) {
             gate.complete()
             ProximityDiagnostics.event("NFC handover fully read; gate complete")
         }
-    }
-    private var dataSelected = false
-
-    @Synchronized fun process(command: ByteArray, respond: (ByteArray) -> Unit = {}): ByteArray? {
-        val c = NfcCommand.parse(command)
-        if (combined?.acceptNfc(c, gate.isComplete) == false) return nfcResponse(0x6985)
-        if (c?.cla == 0 && c.ins == 0xa4 && c.p1 == 4 && (c.p2 == 0 || c.p2 == 0x0c)) {
-            dataSelected = dataTransport != null && c.data.contentEquals(NfcData.aid)
-            if (c.data.contentEquals(NfcType4.AID)) ProximityDiagnostics.event("NFC Type 4 SELECT accepted (discovery)")
-        }
-        val response = if (dataSelected) dataTransport!!.process(command, respond) else type4.process(command)
+        if (step.dataSelected) dataTransport?.selected()
+        if (step.delivered) dataTransport?.delivered()
+        // A session message's response waits for the session (null), unless it's refused.
+        val message = step.message
+        val response = if (message != null) checkNotNull(dataTransport).message(message, respond) else step.response
         // QR may finish while an APDU (including negotiation) is being processed.
-        return if (combined?.acceptNfc(null, gate.isComplete) == false) nfcResponse(0x6985) else response
+        return if (combined?.acceptNfc(NfcCommandKind.OTHER, gate.isComplete) == false) nfcResponse(0x6985) else response
     }
 
     @Synchronized fun deactivate() {
-        if (combined?.state?.value == SelectedEngagement.QR) {
-            type4.deactivate()
-            dataSelected = false
-            return // Losing NFC field loss must not cancel the winning QR session.
+        val qrSelected = combined?.state?.value == SelectedEngagement.QR
+        val d = holder.deactivate(gate.isComplete, qrSelected)
+        if (qrSelected) return // Losing NFC field loss must not cancel the winning QR session.
+        if (d.cancel) {
+            ProximityDiagnostics.event("NFC field lost after negotiated Hs creation; cancelling frozen handover")
+            cancel()
         }
-        if (tnep != null && !gate.isComplete) {
-            if (tnep.handoverReady) {
-                ProximityDiagnostics.event("NFC field lost after negotiated Hs creation; cancelling frozen handover")
-                cancel()
-                type4.deactivate()
-            } else {
-                tnep.resetBeforeSelection()
-                type4.deactivate(NfcTnep.parameters)
-            }
-        } else type4.deactivate()
-        if (dataSelected) dataTransport?.deactivate()
-        dataSelected = false
-        if (!gate.isComplete && (tnep == null || !tnep.handoverReady)) {
+        if (d.dataClosed) dataTransport?.lost()
+        if (!gate.isComplete && !d.cancel) {
             ProximityDiagnostics.event("NFC attempt reset before handover; QR offer retained if available")
         }
     }
