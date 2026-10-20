@@ -995,7 +995,7 @@ changes whether *every* bullet below is `(done)`.
   `BuildSessionTranscriptBytes` was held to. Wired into both
   `verifier` (`buildMdocSessionTranscriptBytes`) and `wallet`
   (identically named) — see their own bullets below.
-- **`proximity`** (done, BLE) — ISO/IEC 18013-5 in-person
+- **`proximity`** (done, BLE and NFC) — ISO/IEC 18013-5 in-person
   presentation, both roles, as bytes in and bytes out: `DeviceSession`
   (mdoc) and `ReaderSession` (reader). QR device engagement with one BLE
   retrieval method (mdoc peripheral server or central client mode), the
@@ -1016,15 +1016,23 @@ changes whether *every* bullet below is `(done)`.
   declined or unmatched request is a status-20 termination, not
   `documentErrors`, following Multipaz. Tests reproduce ISO/IEC
   18013-5 Annex D byte for byte (hex from Multipaz's `TestVectors.kt`).
-  Annex D uses NFC engagement, so those tests drive the transcript's
-  internal Handover parameter, though only QR engagement is exposed.
+  NFC engagement (`NewNFCDeviceSession`/`NewNFCReaderSession` for
+  static handover, `NewNFCNegotiatedDeviceSession`/
+  `NewNFCNegotiatedReaderSession` for negotiated handover over TNEP)
+  puts the exact Handover Select and Request bytes in the transcript;
+  the Annex D tests check the negotiated transcript. NFC data retrieval
+  (`NewNFCDataDeviceSession`/`NewNFCDataReaderSession`, and their
+  negotiated forms) carries the session over NFC instead of BLE.
+  `CombinedDeviceSession` offers QR and NFC at once as independent
+  sessions; native code keeps the one the reader connects with.
   Reader authentication (§9.1.4): `WithReaderAuth` signs each request,
   and `VerifyReaderAuth` checks it against the holder's `ReaderTrust`,
   sharing `internal/readerauth` with `mdocdcapi`. A request the holder
   can't parse or answer gets an in-session `ErrorResponse` (status 11
   or 12). The transport — BLE GATT, and chunking — stays in the mobile
-  app; see `proximity/README.md`. Not yet: NFC engagement/handover, BLE
-  L2CAP, and more than one request per session.
+  app, as does NFC (Type 4 tag emulation or reading, TNEP, and the
+  ENVELOPE/GET RESPONSE wrapping); see `proximity/README.md`. Not yet:
+  BLE L2CAP, and more than one request per session.
 - **`verifier`** (done, `dc+sd-jwt`+`mso_mdoc`) — the OID4VP Verifier role.
   `BuildAuthorizationRequest` builds and signs a HAIP-§5-profiled
   redirect-flow Authorization Request: a JAR Request Object

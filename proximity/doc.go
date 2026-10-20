@@ -1,10 +1,12 @@
 // Package proximity implements ISO/IEC 18013-5 in-person (proximity)
-// presentation over BLE, both roles, as bytes in and bytes out: the
-// mdoc (holder) side is DeviceSession, the mdoc reader (verifier) side
-// is ReaderSession. The radio transport — BLE GATT, and message
-// chunking over it — stays in the mobile app; it only carries the
-// messages this package builds and reads. See README.md for how a
-// Kotlin or Swift app drives it.
+// presentation, both roles, as bytes in and bytes out: the mdoc
+// (holder) side is DeviceSession, the mdoc reader (verifier) side is
+// ReaderSession. Device engagement is by QR code or NFC (static or
+// negotiated handover), and data retrieval over BLE or NFC. The radio
+// transport — BLE GATT, NFC, and message chunking over them — stays in
+// the mobile app; it only carries the messages this package builds and
+// reads. See README.md for how a Kotlin or Swift app drives it.
+//
 // CombinedDeviceSession offers independent QR and NFC DeviceSessions. Native
 // code selects one at connection/application selection, withdraws the loser,
 // and drives only the selected session. QR's null handover and NFC's exact
