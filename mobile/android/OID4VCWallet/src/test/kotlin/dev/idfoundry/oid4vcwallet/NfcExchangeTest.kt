@@ -44,9 +44,13 @@ class NfcExchangeTest {
             override fun done() = false
             override fun waitMillis(): Long { waiting.countDown(); return 27_000 }
             override fun command() = byteArrayOf(1)
-            override fun next(response: ByteArray) {}
+            override fun next(response: ByteArray) {
+                // The wait is cancelled before any response.
+            }
             override fun result() = byteArrayOf()
-            override fun close() {}
+            override fun close() {
+                // Nothing to release.
+            }
         }
         val job = launch(Dispatchers.Default) {
             runNfcExchange({ closed.set(true) }) {

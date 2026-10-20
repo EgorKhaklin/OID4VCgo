@@ -17,7 +17,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** A codec whose commands are opaque: the reader transport's plumbing is under test, not APDUs (Go's). */
 private object OpaqueCodec : NfcDataCodec {
     override fun selectCommand(): ByteArray = byteArrayOf(1)
-    override fun checkSelected(response: ByteArray) {}
+    override fun checkSelected(response: ByteArray) {
+        // Any response selects: the codec is opaque here.
+    }
     override fun transact(maxTransceive: Int, parameters: NfcDataParametersJSON, message: ByteArray): NfcCommandSequence =
         object : NfcCommandSequence {
             private var answer: ByteArray? = null
@@ -26,7 +28,9 @@ private object OpaqueCodec : NfcDataCodec {
             override fun command() = message
             override fun next(response: ByteArray) { answer = response }
             override fun result() = checkNotNull(answer)
-            override fun close() {}
+            override fun close() {
+                // Nothing to release.
+            }
         }
 }
 
