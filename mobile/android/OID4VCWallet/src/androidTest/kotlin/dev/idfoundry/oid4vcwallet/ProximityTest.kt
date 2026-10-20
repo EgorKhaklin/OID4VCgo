@@ -8,6 +8,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -336,9 +337,12 @@ class ProximityTest {
             assertEquals("Doe", verified.result.claims[NAMESPACE]!!.jsonObject["family_name"]!!.jsonPrimitive.content)
             // NFC has no State 0x02: the reader ends with session termination, so a holder
             // keeping the session open for another request doesn't see only a lost field.
-            // The last command is a short ENVELOPE: header, Lc, DO53 (tag, length, message), Le.
-            val last = commands.last()
-            assertEquals(0xc3, last[1].toInt() and 255)
+            // The reader sends it after Verified, so wait for it: a short ENVELOPE (header, Lc,
+            // DO53 (tag, length, message), Le) after the response's last GET RESPONSE.
+            val last = withTimeout(10.seconds) {
+                while ((commands.last()[1].toInt() and 255) != 0xc3) delay(20)
+                commands.last()
+            }
             val do53 = last.copyOfRange(5, 5 + (last[4].toInt() and 255))
             assertEquals(0x53, do53[0].toInt())
             assertEquals("a16673746174757314", do53.copyOfRange(2, do53.size).joinToString("") { "%02x".format(it) })
