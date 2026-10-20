@@ -10,6 +10,17 @@ final class OID4VCWalletTests: XCTestCase {
         XCTAssertTrue(OID4VC.isTestBuild, "the tests run on the mobiletest build")
     }
 
+    /// A misspelled key is refused, not dropped before the wallet could
+    /// refuse it; the role EKUs round-trip.
+    func testConfigurationDecodingIsStrict() throws {
+        let good = #"{"issuer_roots":"","issuer_require_eku":"1.2.3","issuer_metadata_require_eku":"1.2.4"}"#
+        let config = try JSONDecoder().decode(WalletConfiguration.self, from: Data(good.utf8))
+        XCTAssertEqual(config.issuerRequireEKU, "1.2.3")
+        XCTAssertEqual(config.issuerMetadataRequireEKU, "1.2.4")
+        let typo = #"{"require_trusted_mdoc_readr":true}"#
+        XCTAssertThrowsError(try JSONDecoder().decode(WalletConfiguration.self, from: Data(typo.utf8)))
+    }
+
     func testParseRequestLink() async throws {
         let link = try await OID4VC.parseRequestLink(
             "openid4vp://?client_id=x509_hash%3Aabc&request_uri=https%3A%2F%2Fverifier.example%2Fr%2F1")

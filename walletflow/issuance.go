@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"maps"
 	"net/url"
 	"reflect"
@@ -385,7 +386,7 @@ func (s *Issuance) BeginAuthorizationWith(ctx context.Context, opts Authorizatio
 	if err := s.newClient(ctx, plan.AuthorizationServer, true); err != nil {
 		return "", err
 	}
-	authReq, err := wallet.BuildAuthorizationRequest(s.offer, plan.Scopes)
+	authReq, err := wallet.BuildAuthorizationRequestForPlan(s.offer, plan)
 	if err != nil {
 		return "", fmt.Errorf("walletflow: %w", err)
 	}
@@ -746,6 +747,7 @@ func credentialIdentifiers(raw json.RawMessage) (map[string][]string, error) {
 // Wallet MUST ignore them).
 func identifiersByConfiguration(details []oid4vci.AuthorizationDetail) map[string][]string {
 	var ids map[string][]string
+	total := 0
 	for _, d := range details {
 		if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential || len(d.CredentialIdentifiers) == 0 {
 			continue
@@ -753,10 +755,33 @@ func identifiersByConfiguration(details []oid4vci.AuthorizationDetail) map[strin
 		if ids == nil {
 			ids = map[string][]string{}
 		}
-		ids[d.CredentialConfigurationID] = append(ids[d.CredentialConfigurationID], d.CredentialIdentifiers...)
+		for _, id := range d.CredentialIdentifiers {
+			// Each is a Credential Request, with its own nonce, holder
+			// keys and key attestation: an offer, which anyone can make,
+			// mustn't make the wallet generate keys without bound.
+			if id == "" || slices.Contains(ids[d.CredentialConfigurationID], id) ||
+				len(ids[d.CredentialConfigurationID]) >= maxIdentifiersPerConfiguration || total >= maxIdentifiers {
+				continue
+			}
+			ids[d.CredentialConfigurationID] = append(ids[d.CredentialConfigurationID], id)
+			total++
+		}
 	}
 	return ids
 }
+
+// maxIdentifiersPerConfiguration and maxIdentifiers bound the
+// credential_identifiers an issuance requests: a household's datasets
+// fit, a flood doesn't. The rest are not requested.
+const (
+	maxIdentifiersPerConfiguration = 16
+	maxIdentifiers                 = 32
+)
+
+// maxConsecutiveRefusals is how many Credential Requests in a row an
+// issuer may refuse for good before RequestCredentials stops asking:
+// each costs holder keys and a key attestation.
+const maxConsecutiveRefusals = 3
 
 type clientClock func() time.Time
 
@@ -785,15 +810,26 @@ func (s *Issuance) RequestCredentials(ctx context.Context) (IssuanceResult, erro
 	if s.handled == nil {
 		s.handled = map[string]bool{}
 	}
+	refusals := 0
 	for _, u := range s.requestUnits() {
 		if s.handled[u.key()] {
 			continue
 		}
+		if refusals >= maxConsecutiveRefusals {
+			s.handled[u.key()] = true
+			s.obtained.Failed = append(s.obtained.Failed, FailedCredential{ConfigurationID: u.configID, CredentialIdentifier: u.identifier,
+				Err: fmt.Errorf("walletflow: credential %q: not requested: the issuer refused %d requests in a row", u.configID, refusals)})
+			continue
+		}
 		stored, deferred, err := s.request(ctx, u.configID, u.identifier, requestEnc, responseEnc)
 		if err != nil && permanent(err) {
+			refusals++
 			s.handled[u.key()] = true
 			s.obtained.Failed = append(s.obtained.Failed, FailedCredential{ConfigurationID: u.configID, CredentialIdentifier: u.identifier, Err: err})
 			continue
+		}
+		if err == nil {
+			refusals = 0
 		}
 		if err != nil {
 			return s.obtained, err
@@ -857,7 +893,9 @@ func permanent(err error) bool {
 		return true
 	}
 	var protocol *wallet.Error
-	if !errors.As(err, &protocol) || protocol.HTTPStatus < 400 || protocol.HTTPStatus >= 500 || protocol.HTTPStatus == 429 {
+	// A 401 is the access token's or DPoP proof's (RFC 6750 §3, RFC 9449
+	// §7.1), which a retry renews, whatever error it names.
+	if !errors.As(err, &protocol) || protocol.HTTPStatus < 400 || protocol.HTTPStatus >= 500 || protocol.HTTPStatus == 429 || protocol.HTTPStatus == 401 {
 		return false
 	}
 	switch protocol.Code {
@@ -960,10 +998,19 @@ func (s *Issuance) proofs(ctx context.Context, plan proofPlan) ([]Key, wallet.Cr
 			return nil, wallet.CredentialRequest{}, fmt.Errorf("walletflow: nonce: %w", err)
 		}
 		nonce = n.CNonce
+		// §7.2: a DPoP nonce the Nonce Response carries is for the
+		// Credential Request, which then needn't be challenged first.
+		if user, ok := s.resource.(wallet.DPoPNonceUser); ok && n.DPoPNonce != "" {
+			endpoint := s.metadata.CredentialEndpoint.URL()
+			user.UseDPoPNonce(ctx, &endpoint, n.DPoPNonce)
+		}
 	}
-	if plan == proofAttestation {
+	switch plan {
+	case proofAttestation:
 		holders, attestation, err := s.attestedHolders(ctx, nonce)
 		return holders, wallet.CredentialRequest{Attestation: attestation}, err
+	case proofJWTKeyAttestation:
+		return s.jwtProofsWithKeyAttestation(ctx, nonce)
 	}
 	holders := make([]Key, 0, s.batchSize())
 	req := wallet.CredentialRequest{CredentialIssuer: s.offer.CredentialIssuer, Nonce: nonce}
@@ -1015,6 +1062,28 @@ func (s *Issuance) attestedHolders(ctx context.Context, nonce string) ([]Key, st
 		return nil, "", fmt.Errorf("walletflow: key attestation: %w", err)
 	}
 	return holders, keyAttestation, nil
+}
+
+// jwtProofsWithKeyAttestation creates one holder key per copy to
+// request, has the Wallet Provider attest them together for nonce, and
+// proves possession of each with a jwt proof carrying that attestation
+// in its key_attestation header (Appendix D.1, F.1). A key created
+// before a failure is deleted.
+func (s *Issuance) jwtProofsWithKeyAttestation(ctx context.Context, nonce string) ([]Key, wallet.CredentialRequest, error) {
+	holders, keyAttestation, err := s.attestedHolders(ctx, nonce)
+	if err != nil {
+		return nil, wallet.CredentialRequest{}, err
+	}
+	req := wallet.CredentialRequest{CredentialIssuer: s.offer.CredentialIssuer, Nonce: nonce}
+	for _, holder := range holders {
+		proof, err := s.w.core.GenerateProofWithKeyAttestation(holder, s.offer.CredentialIssuer, nonce, keyAttestation)
+		if err != nil {
+			s.w.deleteKeys(context.WithoutCancel(ctx), holders)
+			return nil, wallet.CredentialRequest{}, fmt.Errorf("walletflow: proof: %w", err)
+		}
+		req.JWTProofs = append(req.JWTProofs, proof)
+	}
+	return holders, req, nil
 }
 
 // deferred keeps a credential the issuer deferred, with holders, to poll.
@@ -1134,7 +1203,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 			// revoked with them.
 			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential's copies differ")
 			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: copy %d's status differs from copy 0's", c.configID, errInvalidCredential, i)
-		} else if !sameHolderClaims(first.Claims, verified.Claims) {
+		} else if !sameHolderClaims(first.Claims, verified.Claims) || !samePlaintext(c.result.Credentials[0].Credential, ic.Credential) {
 			// The holder sees copy 0's claims, and DCQL chooses per copy:
 			// copies that differ would present what the holder didn't see.
 			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential's copies differ")
@@ -1289,4 +1358,61 @@ func earliestExpiry(copies []CredentialCopy) time.Time {
 		}
 	}
 	return earliest
+}
+
+// samePlaintext reports whether two copies of an SD-JWT VC leave the
+// same claims plaintext, those that may differ per copy aside: the
+// preview the holder is shown is built from one copy, so another that
+// always discloses a claim the first made selectively disclosable
+// would send what the holder didn't see. Decoys may differ, so they
+// aren't compared; another format has no plaintext to compare.
+func samePlaintext(a, b string) bool {
+	pa, okA := plaintextPaths(a)
+	pb, okB := plaintextPaths(b)
+	return okA == okB && slices.Equal(pa, pb)
+}
+
+// plaintextPaths are credential's plaintext claim paths, sorted, as
+// "/"-joined keys ("[]" for an array element), for an SD-JWT VC; false
+// for anything else.
+func plaintextPaths(credential string) ([]string, bool) {
+	pres, err := sdjwtvc.Parse(credential)
+	if err != nil {
+		return nil, false
+	}
+	_, raw, err := jose.DecodeUnverified(pres.IssuerJWT)
+	if err != nil {
+		return nil, false
+	}
+	var payload map[string]any
+	if json.Unmarshal(raw, &payload) != nil {
+		return nil, false
+	}
+	for _, name := range perCopyClaims {
+		delete(payload, name)
+	}
+	var out []string
+	var walk func(prefix string, v any)
+	walk = func(prefix string, v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if _, digest := v["..."]; digest && len(v) == 1 {
+				return // a selectively disclosable array element
+			}
+			for k, child := range v {
+				if k == "_sd" || k == "_sd_alg" {
+					continue
+				}
+				out = append(out, prefix+"/"+k)
+				walk(prefix+"/"+k, child)
+			}
+		case []any:
+			for _, child := range v {
+				walk(prefix+"/[]", child)
+			}
+		}
+	}
+	walk("", payload)
+	slices.Sort(out)
+	return slices.Compact(out), true
 }

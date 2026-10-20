@@ -10,7 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
+	"math"
 	"net/url"
+	"reflect"
+	"slices"
+	"time"
 
 	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/fapihttp"
@@ -63,6 +67,10 @@ type ParseAuthorizationRequestParams struct {
 	// loopback host, for local development and tests. Otherwise
 	// response_uri must be an absolute https URL.
 	AllowLoopbackHTTP bool
+
+	// Now is the time a Request Object's exp and nbf are checked at;
+	// nil means time.Now.
+	Now func() time.Time
 }
 
 // AuthorizationRequest is a verified Request Object's own relevant
@@ -191,6 +199,9 @@ type wireRequestObjectPayload struct {
 	ResponseMode    string            `json:"response_mode"`
 	ExpectedOrigins []string          `json:"expected_origins"`
 	VerifierInfo    json.RawMessage   `json:"verifier_info"`
+	Aud             json.RawMessage   `json:"aud"`
+	Exp             *float64          `json:"exp"`
+	Nbf             *float64          `json:"nbf"`
 }
 
 // vpTokenResponseType is the only response_type either parser accepts:
@@ -256,6 +267,9 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 	var wire wireRequestObjectPayload
 	if err := strictjson.Unmarshal(payload, &wire); err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: parse payload: %w", err)
+	}
+	if err := checkRequestObjectClaims(wire, params.Now); err != nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: %w", err)
 	}
 	if wire.ClientID != params.ClientID {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: payload client_id %q does not match %q", wire.ClientID, params.ClientID)
@@ -323,6 +337,13 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 	if missing := missingRequestParameter(wire.Nonce, wire.DCQLQuery); missing != "" {
 		return AuthorizationRequest{}, &RequestRejectedError{
 			Code: "invalid_request", Description: missing + " is required",
+			State: wire.State, ResponseURI: wire.ResponseURI,
+			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
+		}
+	}
+	if wire.DCQLQuery, err = prepareQuery(wire.DCQLQuery); err != nil {
+		return AuthorizationRequest{}, &RequestRejectedError{
+			Code: "invalid_request", Description: err.Error(),
 			State: wire.State, ResponseURI: wire.ResponseURI,
 			ResponseEncryptionKey: encPub, ResponseEncryptionKeyID: kid, ResponseEncryptionEnc: enc,
 		}
@@ -458,14 +479,16 @@ func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clie
 		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: parse request_uri: %w", err)
 	}
 	res, err := w.fetcher.Fetch(ctx, fapihttp.FetchRequest{
-		URL: target, ExpectedContentType: "application/" + requestObjectTyp,
+		// RFC 9101 §5.2 serves a GET request_uri as either media type;
+		// only POST (OpenID4VP §5.10.1) fixes it.
+		URL: target, ExpectedContentType: "application/" + requestObjectTyp, AlternateContentTypes: []string{"application/jwt"},
 	})
 	if err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: fetch request_uri: %w", err)
 	}
 	return ParseAuthorizationRequest(ParseAuthorizationRequestParams{
 		RequestObject: string(res.Body), ClientID: clientID, VerifierTrust: w.cfg.VerifierTrust,
-		AllowLoopbackHTTP: w.cfg.Fetch.AllowLoopbackHTTP,
+		AllowLoopbackHTTP: w.cfg.Fetch.AllowLoopbackHTTP, Now: w.deps.Clock.Now,
 	})
 }
 
@@ -544,4 +567,78 @@ func missingRequestParameter(nonce string, query dcql.Query) string {
 		return "dcql_query"
 	}
 	return ""
+}
+
+// selfIssuedAudience is the aud a Request Object carries for a Wallet
+// it can't identify (OpenID4VP 1.0 §5.8: "the aud claim MUST be
+// \"https://self-issued.me/v2\", when Static Discovery metadata is
+// used"), which is every Wallet here: none publishes metadata to be
+// discovered by.
+const selfIssuedAudience = "https://self-issued.me/v2"
+
+// requestObjectClockSkew is how far a Verifier's clock may be from the
+// Wallet's for a Request Object's exp and nbf.
+const requestObjectClockSkew = time.Minute
+
+// checkRequestObjectClaims refuses a Request Object addressed to
+// another audience, expired, or not yet valid (RFC 7519 §4.1.3–§4.1.5:
+// each a MUST, when the claim is present). Without them, a signed
+// request could be replayed indefinitely, or re-targeted at another
+// Wallet.
+func checkRequestObjectClaims(wire wireRequestObjectPayload, nowFunc func() time.Time) error {
+	if len(wire.Aud) > 0 {
+		var one string
+		var many []string
+		switch {
+		case json.Unmarshal(wire.Aud, &one) == nil:
+			many = []string{one}
+		case json.Unmarshal(wire.Aud, &many) == nil:
+		default:
+			return errors.New("aud is neither a string nor an array of strings")
+		}
+		if !slices.Contains(many, selfIssuedAudience) {
+			return fmt.Errorf("aud %v isn't %q, the audience a Request Object to this Wallet carries", many, selfIssuedAudience)
+		}
+	}
+	now := time.Now()
+	if nowFunc != nil {
+		now = nowFunc()
+	}
+	if wire.Exp != nil && !now.Before(numericDateTime(*wire.Exp).Add(requestObjectClockSkew)) {
+		return errors.New("the Request Object has expired (exp)")
+	}
+	if wire.Nbf != nil && now.Add(requestObjectClockSkew).Before(numericDateTime(*wire.Nbf)) {
+		return errors.New("the Request Object isn't valid yet (nbf)")
+	}
+	return nil
+}
+
+// numericDateTime is a JWT NumericDate, seconds since the epoch with
+// any fraction, as a time.
+func numericDateTime(v float64) time.Time {
+	sec := math.Floor(v)
+	return time.Unix(int64(sec), int64((v-sec)*1e9))
+}
+
+// prepareQuery is a request's DCQL query as the Wallet answers it,
+// checked when the request is parsed rather than when it's matched:
+// within its size bounds (a 1 MiB unsigned DC API request could
+// otherwise carry thousands of Credential Queries, each matched against
+// every held credential), and otherwise valid. A claims query repeating
+// an earlier one exactly is dropped first: "Wallets SHOULD ignore such
+// duplicate claim queries" (OpenID4VP 1.0 §6.1).
+func prepareQuery(q dcql.Query) (dcql.Query, error) {
+	for i, cq := range q.Credentials {
+		var kept []dcql.ClaimsQuery
+		for _, cl := range cq.Claims {
+			if !slices.ContainsFunc(kept, func(k dcql.ClaimsQuery) bool { return reflect.DeepEqual(k, cl) }) {
+				kept = append(kept, cl)
+			}
+		}
+		q.Credentials[i].Claims = kept
+	}
+	if err := q.Validate(); err != nil {
+		return dcql.Query{}, fmt.Errorf("dcql_query: %w", err)
+	}
+	return q, nil
 }

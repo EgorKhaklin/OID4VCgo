@@ -54,7 +54,7 @@ func TestVerify_RefusesNonStringSDAlg(t *testing.T) {
 // issuer JWT over jose.MaxCompactBytes.
 func TestIssue_RefusesAnIssuerJWTVerifyWouldRefuse(t *testing.T) {
 	key := testKey(t)
-	claims := Claims{VCT: "vc-type", Additional: map[string]any{"note": strings.Repeat("x", 8<<10)}}
+	claims := Claims{VCT: "vc-type", Additional: map[string]any{"note": strings.Repeat("x", 8<<10), "sd": SD("1")}}
 	if _, _, err := Issue(key, jose.ES256, claims, IssueOptions{Decoys: MaxDecoys}); err == nil {
 		t.Error("issued an issuer JWT over jose.MaxCompactBytes")
 	}

@@ -196,7 +196,7 @@ func TestDeferral_Handlers(t *testing.T) {
 		t.Helper()
 		dh, err := f.iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
 			ProtectedEndpointConfig: protectedEndpoint(t, &fakeTokens{grant: issuer.Grant{Subject: subject,
-				Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID(clientID), Subject: subject}}}),
+				Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID(clientID), Subject: subject, Scopes: deferralAuth.Scopes}}}),
 			Resolve: func(ctx context.Context, _ issuer.Grant, txID string, _ issuer.DeferredTransactionRecord) error {
 				resolved++
 				return f.iss.IssueDeferredCredential(ctx, txID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()})
@@ -254,7 +254,11 @@ func TestDeferral_BindsSubject(t *testing.T) {
 			}
 			assertIssuerError(t, poll(issuer.AuthorizedRequest{ClientIdentity: tc.client, Subject: "holder-2"}), issuer.ErrorInvalidTransactionID)
 			assertIssuerError(t, poll(issuer.AuthorizedRequest{ClientIdentity: tc.client}), issuer.ErrorInvalidTransactionID)
-			err = poll(issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("another-client"), Subject: "holder-1"})
+			// The owner's client and subject, but a token that no longer
+			// grants the configuration (§9: "valid for the issuance of the
+			// Credential(s) previously requested").
+			assertIssuerError(t, poll(issuer.AuthorizedRequest{ClientIdentity: tc.client, Subject: "holder-1", Scopes: []string{"another_scope"}}), issuer.ErrorInvalidTransactionID)
+			err = poll(issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("another-client"), Subject: "holder-1", Scopes: deferralAuth.Scopes})
 			if tc.otherClientOK {
 				if err != nil {
 					t.Fatalf("the owning subject's poll from another client = %v", err)

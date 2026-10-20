@@ -121,7 +121,7 @@ func ExampleVerifier_BuildDCAPIAuthorizationRequest() {
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 		Query: query, Response: parsed, ExpectedNonce: built.Nonce,
 		IssuerKeys:       &verifier.X5CIssuerKeyResolver{Roots: issuerRoots},
-		MaxKeyBindingAge: time.Hour,
+		MaxKeyBindingAge: 5 * time.Minute,
 		// Origin is this Verifier's own page origin, from its
 		// configuration: never from the HTTP request carrying the
 		// response (an Origin header, a parameter), or a site relaying

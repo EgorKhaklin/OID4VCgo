@@ -120,3 +120,37 @@ func TestValidateIssuerConfig_RejectsAnonymousPreAuthorizedCode(t *testing.T) {
 		}
 	}
 }
+
+// HAIP 1.0 §4.3: "The scope value MUST map to a specific Credential
+// Type." Two configurations of one type may share a scope; of two
+// types may not.
+func TestValidateIssuerConfig_ScopeMapsToOneType(t *testing.T) {
+	validate := func(second issuer.CredentialConfiguration) error {
+		return haip.ValidateIssuerConfig(issuer.Config{
+			Assurance: issuer.AssuranceDevelopment,
+			CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
+				"pid":   {Format: "dc+sd-jwt", Scope: "pid", VCT: "urn:eudi:pid:1"},
+				"other": second,
+			},
+		})
+	}
+	if err := validate(issuer.CredentialConfiguration{Format: "dc+sd-jwt", Scope: "pid", VCT: "urn:eudi:pid:1"}); err != nil {
+		t.Errorf("one type under one scope: %v", err)
+	}
+	if err := validate(issuer.CredentialConfiguration{Format: "dc+sd-jwt", Scope: "pid", VCT: "urn:example:diploma"}); err == nil {
+		t.Error("two vcts under one scope were accepted")
+	}
+	if err := validate(issuer.CredentialConfiguration{Format: "mso_mdoc", Scope: "pid", DocType: "eu.europa.ec.eudi.pid.1"}); err == nil {
+		t.Error("an SD-JWT VC and an mdoc under one scope were accepted")
+	}
+}
+
+// HAIP 1.0 §4.5.1's "jwt proof type using key_attestation": the
+// configuration requires a key attestation and is one issuer.New
+// accepts with an AttestationVerifier.
+func TestRecommendedJWTKeyAttestationProofType(t *testing.T) {
+	ptc := haip.RecommendedJWTKeyAttestationProofType()
+	if ptc.KeyAttestationsRequired == nil || len(ptc.ProofSigningAlgValuesSupported) != 1 || ptc.ProofSigningAlgValuesSupported[0] != string(haip.RecommendedJOSEAlgorithm) {
+		t.Errorf("RecommendedJWTKeyAttestationProofType() = %+v", ptc)
+	}
+}

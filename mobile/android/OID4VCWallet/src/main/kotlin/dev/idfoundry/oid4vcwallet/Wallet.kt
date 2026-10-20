@@ -36,7 +36,7 @@ public data class WalletConfiguration(
      * pre-authorized codes.
      */
     @SerialName("redirect_uri") val redirectURI: String = "",
-    /** PEM certificates: the trust anchors for issuers' credentials, and for Verifiers' requests. */
+    /** PEM certificates: the trust anchors for issuers' credentials. A credential signed by a certificate that doesn't chain to them is refused. */
     @SerialName("issuer_roots") val issuerRoots: String = "",
     /** PEM certificates: the trust anchors for Verifiers' requests. */
     @SerialName("verifier_roots") val verifierRoots: String = "",
@@ -179,6 +179,20 @@ public data class WalletConfiguration(
     @SerialName("require_issuer_metadata_name") val requireIssuerMetadataName: Boolean = false,
     /** Refuses signed metadata signed longer ago than this many seconds; 0 doesn't limit it. */
     @SerialName("max_issuer_metadata_age_seconds") val maxIssuerMetadataAgeSeconds: Long = 0,
+    /**
+     * A dotted object identifier: recognizes only issuer certificates
+     * under [issuerRoots] with that extended key usage. Outside
+     * [development], required when [issuerRoots] may share a trust
+     * anchor with another role's roots.
+     */
+    @SerialName("issuer_require_eku") val issuerRequireEKU: String = "",
+    /**
+     * A dotted object identifier: recognizes only issuer metadata signed
+     * by a certificate under [issuerMetadataRoots] with that extended key
+     * usage. Outside [development], required when [issuerMetadataRoots]
+     * may share a trust anchor with another role's roots.
+     */
+    @SerialName("issuer_metadata_require_eku") val issuerMetadataRequireEKU: String = "",
 ) {
     /** How an in-person response authenticates the mdoc (ISO/IEC 18013-5 §9.1.3). */
     @Serializable
@@ -1015,8 +1029,9 @@ public class Presentation internal constructor(private val handle: MobilePresent
         /** The claims it would disclose, as paths. */
         val claims: List<List<PathElement>>,
         /**
-         * An SD-JWT VC's claims its issuer didn't make selectively
-         * disclosable: the Verifier receives them whatever the selection.
+         * The SD-JWT VC claims the Verifier receives beyond [claims]:
+         * those its issuer didn't make selectively disclosable, and the
+         * plaintext members of a disclosed object a claim sits within.
          * Show them with [claims].
          */
         @SerialName("always_disclosed") val alwaysDisclosed: List<List<PathElement>> = emptyList(),

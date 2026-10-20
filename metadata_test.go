@@ -44,3 +44,29 @@ func TestMetadataUnmarshalJSON_NonceEndpoint(t *testing.T) {
 		}
 	})
 }
+
+// One display object per language identifier (§12.2.4, Appendix B.2),
+// compared case-insensitively, and one description per claim path
+// (Appendix B.3).
+func TestMetadataRefusesDuplicates(t *testing.T) {
+	if err := oid4vci.ValidateDisplays([]oid4vci.Display{{Locale: "en-US"}, {Locale: "de"}}); err != nil {
+		t.Errorf("distinct locales: %v", err)
+	}
+	if err := oid4vci.ValidateDisplays([]oid4vci.Display{{Locale: "en-US"}, {Locale: "en-us"}}); err == nil {
+		t.Error("two issuer displays for one language were accepted")
+	}
+	for name, cm := range map[string]oid4vci.CredentialMetadata{
+		"two credential displays for one language": {Display: []oid4vci.CredentialDisplay{{Name: "a"}, {Name: "b"}}},
+		"two claim displays for one language": {Claims: []oid4vci.ClaimsDescription{{Path: []any{"name"},
+			Display: []oid4vci.ClaimDisplay{{Locale: "de"}, {Locale: "DE"}}}}},
+		"one path described twice": {Claims: []oid4vci.ClaimsDescription{{Path: []any{"address", "street"}}, {Path: []any{"address", "street"}}}},
+	} {
+		if err := cm.Validate(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	ok := oid4vci.CredentialMetadata{Claims: []oid4vci.ClaimsDescription{{Path: []any{"address", "street"}}, {Path: []any{"address", nil}}}}
+	if err := ok.Validate(); err != nil {
+		t.Errorf("distinct paths: %v", err)
+	}
+}

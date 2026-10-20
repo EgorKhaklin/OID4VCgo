@@ -6,8 +6,10 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -515,6 +517,31 @@ func TestIssue_Decoys(t *testing.T) {
 	_ = payload
 }
 
+// An SD-JWT VC with no selectively disclosable claims "MUST NOT
+// contain the _sd claim" (draft-13 §3.2.2.4): Decoys adds none to it,
+// nor _sd_alg.
+func TestIssue_DecoysNeedADisclosure(t *testing.T) {
+	issuerKey := testKey(t)
+	sdjwt, _, err := Issue(issuerKey, jose.ES256, Claims{VCT: "vc-type", Additional: map[string]any{"a": "1"}}, IssueOptions{Decoys: 3})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	_, payload, err := jose.Verify(jose.ES256, &issuerKey.PublicKey, strings.SplitN(sdjwt, "~", 2)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := claims["_sd"]; ok {
+		t.Error("_sd present without a selectively disclosable claim")
+	}
+	if _, ok := claims["_sd_alg"]; ok {
+		t.Error("_sd_alg present without a selectively disclosable claim")
+	}
+}
+
 func TestIssue_IssuerCertificate_SetsX5CHeader(t *testing.T) {
 	issuerKey := testKey(t)
 	cert := testcert.SelfSigned(t, "test-issuer", &issuerKey.PublicKey, issuerKey)
@@ -686,3 +713,16 @@ func TestVerify_RejectsDisclosableRegisteredClaim(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// An issuer JWT payload with a member twice is refused: encoding/json
+// would read the last vct, a first-wins parser the other.
+func TestVerify_RefusesDuplicateMembers(t *testing.T) {
+	key := testKey(t)
+	jwt, err := jose.Sign(jose.ES256, key, map[string]any{"typ": TypHeader}, []byte(`{"vct":"https://example.com/a","vct":"https://example.com/b"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Verify(jwt+"~", &key.PublicKey, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired}); err == nil {
+		t.Error("an issuer JWT with vct twice was accepted")
+	}
+}

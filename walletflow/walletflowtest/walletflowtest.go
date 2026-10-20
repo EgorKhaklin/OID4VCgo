@@ -118,6 +118,11 @@ type Options struct {
 	// wallet is registered as a native app, so each must be a form RFC
 	// 8252 allows one.
 	RedirectURIs []string
+	// JWTKeyAttestation has the issuer take the jwt proof type with a
+	// key attestation in each proof's key_attestation header (HAIP 1.0
+	// §4.5.1, haip.RecommendedJWTKeyAttestationProofType) instead of the
+	// attestation proof type.
+	JWTKeyAttestation bool
 	// AttestationChallenges has the Authorization Server offer a
 	// challenge endpoint, and refuse a Client Attestation PoP at its
 	// pushed authorization request and token endpoints without a
@@ -265,7 +270,7 @@ func New(opts Options) (env *Env, err error) {
 		Clients: memstore.NewClientRepository([]storage.RegisteredClient{client}), Transactions: memstore.NewTransactionStore(),
 		Grants: memstore.NewGrantStore(), Replay: memstore.NewReplayStore(), ClientKeys: clientKeys, Keys: accessKeys,
 		AccessTokens: e.accessTokens, Revocation: memstore.NewRevocationStore(), Clock: server.SystemClock{}, Random: rand.Reader,
-		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
+		ClientCertificateTrust: server.NoPKIClientAuthentication{},
 		// The Wallet Provider CA may vouch for the Wallet Provider alone.
 		AttesterTrust: server.X5CAttesterChain{
 			Anchors:       server.StaticAttesterAnchors{{Certificate: e.Provider.CA, Issuers: []string{ProviderIssuer}}},
@@ -301,6 +306,9 @@ func New(opts Options) (env *Env, err error) {
 	e.RegistrarRoots, e.RegistrarCA = x509.NewCertPool(), registrarCA
 	e.RegistrarRoots.AddCert(registrarCA)
 	proofTypes := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: haip.RecommendedAttestationProofType()}
+	if opts.JWTKeyAttestation {
+		proofTypes = map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: haip.RecommendedJWTKeyAttestationProofType()}
+	}
 	var preAuthClientAuth issuer.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
 	if opts.Anonymous {
 		proofTypes = map[string]oid4vci.ProofTypeConfiguration{
@@ -420,7 +428,11 @@ func New(opts Options) (env *Env, err error) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(asMetadataJSON)
 	})
-	mux.HandleFunc("GET /.well-known/openid-credential-issuer", issuer.MetadataHandler(e.iss, nil, "", nil))
+	metadata, err := issuer.NewMetadataHandler(e.iss, nil)
+	if err != nil {
+		return nil, err
+	}
+	mux.Handle("GET /.well-known/openid-credential-issuer", metadata)
 	mux.HandleFunc("POST /par", e.challenged(e.handlePAR))
 	mux.HandleFunc("GET /authorize", e.handleAuthorize)
 	mux.HandleFunc("POST /token", e.challenged(e.handleToken))
@@ -867,8 +879,14 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 			server.WriteError(w, err)
 			return
 		}
+		details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
+		if err != nil {
+			w.Header().Set("Cache-Control", "no-store")
+			issuer.WriteError(w, err)
+			return
+		}
 		result, err := e.iss.ExchangePreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
-			PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"],
+			PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
 			Verified: &issuer.VerifiedTokenRequest{
 				ClientID: attested.Client.ID().String(), DPoPThumbprint: binding.Thumbprint, NextDPoPNonce: binding.NextDPoPNonce,
 			},
@@ -895,8 +913,14 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 // authentication, under Options.Anonymous: the issuer verifies the
 // request's DPoP proof itself, and no refresh token is issued.
 func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, params map[string]string) {
+	details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
+	if err != nil {
+		w.Header().Set("Cache-Control", "no-store")
+		issuer.WriteError(w, err)
+		return
+	}
 	result, err := e.iss.ExchangePreAuthorizedCode(r.Context(), issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"],
+		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
 		DPoPProof: r.Header.Get("DPoP"), TokenEndpoint: e.endpoint("/token"),
 	})
 	w.Header().Set("Cache-Control", "no-store")

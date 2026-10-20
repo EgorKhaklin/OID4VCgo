@@ -237,6 +237,12 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 	if cfg.Verify.Query.Credentials != nil || cfg.Verify.ExpectedNonce != "" || cfg.Verify.ResponseEncryptionKey != nil || cfg.Verify.Origin != "" || cfg.Verify.Response.VPToken != nil {
 		return nil, errors.New("verifier: transactions: verify: query, response, expected_nonce, response_encryption_key and origin are set per request; leave them zero")
 	}
+	if err := checkTimeBounds(cfg.Verify); err != nil {
+		return nil, err
+	}
+	if cfg.Verify.Accept != nil || cfg.Verify.NoStatusCheck {
+		return nil, errors.New("verifier: transactions: set accept and no_status_check on the transactions config, not on verify")
+	}
 	if v.cfg.Assurance == AssuranceProduction {
 		asserter, ok := store.(StoreAssurance)
 		if !ok || !asserter.Capabilities().Durable || !asserter.Capabilities().AtomicUpdate {
@@ -247,6 +253,9 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 		}
 		if cfg.Accept == nil && !cfg.NoStatusCheck {
 			return nil, errors.New("verifier: transactions: under AssuranceProduction, set accept (verifier.RequireValidStatus checks revocation) or no_status_check: without either, a revoked credential is accepted")
+		}
+		if cfg.Verify.IssuerAuthorized == nil && !cfg.Verify.AnyIssuerForAnyType {
+			return nil, errors.New("verifier: transactions: under AssuranceProduction, set verify.issuer_authorized (which issuers may issue which types) or verify.any_issuer_for_any_type: without either, any trusted issuer is accepted for any type")
 		}
 	}
 	return &Transactions{v: v, store: store, cfg: cfg}, nil
@@ -312,10 +321,14 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 	if err != nil {
 		return Begun{}, err
 	}
-	state, err := t.randomToken()
+	secret, err := t.randomToken()
 	if err != nil {
 		return Begun{}, err
 	}
+	// The state names its request, so an unencrypted error response,
+	// which has no response key to route it by, can be tied to it
+	// (HandleUnencryptedError); the secret part makes it unguessable.
+	state := id + stateSeparator + secret
 	built, err := t.v.BuildAuthorizationRequest(BuildAuthorizationRequestRequest{Query: query, State: state})
 	if err != nil {
 		return Begun{}, fmt.Errorf("verifier: transactions: %w", err)
@@ -456,6 +469,7 @@ func (t *Transactions) verify(ctx context.Context, tx Transaction, responseJWE s
 	}
 	req := t.cfg.Verify
 	req.Query, req.Response, req.ExpectedNonce, req.ResponseEncryptionKey = tx.Query, parsed, tx.Nonce, tx.ResponseDecryptionKey
+	req.statusByTransactions = true
 	result, err := t.v.VerifyResponse(ctx, req)
 	if err != nil {
 		return VerifyResponseResult{}, err
@@ -471,6 +485,34 @@ func (t *Transactions) verify(ctx context.Context, tx Transaction, responseJWE s
 // recordFailure notes why an answer was refused, if the request is
 // still pending. Best effort: a store error here doesn't change the
 // answer's own error.
+// stateSeparator separates a request's ID from the secret in its state.
+const stateSeparator = "."
+
+// HandleUnencryptedError takes an unencrypted error response (OpenID4VP
+// §8.3.1: a Wallet unable to encrypt "MAY send an error response
+// without encryption"), its error code and the state it echoed: the
+// request whose state that is records it as its LastError, still
+// pending, and a same-device request is answered with its redirect_uri
+// (HAIP 1.0 §5.1). It's unauthenticated, so it never closes the
+// request: anyone who saw the Request Object could send one. A state
+// that names no pending request is acknowledged with nothing.
+func (t *Transactions) HandleUnencryptedError(ctx context.Context, code, state string) Answered {
+	id, _, ok := strings.Cut(state, stateSeparator)
+	if !ok || id == "" {
+		return Answered{}
+	}
+	tx, err := t.store.Get(ctx, id)
+	if err != nil || subtle.ConstantTimeCompare([]byte(state), []byte(tx.State)) != 1 || t.checkPending(tx) != nil {
+		return Answered{}
+	}
+	walletErr := &ResponseError{Code: errorCodeOf(code)}
+	t.recordFailure(ctx, id, walletErr)
+	if !tx.SameDevice {
+		return Answered{ID: id}
+	}
+	return Answered{ID: id, RedirectURI: withQuery(t.cfg.RedirectURI, "error", walletErr.Code)}
+}
+
 func (t *Transactions) recordFailure(ctx context.Context, id string, cause error) {
 	_ = t.store.Update(ctx, id, func(cur *Transaction) error {
 		if cur.Status != TransactionPending {

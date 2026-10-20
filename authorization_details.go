@@ -39,4 +39,14 @@ type AuthorizationDetail struct {
 	// Server does, once it decides to support this optional mechanism
 	// at all (§6.2's own "MAY do so").
 	CredentialIdentifiers []string `json:"credential_identifiers,omitempty"`
+
+	// Locations is RFC 9396 §2.2's locations: where the access token is
+	// used. §5.1.1: when the Credential Issuer's metadata lists
+	// authorization_servers, it "MUST be set to the Credential Issuer
+	// Identifier value".
+	Locations []string `json:"locations,omitempty"`
+
+	// Claims is OPTIONAL (§5.1.1): the claims, as claims description
+	// objects (Appendix B.1), the Wallet asks to be issued.
+	Claims []ClaimsDescription `json:"claims,omitempty"`
 }

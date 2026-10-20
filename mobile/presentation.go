@@ -209,9 +209,10 @@ func selection(selectionJSON string) (walletflow.Selection, error) {
 // {"abi", "disclosures": [{"query_id", "credential_id", "claims":
 // [claim path], "always_disclosed": [claim path], "retained": [claim
 // path]}]}, a claim path being a JSON array of keys (and indexes, or
-// null for every element). always_disclosed are an SD-JWT VC's claims
-// its issuer didn't make selectively disclosable, disclosed whatever
-// the selection: show them with claims. retained are the claims the
+// null for every element). always_disclosed are the SD-JWT VC claims
+// disclosed beyond claims: those its issuer didn't make selectively
+// disclosable, and the plaintext members of a disclosed object a
+// claim sits within. Show them with claims. retained are the claims the
 // Verifier says it will keep (an mdoc's intent_to_retain): show that
 // with them. A selection that doesn't answer the request as it asks
 // is invalid_selection.

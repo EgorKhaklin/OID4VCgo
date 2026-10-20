@@ -142,7 +142,7 @@ func newTestAuthorizationServer(t *testing.T, extensions *extension.Registry) (s
 		Revocation:             server.NoRevocation{},
 		Clock:                  fixedASClock{now: now},
 		Random:                 rand.Reader,
-		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
+		ClientCertificateTrust: server.NoPKIClientAuthentication{},
 	}
 	srv, err = server.New(cfg, deps)
 	if err != nil {

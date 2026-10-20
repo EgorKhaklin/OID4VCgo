@@ -4,11 +4,13 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 )
 
 func testP256(t *testing.T) *ecdsa.PrivateKey {
@@ -76,8 +78,10 @@ func TestIssueWalletAttestation(t *testing.T) {
 }
 
 func TestIssueWalletAttestation_X5CHeader(t *testing.T) {
-	provider, instance := testP256(t), testP256(t)
-	compact, err := IssueWalletAttestation(provider, jose.ES256, Header{X5C: []string{"MIIB"}}, validWalletAttestationClaims(&instance.PublicKey))
+	ca, caKey := testcert.CA(t, "wallet provider CA")
+	leaf, provider := testcert.Leaf(t, "wallet provider", ca, caKey)
+	instance := testP256(t)
+	compact, err := IssueWalletAttestation(provider, jose.ES256, Header{X5C: []string{base64.StdEncoding.EncodeToString(leaf.Raw)}}, validWalletAttestationClaims(&instance.PublicKey))
 	if err != nil {
 		t.Fatalf("IssueWalletAttestation: %v", err)
 	}

@@ -558,3 +558,77 @@ func TestDigestIDsAreUniqueWithinNamespace(t *testing.T) {
 		}
 	}
 }
+
+// ISO/IEC 18013-5 §9.1.2.4: the MSO's times are UTC with whole
+// seconds. Issue normalizes them before checking their order, so two
+// times within one second can't pass validFrom < validUntil and encode
+// as equal.
+func TestIssueNormalizesValidityTimes(t *testing.T) {
+	f := newFixture(t)
+	cest := time.FixedZone("CEST", 2*60*60)
+	signed := time.Date(2025, 1, 1, 2, 0, 0, 400_000_000, cest)
+	claims := f.claims
+	claims.Signed, claims.ValidFrom, claims.ValidUntil = signed, signed, signed.Add(24*time.Hour)
+	issued, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	verified, err := Verify(issued, claims.DocType, &f.issuerKey.PublicKey, cose.ES256, VerifyOptions{Now: func() time.Time { return signed.Add(time.Hour) }})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	want := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	if got := verified.ValidityInfo.Signed; !got.Equal(want) || got.Location() != time.UTC {
+		t.Errorf("signed = %s, want %s", got, want)
+	}
+
+	claims.ValidFrom, claims.ValidUntil = signed, signed.Add(300*time.Millisecond)
+	if _, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}}); err == nil {
+		t.Error("validUntil within validFrom's second was accepted")
+	}
+}
+
+// A status reference without a uri can't be resolved: Issue refuses it.
+func TestIssueRefusesStatusWithoutURI(t *testing.T) {
+	f := newFixture(t)
+	claims := f.claims
+	claims.Status = &StatusListRef{Idx: 1}
+	if _, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}}); err == nil {
+		t.Error("issued a status reference without a uri")
+	}
+}
+
+// Verify returns the values that were digested: editing NameSpaces
+// after unmarshalling changes nothing verified, and removing an item
+// is refused rather than misaligning values and digests.
+func TestVerifyReturnsDigestedValues(t *testing.T) {
+	f := newFixture(t)
+	wire, err := f.signed.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := VerifyOptions{Now: func() time.Time { return f.claims.Signed.Add(time.Hour) }}
+	edited, err := UnmarshalIssuerSigned(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range edited.NameSpaces["org.iso.18013.5.1"] {
+		edited.NameSpaces["org.iso.18013.5.1"][i].ElementValue = "Mallory"
+	}
+	verified, err := Verify(edited, f.claims.DocType, &f.issuerKey.PublicKey, cose.ES256, opts)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if got := verified.NameSpaces["org.iso.18013.5.1"]["family_name"]; got != "Doe" {
+		t.Errorf("family_name = %v, want the digested Doe", got)
+	}
+
+	trimmed, err := UnmarshalIssuerSigned(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trimmed.NameSpaces["org.iso.18013.5.1"] = trimmed.NameSpaces["org.iso.18013.5.1"][1:]
+	if _, err := Verify(trimmed, f.claims.DocType, &f.issuerKey.PublicKey, cose.ES256, opts); err == nil {
+		t.Error("a namespace changed after unmarshalling was accepted")
+	}
+}

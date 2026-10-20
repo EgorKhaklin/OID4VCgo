@@ -3,6 +3,8 @@ package wallet
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 )
 
 // Endpoint is which of an issuer's endpoints answered with an Error.
@@ -53,11 +55,63 @@ func (e *Error) Error() string {
 // page, for instance), Code is left empty and the raw HTTP status is
 // still reported.
 func parseError(endpoint Endpoint, httpStatus int, body []byte) *Error {
+	return parseErrorWithHeader(endpoint, httpStatus, nil, body)
+}
+
+// parseErrorWithHeader is parseError, falling back to an RFC 6750 §3
+// (or RFC 9449 §7.1) WWW-Authenticate challenge's error and
+// error_description when the body carries none: a protected resource's
+// authorization error is defined in the header, with no body required
+// (OpenID4VCI §8.3.1.1).
+func parseErrorWithHeader(endpoint Endpoint, httpStatus int, header http.Header, body []byte) *Error {
 	var wire struct {
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description"`
 	}
 	_ = json.Unmarshal(body, &wire)
+	if wire.Error == "" {
+		for _, challenge := range header.Values("WWW-Authenticate") {
+			if code := challengeParam(challenge, "error"); code != "" {
+				wire.Error, wire.ErrorDescription = code, challengeParam(challenge, "error_description")
+				break
+			}
+		}
+	}
 	// The issuer's text ends up in logs and in front of the holder.
 	return &Error{Endpoint: endpoint, HTTPStatus: httpStatus, Code: sanitizeReplyText(wire.Error), Description: sanitizeReplyText(wire.ErrorDescription)}
+}
+
+// challengeParam is the value of the auth-param name in an RFC 9110
+// §11.6.1 challenge (`DPoP error="invalid_token", ...`), quoted or a
+// token, "" when absent.
+func challengeParam(challenge, name string) string {
+	_, params, _ := strings.Cut(strings.TrimSpace(challenge), " ")
+	for params != "" {
+		params = strings.TrimLeft(params, " ,")
+		key, rest, ok := strings.Cut(params, "=")
+		if !ok {
+			return ""
+		}
+		key = strings.TrimSpace(key)
+		rest = strings.TrimLeft(rest, " ")
+		var value string
+		if strings.HasPrefix(rest, `"`) {
+			var b strings.Builder
+			i := 1
+			for ; i < len(rest) && rest[i] != '"'; i++ {
+				if rest[i] == '\\' && i+1 < len(rest) {
+					i++
+				}
+				b.WriteByte(rest[i])
+			}
+			value, params = b.String(), rest[min(i+1, len(rest)):]
+		} else {
+			value, params, _ = strings.Cut(rest, ",")
+			value = strings.TrimSpace(value)
+		}
+		if strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return ""
 }

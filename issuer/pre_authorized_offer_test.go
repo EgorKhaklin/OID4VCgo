@@ -57,7 +57,7 @@ func TestCreatePreAuthorizedOffer(t *testing.T) {
 	// Without a Transaction Code the offer has no tx_code object, and
 	// the code redeems without one.
 	plain, err := f.iss.CreatePreAuthorizedOffer(ctx, issuer.CreatePreAuthorizedOfferRequest{
-		CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"}, Lifetime: time.Minute,
+		CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"}, Subject: "holder-2", Lifetime: time.Minute,
 	})
 	if err != nil || plain.Offer.Grants.PreAuthorizedCode.TxCode != nil {
 		t.Fatalf("offer without a Transaction Code = %+v, %v", plain.Offer.Grants, err)
@@ -66,7 +66,7 @@ func TestCreatePreAuthorizedOffer(t *testing.T) {
 		t.Errorf("redeem without a Transaction Code: %v", err)
 	}
 	if text, err := f.iss.CreatePreAuthorizedOffer(ctx, issuer.CreatePreAuthorizedOfferRequest{
-		CredentialConfigurationIDs: []string{"IdentityCredential"}, TxCode: "ab12", Lifetime: time.Minute,
+		CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"}, Subject: "holder-3", TxCode: "ab12", Lifetime: time.Minute,
 	}); err != nil || text.Offer.Grants.PreAuthorizedCode.TxCode.InputMode != oid4vci.TxCodeInputModeText {
 		t.Errorf("an alphanumeric Transaction Code: %+v, %v", text.Offer.Grants, err)
 	}
@@ -76,6 +76,10 @@ func TestCreatePreAuthorizedOffer(t *testing.T) {
 		"no lifetime":                 {CredentialConfigurationIDs: []string{"IdentityCredential"}},
 		"description without tx_code": {CredentialConfigurationIDs: []string{"IdentityCredential"}, Lifetime: time.Minute, TxCodeDescription: "x"},
 		"unknown configuration":       {CredentialConfigurationIDs: []string{"Nope"}, Lifetime: time.Minute},
+		// Every holder redeemed without one would share sub "".
+		"no subject": {CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"}, Lifetime: time.Minute},
+		// The code would be spent, and every Credential Request refused.
+		"grants nothing it offers": {CredentialConfigurationIDs: []string{"IdentityCredential"}, Subject: "holder-1", Lifetime: time.Minute},
 	} {
 		if _, err := f.iss.CreatePreAuthorizedOffer(ctx, req); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -104,9 +108,19 @@ func TestCreateCredentialOffer_ProductionRefusesPreAuthorizedGrant(t *testing.T)
 	}
 	if _, err := iss.CreatePreAuthorizedOffer(ctx, issuer.CreatePreAuthorizedOfferRequest{
 		CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"},
-		Subject: "holder-1", TxCode: "4821", Lifetime: time.Minute,
+		Subject: "holder-1", TxCode: "482193", Lifetime: time.Minute,
 	}); err != nil {
 		t.Errorf("CreatePreAuthorizedOffer under production: %v", err)
+	}
+	// Under production, a Transaction Code too short to resist
+	// guessing, or a code living longer than a week, is refused.
+	for name, req := range map[string]issuer.CreatePreAuthorizedOfferRequest{
+		"a 4-digit tx_code":  {CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"}, Subject: "holder-1", TxCode: "4821", Lifetime: time.Minute},
+		"a month's lifetime": {CredentialConfigurationIDs: []string{"IdentityCredential"}, Scopes: []string{"identity_credential"}, Subject: "holder-1", TxCode: "482193", Lifetime: 30 * 24 * time.Hour},
+	} {
+		if _, err := iss.CreatePreAuthorizedOffer(ctx, req); err == nil {
+			t.Errorf("%s under production: accepted", name)
+		}
 	}
 	if _, err := iss.CreateCredentialOffer(ctx, issuer.CreateCredentialOfferRequest{CredentialConfigurationIDs: []string{"IdentityCredential"}}); err != nil {
 		t.Errorf("CreateCredentialOffer without a pre-authorized grant: %v", err)

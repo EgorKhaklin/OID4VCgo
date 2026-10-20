@@ -105,9 +105,8 @@ func (iss *Issuer) checkDeferredCredentialRequest(auth AuthorizedRequest, req De
 	if req.TransactionID == "" {
 		return newError(ErrorInvalidCredentialRequest, 400, "transaction_id is required", nil)
 	}
-	if req.ResponseEncryption != nil && !req.RequestWasEncrypted {
-		return newError(ErrorInvalidEncryptionParameters, 400,
-			"credential_response_encryption requires the request itself to be encrypted", nil)
+	if err := iss.requireRequestEncryption(req.RequestWasEncrypted, req.ResponseEncryption != nil); err != nil {
+		return err
 	}
 	return iss.requireResponseEncryption(req.ResponseEncryption)
 }
@@ -150,6 +149,13 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 		// As for an unknown one: whether another holder's transaction
 		// exists is none of this one's business.
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, errors.New("transaction_id was not issued to this access token's client and subject"))
+	}
+	// §9: the Access Token must be "valid for the issuance of the
+	// Credential(s) previously requested": the same client and subject
+	// aren't enough, if the token no longer grants that configuration (a
+	// narrower refreshed token, or one from another grant).
+	if record.CredentialConfigurationID != "" && !grantsConfiguration(auth, record.CredentialConfigurationID, iss.cfg.CredentialConfigurationsSupported[record.CredentialConfigurationID]) {
+		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, errors.New("the access token doesn't grant the transaction's credential configuration"))
 	}
 
 	switch record.Status {

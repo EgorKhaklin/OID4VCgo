@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/x509"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"strings"
 	"testing"
 
@@ -86,20 +87,29 @@ func TestProductionAssurance(t *testing.T) {
 	} {
 		deps := durable
 		change(&deps)
-		if err := productionWallet(t, deps).checkIssuance(); err == nil || !strings.Contains(err.Error(), name) {
-			t.Errorf("without %s: checkIssuance = %v", name, err)
+		// Refused by New, not first when a holder tries to receive one.
+		if _, err := New(Config{ClientID: "wallet", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool()}, deps); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("without %s: New = %v", name, err)
 		}
 	}
 	// A Durable Authorizations store is the authorization code grant's
-	// alone: nothing else keeps an authorization across a suspension.
+	// alone: nothing else keeps an authorization across a suspension. A
+	// wallet with a RedirectURI is refused one in New; one without
+	// receives only pre-authorized codes.
 	deps := durable
 	deps.Authorizations = NewMemoryAuthorizationStore()
-	w = productionWallet(t, deps)
+	if _, err := New(Config{ClientID: "wallet", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool()}, deps); err == nil || !strings.Contains(err.Error(), "Durable") {
+		t.Errorf("an authorization code wallet without a Durable Authorizations: New = %v", err)
+	}
+	w, err = New(Config{ClientID: "wallet", IssuerRoots: x509.NewCertPool()}, deps)
+	if err != nil {
+		t.Fatalf("a pre-authorized code wallet without a Durable Authorizations: New = %v", err)
+	}
 	if err := w.checkIssuance(); err != nil {
 		t.Errorf("a pre-authorized code wallet without a Durable Authorizations: checkIssuance = %v", err)
 	}
-	if err := w.checkAuthorizationCode(); err == nil || !strings.Contains(err.Error(), "Durable") {
-		t.Errorf("without Durable: checkAuthorizationCode = %v", err)
+	if err := w.checkAuthorizationCode(); err == nil {
+		t.Error("checkAuthorizationCode passed without a RedirectURI")
 	}
 }
 
@@ -115,18 +125,59 @@ func TestProductionAssurance_RefreshNeedsDurableGrants(t *testing.T) {
 		Keys: durableKeyStore{NewMemoryKeyStore()}, Credentials: NewMemoryCredentialStore(),
 		Provider: attestingProvider{}, Authorizations: durableAuthorizations{NewMemoryAuthorizationStore()},
 	}
-	refreshing := func(deps Dependencies) *Wallet {
-		w, err := New(Config{ClientID: "wallet", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool(), RequestRefresh: true}, deps)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return w
-	}
-	if err := refreshing(deps).checkIssuance(); err == nil || !strings.Contains(err.Error(), "Durable Dependencies.Grants") {
-		t.Errorf("with a memory GrantStore: checkIssuance = %v", err)
+	cfg := Config{ClientID: "wallet", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool(), RequestRefresh: true}
+	if _, err := New(cfg, deps); err == nil || !strings.Contains(err.Error(), "Durable Dependencies.Grants") {
+		t.Errorf("with a memory GrantStore: New = %v", err)
 	}
 	deps.Grants = durableGrants{NewMemoryGrantStore()}
-	if err := refreshing(deps).checkIssuance(); err != nil {
+	w, err := New(cfg, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.checkIssuance(); err != nil {
 		t.Errorf("with a durable GrantStore: checkIssuance = %v", err)
+	}
+}
+
+// A Config value with no meaning is refused, not taken as the default.
+func TestNew_RefusesMeaninglessChoices(t *testing.T) {
+	deps := Dependencies{Keys: NewMemoryKeyStore(), Credentials: NewMemoryCredentialStore()}
+	for name, cfg := range map[string]Config{
+		"issuance profile": {IssuanceProfile: 9, Development: true},
+		"copy policy":      {CopyPolicy: 9, Development: true},
+		"batch size":       {BatchSize: -3, Development: true},
+	} {
+		if _, err := New(cfg, deps); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// In production, one certificate pool given to two roles needs a leaf
+// policy on each: otherwise a Verifier's certificate could sign
+// credentials, or an issuer's pass for a Verifier.
+func TestNew_RoleSeparation(t *testing.T) {
+	deps := Dependencies{Keys: durableKeyStore{NewMemoryKeyStore()}, Credentials: NewMemoryCredentialStore(), Authorizations: durableAuthorizations{NewMemoryAuthorizationStore()}}
+	issuerCA, _ := testcert.CA(t, "issuer CA")
+	verifierCA, _ := testcert.CA(t, "verifier CA")
+	shared, verifiers := x509.NewCertPool(), x509.NewCertPool()
+	shared.AddCert(issuerCA)
+	verifiers.AddCert(verifierCA)
+	policy := func(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+	for name, tc := range map[string]struct {
+		cfg Config
+		ok  bool
+	}{
+		"one pool for issuers and Verifiers":       {Config{IssuerRoots: shared, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared}}, false},
+		"one pool, only the issuer narrowed":       {Config{IssuerRoots: shared, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared}}, false},
+		"one pool, both narrowed":                  {Config{IssuerRoots: shared, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, true},
+		"separate pools":                           {Config{IssuerRoots: shared, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifiers}}, true},
+		"one pool for issuers and readers, in dev": {Config{IssuerRoots: shared, MdocReaderRoots: shared, Development: true}, true},
+	} {
+		_, err := New(tc.cfg, deps)
+		refused := err != nil && strings.Contains(err.Error(), "same certificate pool")
+		if refused == tc.ok {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

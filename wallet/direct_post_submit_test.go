@@ -45,10 +45,14 @@ func TestSubmitDirectPostResponse(t *testing.T) {
 		"json with charset":     {200, "application/json; charset=utf-8", `{"redirect_uri":"https://verifier.example/cb"}`, "https://verifier.example/cb", ""},
 		"no redirect_uri":       {200, "application/json", `{}`, "", ""},
 		"not json":              {200, "text/plain", `ok`, "", ""},
-		"http redirect_uri":     {200, "application/json", `{"redirect_uri":"http://verifier.example/cb"}`, "", "isn't an absolute https URL"},
-		"relative redirect_uri": {200, "application/json", `{"redirect_uri":"/cb"}`, "", "isn't an absolute https URL"},
-		"malformed json":        {200, "application/json", `{"redirect_uri":`, "", "parse reply"},
-		"oversized reply":       {200, "application/json", `{"x":"` + strings.Repeat("a", 70<<10) + `"}`, "", "exceeds"},
+		"http redirect_uri":     {200, "application/json", `{"redirect_uri":"http://verifier.example/cb"}`, "", "isn't an absolute URI the Wallet can follow"},
+		"relative redirect_uri": {200, "application/json", `{"redirect_uri":"/cb"}`, "", "isn't an absolute URI the Wallet can follow"},
+		"javascript redirect":   {200, "application/json", `{"redirect_uri":"javascript:alert(1)"}`, "", "isn't an absolute URI the Wallet can follow"},
+		// OpenID4VP §8.2: any absolute URI, which HAIP 1.0 §5.1 has the
+		// Wallet follow: the Verifier's own app's, say.
+		"app scheme redirect_uri": {200, "application/json", `{"redirect_uri":"com.example.verifier:/done?response_code=abc"}`, "com.example.verifier:/done?response_code=abc", ""},
+		"malformed json":          {200, "application/json", `{"redirect_uri":`, "", "parse reply"},
+		"oversized reply":         {200, "application/json", `{"x":"` + strings.Repeat("a", 70<<10) + `"}`, "", "exceeds"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := verifierReply(t, tc.status, tc.contentType, tc.body)

@@ -13,6 +13,8 @@ func TestLogoOf(t *testing.T) {
 		"data:image/png;base64,iVBORw0KGgo=": true,
 		"http://issuer.example/logo.png":     false,
 		"data:text/html;base64,PHNjcmlwdD4=": false,
+		"data:image/svg+xml;base64,PHN2Zz4=": false,
+		"data:IMAGE/SVG+XML,<svg/>":          false,
 		"javascript:alert(1)":                false,
 		"org.example.app:/logo":              false,
 		"https:///no-host":                   false,

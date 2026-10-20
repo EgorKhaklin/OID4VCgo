@@ -5,11 +5,14 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 )
 
 func testKey(t *testing.T) *ecdsa.PrivateKey {
@@ -434,10 +437,12 @@ func TestVerify_RequiresNowWhenExpiryPresent(t *testing.T) {
 }
 
 func TestHeader_X5CAndTrustChain(t *testing.T) {
-	issuerKey := testKey(t)
+	ca, caKey := testcert.CA(t, "attestation test CA")
+	leaf, issuerKey := testcert.Leaf(t, "wallet provider", ca, caKey)
+	x5c := base64.StdEncoding.EncodeToString(leaf.Raw)
 	attestedJWK, _ := marshalJWK(&testKey(t).PublicKey)
 	compact, err := Issue(issuerKey, jose.ES256, Header{
-		X5C:        []string{"MIIDQjCCA..."},
+		X5C:        []string{x5c},
 		TrustChain: []string{"chain-element-1", "chain-element-2"},
 	}, Claims{IssuedAt: time.Now().Unix(), AttestedKeys: []json.RawMessage{attestedJWK}})
 	if err != nil {
@@ -447,7 +452,7 @@ func TestHeader_X5CAndTrustChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if len(parsed.X5C()) != 1 || parsed.X5C()[0] != "MIIDQjCCA..." {
+	if len(parsed.X5C()) != 1 || parsed.X5C()[0] != x5c {
 		t.Errorf("X5C() = %v", parsed.X5C())
 	}
 	if len(parsed.TrustChain()) != 2 {
@@ -476,6 +481,42 @@ func TestVerify_ExpiredAtExp(t *testing.T) {
 	for at, ok := range map[int64]bool{exp - 1: true, exp: false} {
 		if _, err := parsed.Verify(&issuerKey.PublicKey, jose.ES256, VerifyOptions{Now: time.Unix(at, 0)}); (err == nil) != ok {
 			t.Errorf("at exp%+d: %v", at-exp, err)
+		}
+	}
+}
+
+// Issue checks an x5c header as HAIP 1.0 §4.5.1 requires: its leaf is
+// the signer's, not self-signed, and the trust anchor is left out.
+func TestIssue_ChecksX5C(t *testing.T) {
+	ca, caKey := testcert.CA(t, "attestation test CA")
+	leaf, leafKey := testcert.Leaf(t, "wallet provider", ca, caKey)
+	selfSigned, selfSignedKey := testcert.SelfSignedLeaf(t, "self-signed provider")
+	b64 := func(certs ...*x509.Certificate) []string {
+		out := make([]string, len(certs))
+		for i, c := range certs {
+			out[i] = base64.StdEncoding.EncodeToString(c.Raw)
+		}
+		return out
+	}
+	attestedJWK, _ := marshalJWK(&testKey(t).PublicKey)
+	claims := Claims{IssuedAt: time.Now().Unix(), AttestedKeys: []json.RawMessage{attestedJWK}}
+	if _, err := Issue(leafKey, jose.ES256, Header{X5C: b64(leaf)}, claims); err != nil {
+		t.Errorf("a CA-issued leaf: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		signer *ecdsa.PrivateKey
+		x5c    []string
+	}{
+		"another key's certificate": {testKey(t), b64(leaf)},
+		"a self-signed leaf":        {selfSignedKey, b64(selfSigned)},
+		"the anchor included":       {leafKey, b64(leaf, ca)},
+		"not base64":                {leafKey, []string{"MIIDQjCCA..."}},
+	} {
+		if _, err := Issue(tc.signer, jose.ES256, Header{X5C: tc.x5c}, claims); err == nil {
+			t.Errorf("%s: issued", name)
+		}
+		if _, err := IssueWalletAttestation(tc.signer, jose.ES256, Header{X5C: tc.x5c}, validWalletAttestationClaims(&testKey(t).PublicKey)); err == nil {
+			t.Errorf("%s: wallet attestation issued", name)
 		}
 	}
 }

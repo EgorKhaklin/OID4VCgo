@@ -259,3 +259,28 @@ func TestIssueTokenX5C_RefusesForbiddenChains(t *testing.T) {
 		t.Error("signed with a self-signed certificate")
 	}
 }
+
+// IssuerKey binds a CWT token's signer as it binds a JWT token's: a
+// list signed by another key under the same roots is refused.
+func TestCheckCWTX5Chain_HonorsIssuerKey(t *testing.T) {
+	ca, caKey := testcert.CA(t, "status list test CA")
+	leaf, leafKey := testcert.Leaf(t, "status list signer", ca, caKey)
+	_, otherKey := testcert.Leaf(t, "another issuer", ca, caKey)
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	sl, err := New(Bits1, []uint8{0}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwt, err := IssueTokenCWTX5Chain(leafKey, cose.ES256, TokenClaims{Sub: x5cTestURI, Iat: time.Now().Unix(), StatusList: sl}, []*x509.Certificate{leaf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := StatusListRef{URI: x5cTestURI}
+	if _, _, err := CheckCWTX5Chain(cwt, roots, ref, VerifyOptions{IssuerKey: &leafKey.PublicKey}); err != nil {
+		t.Errorf("signed by the issuer's key: %v", err)
+	}
+	if _, _, err := CheckCWTX5Chain(cwt, roots, ref, VerifyOptions{IssuerKey: &otherKey.PublicKey}); err == nil {
+		t.Error("a list another key signed was accepted for this issuer")
+	}
+}

@@ -157,11 +157,15 @@ func TestFetchCredentialIssuerMetadata_SignedClaims(t *testing.T) {
 		roots  *x509.CertPool
 		ok     bool
 	}{
-		"valid":            {claims: func(u string) map[string]any { return map[string]any{"sub": u, "iat": now, "exp": now + 3600} }, ok: true},
-		"another issuer":   {claims: func(string) map[string]any { return map[string]any{"sub": "https://other.example", "iat": now} }},
-		"no iat":           {claims: func(u string) map[string]any { return map[string]any{"sub": u} }},
-		"iat in future":    {claims: func(u string) map[string]any { return map[string]any{"sub": u, "iat": now + 3600} }},
-		"expired":          {claims: func(u string) map[string]any { return map[string]any{"sub": u, "iat": now - 7200, "exp": now - 3600} }},
+		"valid":          {claims: func(u string) map[string]any { return map[string]any{"sub": u, "iat": now, "exp": now + 3600} }, ok: true},
+		"another issuer": {claims: func(string) map[string]any { return map[string]any{"sub": "https://other.example", "iat": now} }},
+		"no iat":         {claims: func(u string) map[string]any { return map[string]any{"sub": u} }},
+		"iat in future":  {claims: func(u string) map[string]any { return map[string]any{"sub": u, "iat": now + 3600} }},
+		"expired":        {claims: func(u string) map[string]any { return map[string]any{"sub": u, "iat": now - 7200, "exp": now - 3600} }},
+		"not valid yet":  {claims: func(u string) map[string]any { return map[string]any{"sub": u, "iat": now, "nbf": now + 3600} }},
+		"fractional times": {claims: func(u string) map[string]any {
+			return map[string]any{"sub": u, "iat": float64(now) + 0.25, "exp": float64(now) + 3600.5}
+		}, ok: true},
 		"self-signed cert": {claims: func(u string) map[string]any { return map[string]any{"sub": u, "iat": now} }, key: selfSignedKey, cert: selfSigned, roots: selfRoots},
 	} {
 		key, cert, pool := leafKey, leaf, roots

@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/idfoundry/oid4vcgo/proximity"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -181,6 +183,7 @@ func (p *ProximityPresentation) HandleMessage(op *Operation, message []byte) str
 type proximityReaderJSON struct {
 	Status       string            `json:"status"`
 	Name         string            `json:"name"`
+	ClaimedName  string            `json:"claimed_name,omitempty"`
 	Chain        []string          `json:"chain"`
 	Certificates []certificateJSON `json:"certificates"`
 	Error        string            `json:"error,omitempty"`
@@ -281,8 +284,16 @@ func (p *ProximityPresentation) Request() string {
 		reader.Chain = append(reader.Chain, base64.StdEncoding.EncodeToString(c.Raw))
 		reader.Certificates = append(reader.Certificates, certificateOf(c))
 	}
+	// A name only for a reader its certificate vouches for: anyone can
+	// put a public chain, or a certificate naming any authority, on a
+	// garbage signature. Another's name is only what it claims.
 	if len(r.Chain) > 0 {
-		reader.Name = r.Chain[0].Subject.CommonName
+		cn := displayName(r.Chain[0].Subject.CommonName)
+		if r.Status == proximity.ReaderTrusted {
+			reader.Name = cn
+		} else {
+			reader.ClaimedName = cn
+		}
 	}
 	if r.Err != nil {
 		reader.Error = cleanText(r.Err.Error())
@@ -342,4 +353,23 @@ func (p *ProximityPresentation) Terminate() string {
 		Send string `json:"send"`
 	}{result{ABIVersion}, base64.StdEncoding.EncodeToString(p.p.Terminate())})
 	return text
+}
+
+// displayName is a certificate's name fit for the holder's screen:
+// control characters and Unicode bidirectional formatting characters
+// dropped, at most 200 runes.
+func displayName(s string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range s {
+		if n == 200 {
+			break
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) || r == utf8.RuneError {
+			continue
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return strings.TrimSpace(b.String())
 }

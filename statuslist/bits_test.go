@@ -116,7 +116,7 @@ func TestDecompress_RejectsBomb(t *testing.T) {
 		t.Fatalf("create zlib writer: %v", err)
 	}
 	chunk := make([]byte, 1<<20) // 1 MiB of zeros, reused each write
-	const chunks = 200           // 200 MiB total, comfortably over maxDecompressedSize (128 MiB)
+	const chunks = 32            // 32 MiB total, over maxDecompressedSize (16 MiB)
 	for range chunks {
 		if _, err := w.Write(chunk); err != nil {
 			t.Fatalf("write: %v", err)
@@ -176,7 +176,7 @@ func TestCheckTokenTimes_ExpiredAtExp(t *testing.T) {
 	exp := iat + 60
 	for at, ok := range map[int64]bool{exp - 1: true, exp: false} {
 		opts := VerifyOptions{Now: func() time.Time { return time.Unix(at, 0) }}
-		if err := checkTokenTimes(iat, &exp, opts); (err == nil) != ok {
+		if err := checkTokenTimes(iat, &exp, nil, opts); (err == nil) != ok {
 			t.Errorf("at exp%+d: %v", at-exp, err)
 		}
 	}

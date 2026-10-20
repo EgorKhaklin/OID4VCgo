@@ -78,3 +78,14 @@ func TestParseCredentialRequest_Rejects(t *testing.T) {
 		})
 	}
 }
+
+// A member must name a field exactly: of "proofs" and "Proofs",
+// encoding/json would keep the last, where an exact-match parser reads
+// the first.
+func TestParseCredentialRequest_RefusesCaseVariantMembers(t *testing.T) {
+	iss, _ := newEncryptionIssuer(t, nil)
+	body := `{"credential_configuration_id":"x","proofs":{"jwt":["a"]},"Proofs":{"jwt":["b"]}}`
+	if _, err := iss.ParseCredentialRequest([]byte(body), "application/json"); err == nil {
+		t.Error("a request with case-variant members was parsed")
+	}
+}

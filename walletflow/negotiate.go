@@ -135,13 +135,15 @@ func takesAttestation(asMeta wallet.AuthorizationServerMetadata) bool {
 }
 
 // proofPlan is how to prove possession of the keys a credential is
-// bound to: jwt proofs (Appendix F.1), or a key attestation (Appendix
-// F.3).
+// bound to: jwt proofs (Appendix F.1), a key attestation (Appendix
+// F.3), or jwt proofs each carrying a key attestation in their
+// key_attestation header (Appendix D.1, F.1).
 type proofPlan int
 
 const (
 	proofJWT proofPlan = iota
 	proofAttestation
+	proofJWTKeyAttestation
 )
 
 // chooseProof is the proof the wallet sends for conf, a credential
@@ -149,8 +151,9 @@ const (
 // the proof type must take. The default profile sends a plain jwt
 // proof unless the issuer requires a key attestation with it
 // (key_attestations_required), when it sends the attestation proof type
-// instead: a key attestation the issuer didn't ask for tells it more
-// about the holder's device than it needs. ProfileHAIP prefers the
+// instead, or, where the issuer offers only jwt, jwt proofs carrying the
+// key attestation: a key attestation the issuer didn't ask for tells it
+// more about the holder's device than it needs. ProfileHAIP prefers the
 // attestation proof type wherever the issuer offers it.
 func (w *Wallet) chooseProof(conf oid4vci.CredentialConfigurationMetadata) (proofPlan, error) {
 	if err := checkBindable(conf); err != nil {
@@ -170,10 +173,11 @@ func (w *Wallet) chooseProof(conf oid4vci.CredentialConfigurationMetadata) (proo
 		return proofJWT, nil
 	case hasAttestation:
 		return proofAttestation, nil
+	case hasJWT && w.deps.Provider != nil:
+		// HAIP 1.0 §4.5.1's "jwt proof type using key_attestation".
+		return proofJWTKeyAttestation, nil
 	case hasJWT:
-		// A key attestation in a jwt proof's header (Appendix F.1) isn't
-		// supported: the attestation proof type carries one alone.
-		return 0, fmt.Errorf("%w: it requires a key attestation in a jwt proof", ErrProofUnsupported)
+		return 0, fmt.Errorf("%w: it requires a key attestation in a jwt proof, and there's no Wallet Provider", ErrProofUnsupported)
 	default:
 		return 0, fmt.Errorf("%w: no proof type it takes is signed with %s, or carries a key attestation without a Wallet Provider", ErrProofUnsupported, attestationAlg)
 	}

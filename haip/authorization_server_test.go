@@ -66,7 +66,7 @@ func haipServerDependencies(t *testing.T) server.Dependencies {
 		Clients: memstore.NewClientRepository([]storage.RegisteredClient{wallet}), Transactions: memstore.NewTransactionStore(),
 		Grants: memstore.NewGrantStore(), Replay: memstore.NewReplayStore(), ClientKeys: clientKeys, Keys: keyManager,
 		AccessTokens: server.JWTAccessTokens{Keys: keyManager, Algorithm: fapi.ES256}, Revocation: memstore.NewRevocationStore(),
-		Clock: server.SystemClock{}, Random: rand.Reader, ClientCertificateTrust: server.NoClientCertificateChainTrust{},
+		Clock: server.SystemClock{}, Random: rand.Reader, ClientCertificateTrust: server.NoPKIClientAuthentication{},
 		AttesterTrust: server.X5CAttesterChain{
 			TrustAnchors:  server.StaticAttesterTrustAnchors{Roots: x509.NewCertPool()},
 			IssuerBinding: server.AttesterIssuerInCertificate,

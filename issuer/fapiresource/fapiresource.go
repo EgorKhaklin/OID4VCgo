@@ -60,6 +60,14 @@ func (v *Verifier) Verify(r *http.Request, endpoint *url.URL) (issuer.Grant, err
 	if authCtx.SubjectKind != resource.SubjectEndUser {
 		return issuer.Grant{}, resource.NewInsufficientScopeError(authCtx, "a Credential needs an end user's access token")
 	}
+	// Without the internal subject (a resource verifier resolving only
+	// pairwise client subjects), every holder's Grant would carry the
+	// same empty Subject: their Prepare lookups, deferred transactions
+	// and notification_ids would all be one holder's. That's the
+	// deployment's configuration, not the token's fault.
+	if authCtx.InternalSubject == "" {
+		return issuer.Grant{}, errors.New("fapiresource: the access token's internal subject isn't resolved (configure the resource verifier to resolve internal subjects): holders can't be told apart")
+	}
 	var client issuer.ClientIdentity = issuer.NoClientIdentity{}
 	if authCtx.ClientID != "" {
 		client = issuer.KnownClientID(authCtx.ClientID)

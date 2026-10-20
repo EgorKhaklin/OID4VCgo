@@ -152,7 +152,7 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	mux.HandleFunc("POST /token", a.handleToken)
 	mux.HandleFunc("POST /revoke", a.handleTokenRevocation)
 
-	mux.HandleFunc("GET /.well-known/openid-credential-issuer", a.issuerMetadataHandler())
+	mux.Handle("GET /.well-known/openid-credential-issuer", a.metadataHandler)
 	mux.HandleFunc("GET "+VCTPath, a.handleVCTMetadata)
 	mux.HandleFunc("POST /nonce", a.handleNonce)
 	mux.Handle("POST /credential", credentialHandler)

@@ -95,6 +95,8 @@ func (a *App) handlePreAuthorizedToken(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	clientID := attested.Client.ID().String()
+	// AuthenticateAttestedClient already refused a client_id naming
+	// another client; checked again here, where the token is issued.
 	if id, ok := params["client_id"]; ok && id != clientID {
 		server.NewError(server.ErrorInvalidClient, http.StatusUnauthorized, "client_id doesn't name the attested client").WriteJSON(w)
 		return
@@ -108,8 +110,13 @@ func (a *App) handlePreAuthorizedToken(w http.ResponseWriter, r *http.Request, r
 		server.NewError(server.ErrorInvalidRequest, http.StatusBadRequest, "this grant issues DPoP-bound tokens only").WriteJSON(w)
 		return
 	}
+	details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
+	if err != nil {
+		issuerError(w, err)
+		return
+	}
 	redeemed, err := a.issuer.RedeemPreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"],
+		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
 		Verified: &issuer.VerifiedTokenRequest{ClientID: clientID, DPoPThumbprint: binding.Thumbprint},
 	})
 	if err != nil {

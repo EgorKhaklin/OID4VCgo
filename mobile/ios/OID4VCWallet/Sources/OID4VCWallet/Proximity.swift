@@ -83,8 +83,8 @@ public struct ProximityReaderIdentity: Sendable {
 
     /// Whether the request was signed, and by a reader the wallet recognizes.
     public let status: Status
-    /// The reader certificate's subject common name: its verified name only
-    /// when `status` is `.trusted`; "" when the request wasn't signed.
+    /// The reader's name, from a certificate that chains to
+    /// `mdocReaderRoots`: set only when `status` is `.trusted`.
     public let name: String
     /// The certificate chain the request carried, leaf first.
     public let chain: [SecCertificate]
@@ -93,6 +93,10 @@ public struct ProximityReaderIdentity: Sendable {
     public let certificates: [CertificateDetails]
     /// Why `status` isn't `.trusted`, for logs.
     public let error: String?
+    /// The name an untrusted or invalid request's certificate gives
+    /// itself: anyone can claim any name, so never show it as the
+    /// reader's. "" when the reader is trusted or didn't sign.
+    public var claimedName: String = ""
 
     /// A certificate's fields.
     public struct CertificateDetails: Decodable, Sendable {
@@ -426,9 +430,12 @@ public final class ProximityPresentation: @unchecked Sendable {
 struct ReaderJSON: Decodable {
     let status: String
     let name: String
+    let claimedName: String?
     let chain: [Data]
     let certificates: [ProximityReaderIdentity.CertificateDetails]?
     let error: String?
+
+    enum CodingKeys: String, CodingKey { case status, name, claimedName = "claimed_name", chain, certificates, error }
 
     var identity: ProximityReaderIdentity {
         ProximityReaderIdentity(
@@ -436,7 +443,8 @@ struct ReaderJSON: Decodable {
             name: name,
             chain: chain.compactMap { SecCertificateCreateWithData(nil, $0 as CFData) },
             certificates: certificates ?? [],
-            error: error)
+            error: error,
+            claimedName: claimedName ?? "")
     }
 }
 

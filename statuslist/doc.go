@@ -37,10 +37,10 @@
 // same for a token carrying its signer's certificate chain, verifying
 // that chain to a set of trust anchors first.
 //
-// Checker adds fetching the token (Fetcher: https only, no redirects,
-// the requested media type, a size limit), so a verifier checks a
-// credential's status in one call. Locating the reference on an
-// already-validated Referenced Token stays with its format:
-// verifier.VerifiedCredential.StatusListRef does it for a presented
-// credential.
+// Checker adds fetching the token (Fetcher: https only, at most
+// MaxStatusListRedirects https redirects, the requested media type, a
+// size limit), so a verifier checks a credential's status in one call.
+// Locating the reference on an already-validated Referenced Token stays
+// with its format: verifier.VerifiedCredential.StatusListRef does it
+// for a presented credential.
 package statuslist

@@ -175,7 +175,7 @@ func ExampleVerifier_VerifyResponse() {
 	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 		Query: query, Response: parsed, ExpectedNonce: built.Nonce,
 		IssuerKeys:       &verifier.X5CIssuerKeyResolver{Roots: roots},
-		MaxKeyBindingAge: time.Hour,
+		MaxKeyBindingAge: 5 * time.Minute,
 	})
 	if err != nil {
 		panic(err)

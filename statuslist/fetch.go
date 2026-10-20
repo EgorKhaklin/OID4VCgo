@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -17,11 +19,13 @@ import (
 // Fetcher fetches Status List Tokens (draft-14 §8.1): an HTTPS GET of a
 // Referenced Token's status_list uri, asking for one token format.
 //
-// It fetches exactly the uri given — https only, redirects refused —
-// and accepts only a 2xx response of the requested media type, no
-// larger than MaxBytes. A redirect is refused because the uri is what
-// the Referenced Token's issuer signed; following one could leave https,
-// or reach somewhere the issuer never named.
+// It fetches the uri given over https, following at most
+// MaxStatusListRedirects redirects, each to an https URL (draft-14
+// §8.2: a 3xx "clients SHOULD follow"), and accepts only a 2xx response
+// of the requested media type, no larger than MaxBytes. Following one is
+// safe because the token is checked, not where it came from: its sub
+// must still be the uri the Referenced Token's issuer signed, and its
+// signer trusted.
 //
 // It connects only to public addresses: a uri whose host is, or
 // resolves to, anything but a global unicast address is refused when
@@ -35,7 +39,7 @@ import (
 type Fetcher struct {
 	// HTTP is the client fetches use, e.g. one trusting a private CA.
 	// Nil means a client with a 30-second timeout. Its CheckRedirect is
-	// overridden to refuse redirects, and its Transport must be nil or
+	// overridden as described above, and its Transport must be nil or
 	// an *http.Transport: a copy of it is used whose connections are
 	// checked against the address policy above, with its proxy and
 	// custom dial hooks removed. Any other RoundTripper is refused
@@ -67,6 +71,9 @@ type Fetcher struct {
 	UncheckedTransport bool
 }
 
+// MaxStatusListRedirects is how many redirects a Fetcher follows.
+const MaxStatusListRedirects = 3
+
 // Fetch GETs uri, asking for mediaType (TokenMediaType or
 // CWTTokenMediaType), and returns the token's bytes.
 func (f Fetcher) Fetch(ctx context.Context, uri, mediaType string) ([]byte, error) {
@@ -82,7 +89,15 @@ func (f Fetcher) Fetch(ctx context.Context, uri, mediaType string) ([]byte, erro
 	if f.HTTP != nil {
 		client = *f.HTTP
 	}
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		switch {
+		case len(via) > MaxStatusListRedirects:
+			return fmt.Errorf("more than %d redirects", MaxStatusListRedirects)
+		case next.URL.Scheme != "https":
+			return fmt.Errorf("a redirect to %s, which isn't https", next.URL.Redacted())
+		}
+		return nil
+	}
 	if client.Transport, err = f.transport(client.Transport); err != nil {
 		return nil, err
 	}
@@ -94,8 +109,10 @@ func (f Fetcher) Fetch(ctx context.Context, uri, mediaType string) ([]byte, erro
 	if resp.StatusCode/100 != 2 {
 		return nil, fmt.Errorf("statuslist: fetch %s: HTTP %d", uri, resp.StatusCode)
 	}
-	if got := resp.Header.Get("Content-Type"); got != mediaType {
-		return nil, fmt.Errorf("statuslist: fetch %s: content type %q, want %q", uri, got, mediaType)
+	// Parameters such as charset don't change the type, and media types
+	// compare case-insensitively (RFC 9110 §8.3.1).
+	if got, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err != nil || !strings.EqualFold(got, mediaType) {
+		return nil, fmt.Errorf("statuslist: fetch %s: content type %q, want %q", uri, resp.Header.Get("Content-Type"), mediaType)
 	}
 	limit := f.MaxBytes
 	if limit <= 0 {

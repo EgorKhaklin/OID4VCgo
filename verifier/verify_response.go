@@ -143,6 +143,30 @@ type VerifyResponseRequest struct {
 	// the check, through this or the trust configuration itself.
 	IssuerAuthorized func(ctx context.Context, a IssuerAuthorization) error
 
+	// AnyIssuerForAnyType declares that every issuer the key resolvers
+	// trust may issue every credential type the query asks for, so
+	// IssuerAuthorized is deliberately unset. Under AssuranceProduction,
+	// VerifyResponse needs IssuerAuthorized or this: without either, any
+	// trusted issuer (a loyalty-card issuer under the same ecosystem CA,
+	// say) would be accepted for a PID by mistake.
+	AnyIssuerForAnyType bool
+
+	// Accept, if set, runs on a response that verified, before
+	// VerifyResponse returns it, and its error is VerifyResponse's:
+	// RequireValidStatus (or RequireValidStatusFrom) checks revocation.
+	// id is "" here; Transactions passes its request's. Nothing else
+	// checks revocation.
+	Accept func(ctx context.Context, id string, result VerifyResponseResult) error
+	// NoStatusCheck declares that this Verifier deliberately checks no
+	// revocation status. Under AssuranceProduction, VerifyResponse needs
+	// Accept or this, so a Verifier that simply forgot Accept doesn't
+	// take revoked credentials.
+	NoStatusCheck bool
+
+	// statusByTransactions is set by Transactions, which runs its own
+	// Accept once the response is its request's.
+	statusByTransactions bool
+
 	// ResponseEncryptionKey is the same ephemeral private key a prior
 	// BuildAuthorizationRequest/BuildDCAPIAuthorizationRequest call
 	// returned as ResponseDecryptionKey. REQUIRED if Query requests
@@ -327,11 +351,17 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	if err := checkMaxKeyBindingAgeRequired(req); err != nil {
 		return VerifyResponseResult{}, err
 	}
+	if err := checkTimeBounds(req); err != nil {
+		return VerifyResponseResult{}, err
+	}
 	if err := checkTrustedAuthoritiesConfigured(req); err != nil {
 		return VerifyResponseResult{}, err
 	}
 	if v.cfg.Assurance == AssuranceProduction {
 		if err := checkProductionKeySources(req); err != nil {
+			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
+		}
+		if err := checkProductionDecisions(req); err != nil {
 			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
 		}
 	}
@@ -374,7 +404,49 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 			return VerifyResponseResult{}, firstFailure
 		}
 	}
+	if req.Accept != nil && !req.statusByTransactions {
+		if err := req.Accept(ctx, "", result); err != nil {
+			return VerifyResponseResult{}, err
+		}
+	}
 	return result, nil
+}
+
+// MaxAllowedClockSkew and MaxAllowedKeyBindingAge bound
+// VerifyResponseRequest's MaxClockSkew and MaxKeyBindingAge: beyond them
+// a credential that has expired, or a Key Binding JWT made long ago for
+// another purpose, would be taken as current. Clocks an hour apart are
+// already broken; a holder presents within minutes of the request.
+const (
+	MaxAllowedClockSkew     = time.Hour
+	MaxAllowedKeyBindingAge = time.Hour
+)
+
+// checkTimeBounds refuses a negative or excessive MaxClockSkew or
+// MaxKeyBindingAge.
+func checkTimeBounds(req VerifyResponseRequest) error {
+	if req.MaxClockSkew < 0 || req.MaxClockSkew > MaxAllowedClockSkew {
+		return fmt.Errorf("verifier: verify response: max_clock_skew %s is outside 0..%s", req.MaxClockSkew, MaxAllowedClockSkew)
+	}
+	if req.MaxKeyBindingAge < 0 || req.MaxKeyBindingAge > MaxAllowedKeyBindingAge {
+		return fmt.Errorf("verifier: verify response: max_key_binding_age %s is outside 0..%s", req.MaxKeyBindingAge, MaxAllowedKeyBindingAge)
+	}
+	return nil
+}
+
+// checkProductionDecisions refuses, under AssuranceProduction, a
+// request that hasn't decided which issuers may issue which types
+// (IssuerAuthorized, or AnyIssuerForAnyType) and whether revocation is
+// checked (Accept, or NoStatusCheck): left undecided, each silently
+// accepts what it shouldn't.
+func checkProductionDecisions(req VerifyResponseRequest) error {
+	if req.IssuerAuthorized == nil && !req.AnyIssuerForAnyType {
+		return errors.New("under AssuranceProduction, set issuer_authorized (which issuers may issue which types) or any_issuer_for_any_type: without either, any trusted issuer is accepted for any type")
+	}
+	if req.Accept == nil && !req.NoStatusCheck && !req.statusByTransactions {
+		return errors.New("under AssuranceProduction, set accept (verifier.RequireValidStatus checks revocation) or no_status_check: without either, a revoked credential is accepted")
+	}
+	return nil
 }
 
 // checkMaxKeyBindingAgeRequired and checkTrustedAuthoritiesConfigured

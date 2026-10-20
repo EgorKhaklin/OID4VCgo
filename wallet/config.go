@@ -39,6 +39,13 @@ type Config struct {
 	// — passed directly to fapihttp.New. REQUIRED.
 	Fetch fapihttp.Config
 
+	// Locales are the holder's preferred languages (BCP 47 tags, most
+	// preferred first). FetchCredentialIssuerMetadata sends them as
+	// Accept-Language, as OpenID4VCI 1.0 §12.2.2 recommends, so display
+	// metadata comes in them. A tag that isn't letters, digits and
+	// hyphens is left out. None sends no Accept-Language.
+	Locales []string
+
 	// VerifierTrust decides which Verifiers' Request Objects this
 	// Wallet accepts (OID4VP §5.9.3) — see VerifierTrust's own doc
 	// comment. Required by FetchAuthorizationRequest, so optional for a
@@ -62,6 +69,12 @@ type Config struct {
 	// is still used, unless RequireSignedIssuerMetadata is set. When
 	// unset, a signed response is refused, since it can't be verified.
 	IssuerMetadataRoots *x509.CertPool
+	// IssuerMetadataLeafPolicy, if set, decides whether a certificate
+	// under IssuerMetadataRoots may sign issuer metadata: an extended key
+	// usage or certificate policy the ecosystem marks those signers'
+	// certificates with, so one issued under the same roots for another
+	// role, such as a Verifier's, can't vouch for an issuer.
+	IssuerMetadataLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	// RequireSignedIssuerMetadata refuses Credential Issuer Metadata
 	// that isn't signed by a certificate chaining to

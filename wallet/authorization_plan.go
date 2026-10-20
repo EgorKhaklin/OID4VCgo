@@ -24,6 +24,14 @@ type AuthorizationPlan struct {
 	// Configuration has a scope, and the Wallet requests by scope).
 	Scopes []string
 
+	// AuthorizationDetails request the offered Credential Configurations
+	// that have no scope (§12.2.4: "If scope is absent, the only way to
+	// request the Credential is using authorization_details"), one
+	// openid_credential entry each (§5.1.1). Their locations is the
+	// Credential Issuer when its metadata lists authorization_servers
+	// (§5.1.1's MUST). BuildAuthorizationRequestForPlan sends them.
+	AuthorizationDetails []oid4vci.AuthorizationDetail
+
 	// IssuerState is the offer's issuer_state, or "" — BuildAuthorizationRequest
 	// sends it on.
 	IssuerState string
@@ -70,21 +78,25 @@ func PlanAuthorization(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata)
 	if plan.AuthorizationServer, err = selectAuthorizationServer(offer.CredentialIssuer, named, metadata.AuthorizationServers); err != nil {
 		return AuthorizationPlan{}, fmt.Errorf("wallet: plan authorization: %w", err)
 	}
-	seen := map[string]bool{}
+	seen, detailed := map[string]bool{}, map[string]bool{}
 	for _, id := range offer.CredentialConfigurationIDs {
 		conf, ok := metadata.CredentialConfigurationsSupported[id]
 		if !ok {
 			return AuthorizationPlan{}, fmt.Errorf("wallet: plan authorization: offered configuration %q isn't in the issuer's metadata", id)
 		}
 		if conf.Scope == "" {
-			return AuthorizationPlan{}, fmt.Errorf("wallet: plan authorization: offered configuration %q has no scope", id)
+			if !detailed[id] {
+				detailed[id] = true
+				plan.AuthorizationDetails = append(plan.AuthorizationDetails, authorizationDetailFor(id, offer.CredentialIssuer, metadata))
+			}
+			continue
 		}
 		if !seen[conf.Scope] {
 			seen[conf.Scope] = true
 			plan.Scopes = append(plan.Scopes, conf.Scope)
 		}
 	}
-	if len(plan.Scopes) == 0 {
+	if len(plan.Scopes) == 0 && len(plan.AuthorizationDetails) == 0 {
 		return AuthorizationPlan{}, errors.New("wallet: plan authorization: the offer offers no credential configuration")
 	}
 	return plan, nil
@@ -219,4 +231,14 @@ func AuthorizationServerFor(issuer string, metadata oid4vci.Metadata, named stri
 		return "", fmt.Errorf("wallet: metadata is for issuer %q, not %q", metadata.CredentialIssuer.String(), issuer)
 	}
 	return selectAuthorizationServer(issuer, named, metadata.AuthorizationServers)
+}
+
+// authorizationDetailFor is the openid_credential authorization detail
+// requesting configuration id (§5.1.1).
+func authorizationDetailFor(id, credentialIssuer string, metadata oid4vci.Metadata) oid4vci.AuthorizationDetail {
+	d := oid4vci.AuthorizationDetail{Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: id}
+	if len(metadata.AuthorizationServers) > 0 {
+		d.Locations = []string{credentialIssuer}
+	}
+	return d
 }

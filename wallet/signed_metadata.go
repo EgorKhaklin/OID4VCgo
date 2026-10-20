@@ -66,7 +66,7 @@ func (w *Wallet) verifySignedMetadata(token, issuerURL string) ([]byte, error) {
 	if err := certchain.CheckNoAnchor(x5c); err != nil {
 		return nil, fmt.Errorf("signed metadata: signer certificate: %w", err)
 	}
-	leaf, err := certchain.VerifyLeafWithPolicyAt(x5c, w.cfg.IssuerMetadataRoots, nil, w.deps.Clock.Now())
+	leaf, err := certchain.VerifyLeafWithPolicyAt(x5c, w.cfg.IssuerMetadataRoots, w.cfg.IssuerMetadataLeafPolicy, w.deps.Clock.Now())
 	if err != nil {
 		return nil, fmt.Errorf("signed metadata: signer certificate: %w", err)
 	}
@@ -100,28 +100,38 @@ func (w *Wallet) verifySignedMetadata(token, issuerURL string) ([]byte, error) {
 	return json.Marshal(claims)
 }
 
-// checkSignedMetadataClaims checks a signed metadata JWT's sub, iat and
-// exp.
+// checkSignedMetadataClaims checks a signed metadata JWT's sub, iat,
+// exp and nbf. Its times are NumericDates, which may be fractional
+// (RFC 7519 §2).
 func (w *Wallet) checkSignedMetadataClaims(claims map[string]json.RawMessage, issuerURL string) error {
 	var sub string
 	if err := json.Unmarshal(claims["sub"], &sub); err != nil || sub != issuerURL {
 		return fmt.Errorf("sub %s doesn't name the issuer %q", claims["sub"], issuerURL)
 	}
 	now := w.deps.Clock.Now()
-	var iat int64
-	if err := json.Unmarshal(claims["iat"], &iat); err != nil {
+	var iatValue float64
+	if err := json.Unmarshal(claims["iat"], &iatValue); err != nil {
 		return errors.New("iat is missing or not a number")
 	}
-	if time.Unix(iat, 0).After(now.Add(maxSignedMetadataClockSkew)) {
+	iat := numericDateTime(iatValue)
+	if iat.After(now.Add(maxSignedMetadataClockSkew)) {
 		return errors.New("iat is in the future")
 	}
-	if age := w.cfg.MaxIssuerMetadataAge; age > 0 && time.Unix(iat, 0).Before(now.Add(-age)) {
-		return fmt.Errorf("issued %s ago, over the %s allowed", now.Sub(time.Unix(iat, 0)).Round(time.Second), age)
+	if age := w.cfg.MaxIssuerMetadataAge; age > 0 && iat.Before(now.Add(-age)) {
+		return fmt.Errorf("issued %s ago, over the %s allowed", now.Sub(iat).Round(time.Second), age)
 	}
 	if raw, present := claims["exp"]; present {
-		var exp int64
-		if err := json.Unmarshal(raw, &exp); err != nil || !time.Unix(exp, 0).After(now) {
+		var exp float64
+		// RFC 7519 §4.1.4: not accepted on or after exp.
+		if err := json.Unmarshal(raw, &exp); err != nil || !now.Before(numericDateTime(exp)) {
 			return errors.New("expired")
+		}
+	}
+	if raw, present := claims["nbf"]; present {
+		var nbf float64
+		// RFC 7519 §4.1.5: not accepted before nbf.
+		if err := json.Unmarshal(raw, &nbf); err != nil || now.Add(maxSignedMetadataClockSkew).Before(numericDateTime(nbf)) {
+			return errors.New("not valid yet (nbf)")
 		}
 	}
 	return nil

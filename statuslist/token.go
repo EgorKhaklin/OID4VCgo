@@ -10,6 +10,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // TokenTyp is the required JOSE "typ" header of a Status List Token in
@@ -44,13 +45,14 @@ func IssueToken(signer crypto.Signer, alg oid4vci.JOSEAlg, claims TokenClaims, k
 // issueToken signs claims into a Status List Token in JWT format with
 // the given JOSE header.
 func issueToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, header map[string]any) (string, error) {
-	if claims.Sub == "" {
-		return "", fmt.Errorf("statuslist: TokenClaims.Sub is required")
+	if err := claims.validate(); err != nil {
+		return "", err
 	}
-	if !claims.StatusList.Bits.valid() {
-		return "", fmt.Errorf("statuslist: TokenClaims.StatusList.Bits is invalid")
-	}
+	return signToken(signer, alg, claims, header)
+}
 
+// signToken is issueToken without its checks on claims.
+func signToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, header map[string]any) (string, error) {
 	payload := make(map[string]any, len(claims.Additional)+5)
 	for k, v := range claims.Additional {
 		payload[k] = v
@@ -147,16 +149,35 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 		return TokenClaims{}, fmt.Errorf("statuslist: token typ is %q, want %q", typ, TokenTyp)
 	}
 
+	// NumericDates may be fractional (RFC 7519 §2), so they're read as
+	// numbers; member names must match exactly (strictjson).
 	var decoded struct {
 		Iss        string     `json:"iss"`
 		Sub        string     `json:"sub"`
-		Iat        int64      `json:"iat"`
-		Exp        *int64     `json:"exp"`
+		Iat        *float64   `json:"iat"`
+		Exp        *float64   `json:"exp"`
+		Nbf        *float64   `json:"nbf"`
 		TTL        *int64     `json:"ttl"`
 		StatusList StatusList `json:"status_list"`
 	}
-	if err := json.Unmarshal(raw, &decoded); err != nil {
+	if err := strictjson.Unmarshal(raw, &decoded); err != nil {
 		return TokenClaims{}, fmt.Errorf("statuslist: unmarshal token claims: %w", err)
+	}
+	var times [3]*int64
+	for i, v := range []*float64{decoded.Iat, decoded.Exp, decoded.Nbf} {
+		if v == nil {
+			continue
+		}
+		at, err := jwtdate.FromFloat(*v)
+		if err != nil {
+			return TokenClaims{}, fmt.Errorf("statuslist: token %s: %w", [3]string{"iat", "exp", "nbf"}[i], err)
+		}
+		unix := at.Unix()
+		times[i] = &unix
+	}
+	var iat int64
+	if times[0] != nil {
+		iat = *times[0]
 	}
 	if decoded.Sub == "" {
 		return TokenClaims{}, fmt.Errorf("statuslist: token is missing the required sub claim")
@@ -168,14 +189,14 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 		return TokenClaims{}, fmt.Errorf("statuslist: token's status_list.bits is invalid")
 	}
 
-	if err := checkTokenTimes(decoded.Iat, decoded.Exp, opts); err != nil {
+	if err := checkTokenTimes(iat, times[1], times[2], opts); err != nil {
 		return TokenClaims{}, err
 	}
 
 	return TokenClaims{
 		Sub:        decoded.Sub,
-		Iat:        decoded.Iat,
-		Exp:        decoded.Exp,
+		Iat:        iat,
+		Exp:        times[1],
 		TTL:        decoded.TTL,
 		StatusList: decoded.StatusList,
 	}, nil
@@ -184,11 +205,16 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 // defaultMaxClockSkew is VerifyOptions.MaxClockSkew's zero value's.
 const defaultMaxClockSkew = time.Minute
 
+// DefaultMaxAgeWithoutExp bounds how long ago a Status List Token with
+// no exp may have been issued, when VerifyOptions.MaxAge is unset.
+const DefaultMaxAgeWithoutExp = 24 * time.Hour
+
 // checkTokenTimes checks a Status List Token's iat, which draft-14
-// §5.1 requires, and exp, against opts: issued not in the future (past
-// MaxClockSkew), not longer ago than MaxAge when it's set, and not
-// expired.
-func checkTokenTimes(iat int64, exp *int64, opts VerifyOptions) error {
+// §5.1 requires, exp and nbf, against opts: issued not in the future
+// (past MaxClockSkew), not longer ago than MaxAge when it's set, not
+// expired, and not before its nbf (RFC 7519 §4.1.5: it "MUST NOT be
+// accepted for processing" before then, past MaxClockSkew).
+func checkTokenTimes(iat int64, exp, nbf *int64, opts VerifyOptions) error {
 	now := time.Now
 	if opts.Now != nil {
 		now = opts.Now
@@ -205,8 +231,24 @@ func checkTokenTimes(iat int64, exp *int64, opts VerifyOptions) error {
 	if issued.After(t.Add(skew)) {
 		return fmt.Errorf("statuslist: token was issued in the future")
 	}
-	if opts.MaxAge > 0 && issued.Before(t.Add(-opts.MaxAge)) {
-		return fmt.Errorf("statuslist: token was issued %s ago, over the %s allowed", t.Sub(issued).Round(time.Second), opts.MaxAge)
+	if nbf != nil {
+		notBefore, err := jwtdate.FromUnix(*nbf)
+		if err != nil {
+			return fmt.Errorf("statuslist: token nbf is out of range")
+		}
+		if notBefore.After(t.Add(skew)) {
+			return fmt.Errorf("statuslist: token isn't valid before %s", notBefore.UTC().Format(time.RFC3339))
+		}
+	}
+	maxAge := opts.MaxAge
+	if maxAge == 0 && exp == nil {
+		// Neither the token nor the caller bounds its freshness: a token
+		// without exp would otherwise be good forever, so a copy cached
+		// or replayed from before a revocation would keep saying valid.
+		maxAge = DefaultMaxAgeWithoutExp
+	}
+	if maxAge > 0 && issued.Before(t.Add(-maxAge)) {
+		return fmt.Errorf("statuslist: token was issued %s ago, over the %s allowed", t.Sub(issued).Round(time.Second), maxAge)
 	}
 	if exp != nil {
 		expires, err := jwtdate.FromUnix(*exp)
@@ -218,6 +260,25 @@ func checkTokenTimes(iat int64, exp *int64, opts VerifyOptions) error {
 		if !t.Before(expires) {
 			return fmt.Errorf("statuslist: token is expired")
 		}
+	}
+	return nil
+}
+
+// validate refuses claims a Relying Party would refuse (draft-14 §5.1,
+// §6.1): sub and iat are REQUIRED, ttl "MUST be a positive number",
+// exp is after iat, and bits is 1, 2, 4 or 8.
+func (claims TokenClaims) validate() error {
+	switch {
+	case claims.Sub == "":
+		return fmt.Errorf("statuslist: TokenClaims.Sub is required")
+	case claims.Iat <= 0:
+		return fmt.Errorf("statuslist: TokenClaims.Iat is required")
+	case claims.TTL != nil && *claims.TTL <= 0:
+		return fmt.Errorf("statuslist: TokenClaims.TTL must be positive")
+	case claims.Exp != nil && *claims.Exp <= claims.Iat:
+		return fmt.Errorf("statuslist: TokenClaims.Exp must be after Iat")
+	case !claims.StatusList.Bits.valid():
+		return fmt.Errorf("statuslist: TokenClaims.StatusList.Bits is invalid")
 	}
 	return nil
 }

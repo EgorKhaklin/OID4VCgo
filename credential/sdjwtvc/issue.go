@@ -106,7 +106,9 @@ type IssueOptions struct {
 	HashAlg HashAlg
 
 	// Decoys adds this many decoy digests to the top-level _sd array
-	// (RFC 9901 §4.2.5). 0 by default; Issue rejects a negative value
+	// (RFC 9901 §4.2.5) when the credential has a selectively
+	// disclosable claim; one without has no _sd at all (SD-JWT VC
+	// draft-13 §3.2.2.4). 0 by default; Issue rejects a negative value
 	// or one above MaxDecoys.
 	Decoys int
 
@@ -231,12 +233,15 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueO
 
 	applyPlaintextClaims(sealed, claims)
 
-	if opts.Decoys > 0 {
-		if err := addDecoys(sealed, hashAlg, opts.Decoys); err != nil {
-			return "", nil, err
+	// Decoys only beside a real disclosure: an SD-JWT VC with no
+	// selectively disclosable claims "MUST NOT contain the _sd claim"
+	// (draft-13 §3.2.2.4), nor then _sd_alg.
+	if len(disclosures) > 0 {
+		if opts.Decoys > 0 {
+			if err := addDecoys(sealed, hashAlg, opts.Decoys); err != nil {
+				return "", nil, err
+			}
 		}
-	}
-	if len(disclosures) > 0 || opts.Decoys > 0 {
 		sealed["_sd_alg"] = string(hashAlg)
 	}
 

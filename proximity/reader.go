@@ -282,9 +282,17 @@ type Verified struct {
 
 	// IssuerCN is the document signer certificate's subject common
 	// name; TrustAnchorCN is the common name of the root in roots its
-	// chain verified to.
+	// chain verified to. Both are for display: any document signer
+	// under any trusted root names itself, so authorize on IssuerChain.
 	IssuerCN      string
 	TrustAnchorCN string
+
+	// IssuerChain is the document signer's verified certificate path,
+	// leaf first, ending at the trusted root: the one ISO/IEC 18013-5's
+	// document signer checks passed on. Decide which issuers to accept
+	// from it, and bind the status list's signer to it with
+	// mdoc.StatusTrust(Status.StatusList, IssuerChain).
+	IssuerChain []*x509.Certificate
 
 	// ValidFrom and ValidUntil are the MSO's validity, which Verify
 	// checked against the reader's clock and its allowed skew.
@@ -367,7 +375,12 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if len(chain) == 0 {
 		return Verified{}, fmt.Errorf("proximity: IssuerAuth has no x5chain")
 	}
-	if byType, ok := r.rootsByDocType[doc.docType]; ok && byType != nil {
+	if byType, ok := r.rootsByDocType[doc.docType]; ok {
+		// A document type named with no roots falls back to none: the
+		// general roots weren't chosen for it.
+		if byType == nil {
+			return Verified{}, fmt.Errorf("proximity: no issuer roots for %q", doc.docType)
+		}
 		roots = byType
 	}
 	leaf, chains, err := certchain.VerifyChainsAt(chain, roots, now)
@@ -431,13 +444,14 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	}
 
 	out := Verified{
-		DocType:    verified.DocType,
-		Claims:     verified.NameSpaces,
-		IssuerCN:   leaf.Subject.CommonName,
-		ValidFrom:  verified.ValidityInfo.ValidFrom,
-		ValidUntil: verified.ValidityInfo.ValidUntil,
-		DeviceAuth: doc.deviceSigned.AuthType,
-		Status:     verified.Status,
+		DocType:     verified.DocType,
+		Claims:      verified.NameSpaces,
+		IssuerCN:    leaf.Subject.CommonName,
+		ValidFrom:   verified.ValidityInfo.ValidFrom,
+		ValidUntil:  verified.ValidityInfo.ValidUntil,
+		DeviceAuth:  doc.deviceSigned.AuthType,
+		Status:      verified.Status,
+		IssuerChain: anchored,
 	}
 	if len(doc.deviceSigned.NameSpaces) > 0 {
 		out.DeviceSignedClaims = doc.deviceSigned.NameSpaces

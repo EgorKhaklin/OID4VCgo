@@ -2,6 +2,7 @@ package issuer_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -43,10 +44,13 @@ func TestRequestCredential_ChecksTypeMetadata(t *testing.T) {
 		"plaintext, but sd always": {VCT: testVCT, Additional: map[string]any{"given_name": "Erika"}},
 		"missing, but mandatory":   {VCT: testVCT},
 	} {
+		// The deployment's claims, not the Wallet's request, are wrong:
+		// a server error, not an OAuth error the Wallet would act on.
+		var ierr *issuer.Error
 		if err := request(claims); err == nil {
 			t.Errorf("%s: issued", name)
-		} else {
-			assertIssuerError(t, err, issuer.ErrorCredentialRequestDenied)
+		} else if errors.As(err, &ierr) {
+			t.Errorf("%s: %v, want a server error", name, err)
 		}
 	}
 }

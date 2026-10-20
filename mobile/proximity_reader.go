@@ -52,14 +52,15 @@ type proximityReaderConfig struct {
 	RequireMDLSignerEKU bool `json:"require_mdl_signer_eku,omitempty"`
 }
 
-// NewProximityReader configures a reader from configJSON: {"abi",
-// "issuer_roots", "issuer_roots_by_doctype", "reader_key_id", "reader_chain",
-// "max_clock_skew_seconds", "require_mdl_signer_eku"}. keys holds the
-// reader's key, reader_key_id; it may be nil for a reader that doesn't
-// sign.
+// NewProximityReader configures a reader from configJSON:
+// {"issuer_roots", "issuer_roots_by_doctype", "reader_key_id",
+// "reader_chain", "max_clock_skew_seconds", "require_mdl_signer_eku"},
+// refusing any other key, so a misspelled option isn't silently left
+// at its default. keys holds the reader's key, reader_key_id; it may be
+// nil for a reader that doesn't sign.
 func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, error) {
 	var cfg proximityReaderConfig
-	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+	if err := decodeConfig(configJSON, &cfg); err != nil {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("reader config: %w", err))
 	}
 	var roots *x509.CertPool

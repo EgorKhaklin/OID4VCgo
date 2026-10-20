@@ -21,7 +21,7 @@ func TestIssueVerifyTokenCWT(t *testing.T) {
 	exp := time.Now().Add(24 * time.Hour).Unix()
 	claims := TokenClaims{
 		Sub:        "https://example.com/statuslists/1",
-		Iat:        time.Now().Unix(),
+		Iat:        time.Now().Add(-2 * time.Hour).Unix(),
 		Exp:        &exp,
 		StatusList: sl,
 	}
@@ -62,7 +62,7 @@ func TestVerifyTokenCWTRejectsExpired(t *testing.T) {
 	exp := time.Now().Add(-time.Hour).Unix()
 	token, err := IssueTokenCWT(key, cose.ES256, TokenClaims{
 		Sub:        "https://example.com/statuslists/1",
-		Iat:        time.Now().Unix(),
+		Iat:        time.Now().Add(-2 * time.Hour).Unix(),
 		Exp:        &exp,
 		StatusList: sl,
 	}, nil)

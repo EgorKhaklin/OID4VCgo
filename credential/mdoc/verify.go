@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
+
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
@@ -88,7 +90,8 @@ func Verify(signed IssuerSigned, docType string, issuerPub crypto.PublicKey, alg
 		return VerifiedMSO{}, fmt.Errorf("mdoc: docType %q does not match the MSO's own docType %q", docType, mso.DocType)
 	}
 
-	if err := checkDigests(signed, mso); err != nil {
+	nameSpaces, err := checkDigests(signed, mso)
+	if err != nil {
 		return VerifiedMSO{}, err
 	}
 
@@ -117,15 +120,6 @@ func Verify(signed IssuerSigned, docType string, issuerPub crypto.PublicKey, alg
 		return VerifiedMSO{}, fmt.Errorf("mdoc: decode DeviceKeyInfo.DeviceKey: %w", err)
 	}
 
-	nameSpaces := make(map[string]map[string]interface{}, len(signed.NameSpaces))
-	for namespace, items := range signed.NameSpaces {
-		elements := make(map[string]interface{}, len(items))
-		for _, item := range items {
-			elements[item.ElementIdentifier] = item.ElementValue
-		}
-		nameSpaces[namespace] = elements
-	}
-
 	return VerifiedMSO{
 		DocType:           mso.DocType,
 		NameSpaces:        nameSpaces,
@@ -138,40 +132,59 @@ func Verify(signed IssuerSigned, docType string, issuerPub crypto.PublicKey, alg
 }
 
 // checkDigests recomputes each disclosed item's digest and checks it
-// against mso.ValueDigests. It always digests the exact bytes signed.NameSpaces'
-// backing implementation actually produced (signed.rawItems when
-// available — see IssuerSigned's own doc comment on why re-deriving
-// bytes from the decoded IssuerSignedItem isn't safe in general).
-func checkDigests(signed IssuerSigned, mso MobileSecurityObject) error {
+// against mso.ValueDigests, returning the disclosed elements. It digests
+// the exact bytes signed carries (signed.rawItems when available — see
+// IssuerSigned's doc comment on why re-deriving bytes from the decoded
+// IssuerSignedItem isn't safe in general), and takes each element's
+// identifier, digestID and value from those same bytes: never from the
+// exported NameSpaces, which a caller can change after unmarshalling.
+func checkDigests(signed IssuerSigned, mso MobileSecurityObject) (map[string]map[string]interface{}, error) {
+	nameSpaces := make(map[string]map[string]interface{}, len(signed.NameSpaces))
 	for namespace, items := range signed.NameSpaces {
 		digests, ok := mso.ValueDigests[namespace]
 		if !ok {
-			return fmt.Errorf("mdoc: namespace %q has no entry in valueDigests", namespace)
+			return nil, fmt.Errorf("mdoc: namespace %q has no entry in valueDigests", namespace)
 		}
-		cached := signed.rawItems[namespace]
+		cached, hasCache := signed.rawItems[namespace]
+		if hasCache && len(cached) != len(items) {
+			return nil, fmt.Errorf("mdoc: namespace %q was changed after unmarshalling", namespace)
+		}
+		elements := make(map[string]interface{}, len(items))
 		for i, item := range items {
-			want, ok := digests[item.DigestID]
-			if !ok {
-				return fmt.Errorf("mdoc: namespace %q digestID %d has no entry in valueDigests", namespace, item.DigestID)
+			itemBytes, err := hashedItemBytes(cached, i, item)
+			if err != nil {
+				return nil, err
 			}
-			var itemBytes []byte
-			var err error
-			if i < len(cached) {
-				itemBytes = cached[i]
-			} else {
-				itemBytes, err = issuerSignedItemBytes(item)
-				if err != nil {
-					return err
-				}
+			var hashed IssuerSignedItem
+			if err := unwrapTag24(itemBytes, &hashed); err != nil {
+				return nil, fmt.Errorf("mdoc: namespace %q item %d: %w", namespace, i, err)
+			}
+			want, ok := digests[hashed.DigestID]
+			if !ok {
+				return nil, fmt.Errorf("mdoc: namespace %q digestID %d has no entry in valueDigests", namespace, hashed.DigestID)
 			}
 			got, err := digest(mso.DigestAlgorithm, itemBytes)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if !bytes.Equal(got, want) {
-				return fmt.Errorf("mdoc: namespace %q element %q: digest mismatch", namespace, item.ElementIdentifier)
+				return nil, fmt.Errorf("mdoc: namespace %q element %q: digest mismatch", namespace, hashed.ElementIdentifier)
 			}
+			if _, dup := elements[hashed.ElementIdentifier]; dup {
+				return nil, fmt.Errorf("mdoc: namespace %q element %q appears twice", namespace, hashed.ElementIdentifier)
+			}
+			elements[hashed.ElementIdentifier] = hashed.ElementValue
 		}
+		nameSpaces[namespace] = elements
 	}
-	return nil
+	return nameSpaces, nil
+}
+
+// hashedItemBytes is the IssuerSignedItemBytes item i was received as,
+// or, without them, item's own encoding.
+func hashedItemBytes(cached []cbor.RawMessage, i int, item IssuerSignedItem) ([]byte, error) {
+	if i < len(cached) {
+		return cached[i], nil
+	}
+	return issuerSignedItemBytes(item)
 }

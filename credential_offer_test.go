@@ -142,3 +142,21 @@ func TestTxCode_DescriptionCountsCharacters(t *testing.T) {
 		t.Error("301 characters accepted")
 	}
 }
+
+// A Credential Offer's credential_issuer is an absolute URL with no
+// query or fragment (OpenID4VCI 1.0 §12.2.1).
+func TestCredentialOffer_ValidateIssuerIdentifier(t *testing.T) {
+	for issuer, ok := range map[string]bool{
+		"https://issuer.example":          true,
+		"https://issuer.example/tenant":   true,
+		"https://issuer.example?tenant=a": false,
+		"https://issuer.example#x":        false,
+		"https://issuer.example?":         false,
+		"issuer.example":                  false,
+	} {
+		o := oid4vci.CredentialOffer{CredentialIssuer: issuer, CredentialConfigurationIDs: []string{"pid"}}
+		if err := o.Validate(); (err == nil) != ok {
+			t.Errorf("%q: %v", issuer, err)
+		}
+	}
+}

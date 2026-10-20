@@ -84,6 +84,10 @@ func (p *Presentation) verifyRegistrations(now time.Time) (Registration, map[str
 			out.Status = RegistrationInvalid
 		case err == nil && out.Status != RegistrationVerified:
 			out.Status, out.Registration = RegistrationVerified, reg
+			// The registrar's text, for the holder's screen: as an
+			// issuer's display text (displayText).
+			out.Name = displayText(reg.Name, maxDisplayName)
+			out.Purpose = displayText(reg.Purpose, maxDisplayDescription)
 		}
 		if err != nil {
 			continue

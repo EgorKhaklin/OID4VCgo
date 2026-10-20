@@ -279,6 +279,10 @@ func (r polarisRun) judge(t *testing.T, v polarisVector) (verdict, why string) {
 		Now:              now,
 		MaxClockSkew:     skew,
 		MaxKeyBindingAge: skew,
+		// The vectors pin no issuer per type, and test no status: the
+		// production decisions are declared, not made.
+		AnyIssuerForAnyType: true,
+		NoStatusCheck:       true,
 	})
 	if err != nil {
 		var refused *Error

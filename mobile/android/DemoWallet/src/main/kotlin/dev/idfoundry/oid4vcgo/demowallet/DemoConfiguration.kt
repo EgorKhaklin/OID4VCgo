@@ -42,7 +42,9 @@ data class DemoConfiguration(
     companion object {
         private const val PREFS = "demo"
         private const val KEY = "demo-configuration"
-        private val json = Json { ignoreUnknownKeys = true }
+        // Strict: a misspelled wallet option is refused, not silently
+        // dropped before the wallet could refuse it.
+        private val json = Json
 
         fun load(context: Context, intent: Intent?): DemoConfiguration? {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

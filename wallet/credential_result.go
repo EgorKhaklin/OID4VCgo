@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"time"
 
@@ -61,28 +63,44 @@ type credentialResponseBody struct {
 	Credentials    []oid4vci.IssuedCredential `json:"credentials"`
 	NotificationID string                     `json:"notification_id,omitempty"`
 	TransactionID  string                     `json:"transaction_id,omitempty"`
-	Interval       int64                      `json:"interval,omitempty"`
+	// Interval is "a positive number" of seconds (§8.3), not
+	// necessarily a whole one.
+	Interval float64 `json:"interval,omitempty"`
 }
 
 // parseCredentialResult decodes a Credential Response or Deferred
 // Credential Response body: HTTP 200 or 202 decode as
 // credentialResponseBody; anything else is a *Error built from
 // statusCode/body via parseError.
-func parseCredentialResult(statusCode int, body []byte) (CredentialResult, error) {
+func parseCredentialResult(statusCode int, header http.Header, body []byte) (CredentialResult, error) {
 	switch statusCode {
 	case http.StatusOK, http.StatusAccepted:
 		var wire credentialResponseBody
 		if err := json.Unmarshal(body, &wire); err != nil {
 			return CredentialResult{}, fmt.Errorf("decode response: %w", err)
 		}
+		// §8.3: credentials "MUST NOT be used if the transaction_id
+		// parameter is present", and one of the two says what happened.
+		switch {
+		case len(wire.Credentials) > 0 && wire.TransactionID != "":
+			return CredentialResult{}, errors.New("decode response: it carries both credentials and a transaction_id")
+		case len(wire.Credentials) == 0 && wire.TransactionID == "":
+			return CredentialResult{}, errors.New("decode response: it carries neither credentials nor a transaction_id")
+		}
+		var interval time.Duration
+		if wire.TransactionID != "" {
+			// Whole seconds, rounded up, at least one: never sooner than
+			// asked, and never a tight loop.
+			interval = time.Duration(math.Max(1, math.Ceil(wire.Interval))) * time.Second
+		}
 		return CredentialResult{
 			Credentials:    wire.Credentials,
 			NotificationID: wire.NotificationID,
 			TransactionID:  wire.TransactionID,
-			Interval:       time.Duration(wire.Interval) * time.Second,
+			Interval:       interval,
 		}, nil
 	default:
-		return CredentialResult{}, parseError(EndpointCredential, statusCode, body)
+		return CredentialResult{}, parseErrorWithHeader(EndpointCredential, statusCode, header, body)
 	}
 }
 
@@ -148,7 +166,7 @@ func (w *Wallet) postCredentialResult(ctx context.Context, resource ProtectedRes
 		}
 	}
 
-	result, err := parseCredentialResult(res.StatusCode, respBody)
+	result, err := parseCredentialResult(res.StatusCode, res.Header, respBody)
 	if err != nil {
 		return CredentialResult{}, fmt.Errorf("wallet: %s: %w", errPrefix, err)
 	}

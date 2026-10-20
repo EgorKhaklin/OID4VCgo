@@ -64,14 +64,16 @@ type Config struct {
 	// another's name.
 	RequireIssuerName bool
 
-	// IssuerMetadataRoots, RequireSignedIssuerMetadata,
-	// RequireIssuerMetadataName and MaxIssuerMetadataAge are the
+	// IssuerMetadataRoots, IssuerMetadataLeafPolicy,
+	// RequireSignedIssuerMetadata, RequireIssuerMetadataName and
+	// MaxIssuerMetadataAge are the
 	// Credential Issuer Metadata trust settings of wallet.Config: with
 	// IssuerMetadataRoots set, signed metadata (OpenID4VCI §12.2.3, HAIP
 	// 1.0 §4.1) is asked for and verified, and RequireSignedIssuerMetadata
 	// refuses an issuer without it, before the holder authenticates or
 	// enters a transaction code. See wallet.Config for each.
 	IssuerMetadataRoots         *x509.CertPool
+	IssuerMetadataLeafPolicy    func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 	RequireSignedIssuerMetadata bool
 	RequireIssuerMetadataName   bool
 	MaxIssuerMetadataAge        time.Duration
@@ -136,8 +138,10 @@ type Config struct {
 	RequireSignedDCAPIRequests bool
 
 	// Locales are the holder's preferred languages (BCP 47 tags, most
-	// preferred first), for the issuer's display metadata. None means
-	// the issuer's entry without a locale, else its first.
+	// preferred first), for the issuer's display metadata: sent as
+	// Accept-Language when fetching it (OpenID4VCI 1.0 §12.2.2), and
+	// used to pick among its entries. None means the issuer's entry
+	// without a locale, else its first.
 	Locales []string
 
 	// RequestRefresh asks the Authorization Server, in the authorization
@@ -166,14 +170,18 @@ type Config struct {
 
 	// Development relaxes what production requires, for a wallet
 	// talking to services on this machine. Never set it in a wallet
-	// that holders use. It:
+	// that holders use, nor just to use memory stores: it also drops
+	// the network protections below. It:
 	//   - lets issuers, Authorization Servers, Verifiers and status
 	//     lists be on loopback addresses, over http there too;
 	//   - permits wallet.NoVerifierTrust as VerifierTrust;
-	//   - skips the checks receiving credentials makes at production
-	//     assurance: Durable Authorizations (and Grants, with
-	//     RequestRefresh), Keys declaring durable custody, Random
-	//     crypto/rand — and fapigo/client's own production checks.
+	//   - makes requests through an ordinary HTTP client, which reaches
+	//     private networks, instead of the hardened one;
+	//   - skips the checks New makes at production assurance: Durable
+	//     Authorizations (and Grants, with RequestRefresh), Keys
+	//     declaring durable custody, Random crypto/rand, one pool per
+	//     role (or leaf policies) — and fapigo/client's own production
+	//     checks.
 	Development bool
 
 	// TLSPins, if set, pins hosts' certificates (see TLSPins) on the
@@ -301,6 +309,14 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if cfg.RequireTrustedMdocReader && cfg.MdocReaderRoots == nil {
 		return nil, errors.New("walletflow: Config.RequireTrustedMdocReader needs MdocReaderRoots")
 	}
+	if err := cfg.validateChoices(); err != nil {
+		return nil, err
+	}
+	if !cfg.Development {
+		if err := checkRoleSeparation(cfg); err != nil {
+			return nil, err
+		}
+	}
 	if err := cfg.TLSPins.Validate(); err != nil {
 		return nil, err
 	}
@@ -331,8 +347,10 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	core, err := wallet.New(wallet.Config{
 		Assurance: cfg.assurance(), ProofSigningAlg: oid4vci.ES256, VerifierTrust: cfg.VerifierTrust,
 		RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
-		IssuerMetadataRoots:        cfg.IssuerMetadataRoots, RequireSignedIssuerMetadata: cfg.RequireSignedIssuerMetadata,
-		RequireIssuerMetadataName: cfg.RequireIssuerMetadataName, MaxIssuerMetadataAge: cfg.MaxIssuerMetadataAge,
+		IssuerMetadataRoots:        cfg.IssuerMetadataRoots, IssuerMetadataLeafPolicy: cfg.IssuerMetadataLeafPolicy,
+		RequireSignedIssuerMetadata: cfg.RequireSignedIssuerMetadata,
+		RequireIssuerMetadataName:   cfg.RequireIssuerMetadataName, MaxIssuerMetadataAge: cfg.MaxIssuerMetadataAge,
+		Locales: cfg.Locales,
 		Fetch: fapihttp.Config{
 			MaxResponseBytes: maxResponseBytes, RequestTimeout: httpTimeout, MaxRedirects: 2,
 			AllowLoopbackHosts: cfg.Development,
@@ -341,10 +359,73 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: %w", err)
 	}
-	return &Wallet{
+	w := &Wallet{
 		cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, liveKeys: map[string]int{}, resuming: map[string]bool{},
 		openGrants: map[string]bool{}, grantLocks: map[string]*sync.Mutex{},
-	}, nil
+	}
+	// What receiving credentials needs in production, checked now rather
+	// than when a holder first tries to receive one.
+	if !cfg.Development && cfg.IssuerRoots != nil {
+		if err := w.checkProductionReceiving(); err != nil {
+			return nil, err
+		}
+		if cfg.RedirectURI != "" && !deps.Authorizations.Durable() {
+			return nil, errors.New("walletflow: receiving credentials in production needs a Durable Dependencies.Authorizations, so an authorization survives the app being suspended")
+		}
+	}
+	return w, nil
+}
+
+// validateChoices refuses a Config field set to a value it has no
+// meaning for, which would otherwise act as its default: an
+// IssuanceProfile(9) as the less strict ProfileOpenID4VCI, say.
+func (c Config) validateChoices() error {
+	switch {
+	case c.IssuanceProfile != ProfileOpenID4VCI && c.IssuanceProfile != ProfileHAIP:
+		return fmt.Errorf("walletflow: Config.IssuanceProfile %d isn't a profile", c.IssuanceProfile)
+	case c.CopyPolicy != CopyPerPresentation && c.CopyPolicy != CopyPerVerifier:
+		return fmt.Errorf("walletflow: Config.CopyPolicy %d isn't a policy", c.CopyPolicy)
+	case c.BatchSize < 0:
+		return fmt.Errorf("walletflow: Config.BatchSize %d is negative", c.BatchSize)
+	}
+	return nil
+}
+
+// checkRoleSeparation refuses, in production, one certificate pool
+// given to two roles unless both narrow their certificates by a leaf
+// policy (an extended key usage, say): otherwise a Verifier's
+// certificate under the shared pool could sign credentials the wallet
+// accepts, an issuer's pass for a trusted Verifier or mdoc reader, or a
+// Verifier register itself. Pools are compared as wholes (CertPool
+// can't be listed), so only the same pool is caught; the mobile façade,
+// which has the certificates, also catches overlapping ones.
+func checkRoleSeparation(c Config) error {
+	type role struct {
+		name      string
+		pool      *x509.CertPool
+		hasPolicy bool
+	}
+	roles := []role{
+		{"IssuerRoots", c.IssuerRoots, c.IssuerLeafPolicy != nil},
+		{"RegistrarRoots", c.RegistrarRoots, c.RegistrarLeafPolicy != nil},
+		{"MdocReaderRoots", c.MdocReaderRoots, c.MdocReaderLeafPolicy != nil},
+	}
+	if v, ok := c.VerifierTrust.(wallet.X5CVerifierRoots); ok {
+		roles = append(roles, role{"VerifierTrust", v.Roots, v.LeafPolicy != nil})
+	}
+	for i, a := range roles {
+		for _, b := range roles[i+1:] {
+			if a.pool == nil || b.pool == nil || !a.pool.Equal(b.pool) {
+				continue
+			}
+			for _, r := range []role{a, b} {
+				if !r.hasPolicy {
+					return fmt.Errorf("walletflow: %s and %s are the same certificate pool: give %s a leaf policy (an extended key usage) to tell its certificates apart, or use separate pools", a.name, b.name, r.name)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (c Config) assurance() wallet.AssuranceLevel {
@@ -420,8 +501,13 @@ func (w *Wallet) checkIssuance() error {
 	if w.cfg.Development {
 		return nil
 	}
-	// fapigo/client's production assurance, checked here first to say
-	// what to change.
+	return w.checkProductionReceiving()
+}
+
+// checkProductionReceiving is what receiving credentials needs in
+// production: fapigo/client's production assurance, checked here first
+// to say what to change.
+func (w *Wallet) checkProductionReceiving() error {
 	switch {
 	case w.cfg.RequestRefresh && !w.deps.Grants.Durable():
 		return errors.New("walletflow: refreshing credentials in production needs a Durable Dependencies.Grants, so a refresh token survives a restart")
