@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.49.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.48.0...v0.49.0) (2026-10-20)
+
+
+### Features
+
+* **issuer:** send a DPoP nonce for the Credential Endpoint in the Nonce Response ([c476e8c](https://github.com/IDFoundry/OID4VCgo/commit/c476e8c9009e6eef1b95a323d2832fbeeea6bcd0))
+* **walletflowtest:** send the Credential Endpoint's DPoP nonce in the Nonce Response ([11252a9](https://github.com/IDFoundry/OID4VCgo/commit/11252a9db9ffeaa07b9f5f2ab5b565a4aa3cb430))
+* **wallet:** use the Nonce Response's DPoP nonce, and send Accept-Language for issuer metadata ([0eced4b](https://github.com/IDFoundry/OID4VCgo/commit/0eced4b00aae408505f1a8cab14264826bcbfdd2))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.59.0 ([a92595a](https://github.com/IDFoundry/OID4VCgo/commit/a92595a7936d7882ba329b110a06bb66b4d819e3))
+* **deps:** pin FAPIgo v0.60.0 ([a2e9155](https://github.com/IDFoundry/OID4VCgo/commit/a2e9155c0b3a75057254357d135a40702b8ab545))
+
 ## [0.48.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.47.0...v0.48.0) (2026-10-20)
 
 
