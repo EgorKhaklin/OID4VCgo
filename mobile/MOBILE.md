@@ -16,6 +16,33 @@ found, and the questions still open; update it as phases land.
 
 ## Goal
 
+NFC engagement: the Go core/mobile facade implement static
+and negotiated Hs/Hr messages for BLE and classic NFC-only carriers. Android
+adds Type 4 read/write staging, TNEP, an app-owned HCE session, IsoDep
+reader, classic DO53/ENVELOPE/GET RESPONSE transports, and demo options.
+Host APDU tests include repeated reads, partial writes, 180 KB responses,
+consent delay and field loss; Go tests verify credentials and Annex D.
+Physical interop and normative specification review remain pending.
+See `ABI.md`'s NFC additions and `../proximity/README.md`.
+
+The Kotlin owner delays BLE resource creation until all Hs bytes have
+been read. Replacing it awaits bounded cleanup; HCE services never
+generate keys, UUIDs or sessions. Services answer on an IO worker and
+discard responses after deactivation/replacement. Static NFC and
+classic NFC-only use the same consent flow. Negotiated BLE transport
+settings are read after Hr selection, avoiding stale UUIDs.
+Type 4 files are limited to 32767 bytes (32765 NDEF bytes); chunked
+NDEF records are rejected. Classic NFC transfer uses short commands
+and chaining, including controllers without extended APDUs, with a
+2 MiB whole-message cap. NFC-only retrieval supports static and negotiated
+engagement; iOS/USB and CCE remain separate work. No conformance or
+independent RF interoperability is claimed by simulated tests.
+
+Reader tap actions explain Bluetooth permission behavior and auto-selection;
+verified results show the actual NFC-only/Bluetooth data transport and BLE
+role. Foreground preference refusal is surfaced to the holder. Focused
+Compose instrumentation checks the transport labels separately from RF tests.
+
 A cross-platform wallet SDK, compiled with `gomobile bind` into an iOS
 XCFramework and an Android AAR, covering the wallet's side of the
 credential lifecycle:
@@ -1260,3 +1287,14 @@ be received from at all. Issuance now follows the issuer's metadata
   app's signing certificate) or Play Integrity — and key attestation
   formats. Both demos attest any key with the passport-vdc demo's
   provider until then.
+
+## Combined engagement preview
+
+Android adds `startCombinedPresentation` without changing existing public API
+signatures or ABI 12. It reuses the serialized NFC owner registry and proximity
+consent state machine. Independent ephemeral keys prevent cross-offer transcript
+reuse; the native arbiter claims QR at BLE State-start or NFC at application
+SELECT. QR resources stop before gated NFC BLE starts. NFC data can omit QR when
+Bluetooth permissions are absent. Tests and local validation gates are tracked
+in the root `STATUS.md`; physical RF/BLE, competing-wallet routing and refused
+foreground preference remain device-validation gates.

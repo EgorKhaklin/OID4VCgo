@@ -526,6 +526,45 @@ signs during `Respond`. A malformed request is `protocol`.
 
 ## ProximityPresentation
 
+### NFC engagement additions
+
+The following calls are additive within ABI 12. They provide Go
+handover messages for native Type 4/TNEP integration; they do not
+register an Android NFC service or perform NFC I/O. They have not yet
+been published in a release.
+
+| Call | Contract |
+|---|---|
+| `Wallet.StartNFCProximityPresentationWithModes(modesJSON)` | Static NFC handover to BLE; modes use the existing JSON string array |
+| `Wallet.StartNFCNegotiatedProximityPresentationWithModes(modesJSON)` | Prepare negotiated handover; finish it before starting the selected BLE transport |
+| `Wallet.StartNFCDataProximityPresentation(maxCommand, maxResponse)` | Static NFC-only engagement; APDU data-field limits 1–65535 and 1–65536, excluding headers/status |
+| `Wallet.StartNFCNegotiatedDataProximityPresentation(maxCommand, maxResponse)` | Negotiated NFC-only engagement; complete Hr/Hs before retrieval |
+| `ProximityPresentation.HandoverSelect()` | Copy of NDEF Hs without NLEN; nil for QR or before negotiated selection |
+| `ProximityPresentation.HandleHandoverRequest(hr)` | Complete NDEF Hr to Hs; freezes the accepted selection; repeated identical Hr is idempotent before establishment |
+| `NewNFCHandoverRequest(modesJSON)` | Reader's Hr for supported mdoc BLE modes; retain exact returned bytes |
+| `NewNFCHandoverRequestWithNFCData(modesJSON, maxCommand, maxResponse)` | Offer BLE plus classic NFC; retain exact Hr |
+| `ProximityReader.StartFromHandover(hs)` | Start a reader from a static NDEF Hs |
+| `ProximityReader.StartFromNegotiatedHandover(hs, hr)` | Start from the exact negotiated NDEF messages |
+| `ProximityReader.StartFromNFCDataHandover(hs)` | Classic NFC-only reader with the same authentication and issuer policy |
+| `ProximityReader.StartFromNegotiatedNFCDataHandover(hs, hr)` | Validate negotiated NFC carrier limits against Hr; bind both exact messages |
+| `ParseNfcDataParameters(hs)` | Validate an NFC-only Hs; return `{"abi", "max_command", "max_response"}` |
+
+For NFC, `Engagement().qr_code` is empty. Static roles share one UUID;
+negotiated `Engagement` describes the chosen mode after Hr processing.
+Reader signing, issuer roots, per-document trust policy and clock skew
+remain those of `NewProximityReader`. Consent and response methods are
+the existing presentation methods. Malformed handover input is
+`invalid_input`; calls after the wallet presentation has progressed are
+`wrong_step`. The platform owns message staging, TNEP, lifecycle and
+radio cleanup. For NFC-only holders, `ble_modes` is an empty array,
+`service_uuid` and `ble_mode` are empty, and no BLE radio is needed.
+Reader `Engagement`'s BLE fields are meaningful only for BLE sessions;
+the native adapter retains the selected NFC data parameters separately.
+Whole encrypted messages still go through `HandleMessage`/`Request`/
+`Respond`; native code adds/removes DO53 and implements APDU chaining.
+
+### QR and BLE presentation
+
 An ISO/IEC 18013-5 in-person presentation, from the holder's side: the
 holder shows a QR code, a reader scans it and connects over BLE, and
 the reader asks for an mdoc. The app owns the BLE transport: in mdoc
@@ -671,3 +710,37 @@ wait on the network or the holder are `suspend` functions run on
 `protocolError` and `isRetryable`. In-person sessions add
 `ProximityException` for Bluetooth failures, and need the runtime
 permissions `ProximityPermissions` lists.
+
+## Combined engagement (additive, ABI 12)
+
+`Wallet.StartCombinedProximityPresentation(modesJSON string, negotiated,
+nfcData, omitQR bool) (*ProximityPresentation, error)` creates independent QR
+and NFC offers with one wallet consent state machine. Modes use the existing
+nonempty JSON array (`peripheral_server`, `central_client`). Classic NFC data
+uses command/response maxima 255/256. `omitQR` suppresses QR and BLE construction
+when the native application lacks Bluetooth permission for a data-only NFC path.
+
+New methods on `ProximityPresentation`:
+
+| Method | Meaning |
+| --- | --- |
+| `IsCombined() bool` | Native code must explicitly select an offer before messages. |
+| `SelectEngagement(nfc bool) error` | Atomically claim NFC (`true`) or QR (`false`); close the losing Go session. Wrong/closed steps return `wrong_step`. |
+| `SelectedEngagement() string` | Empty until selected; then `qr`, `nfc_ble`, or `nfc_data`. |
+
+For a combined presentation, initial `Engagement()` supplies QR transport
+metadata (or empty QR/BLE fields if omitted). After NFC selection it supplies
+the NFC carrier metadata. `HandoverSelect()` always addresses the NFC offer;
+`HandleHandoverRequest()` prepares the independent NFC offer before selection
+and is rejected once QR wins. It does not withdraw QR or switch its metadata.
+Commit NFC-to-BLE after the complete Hs read; commit NFC data on its data AID
+SELECT after handover. Repeated winning claims
+are idempotent while waiting for a request. Losing claims and claims after
+termination cannot replace keys or transcripts. `Terminate()` closes both offers.
+Existing JSON shapes and all existing call signatures are unchanged.
+
+Android adds `Wallet.startCombinedPresentation(context, timeouts, modes, nfc)`
+and `NfcEngagementOptions(negotiated, nfcData)`. The returned
+`CombinedPresentation` exposes QR text, the existing state flow, respond,
+decline, cancel, selected-engagement flow, foreground preference and awaited
+close. See `android/docs/PresentingInPerson.md` for resume/pause/exit calls.

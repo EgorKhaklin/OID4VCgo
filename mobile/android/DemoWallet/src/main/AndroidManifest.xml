@@ -14,6 +14,11 @@
         android:label="OID4VC Demo"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:usesCleartextTraffic="false">
+        <service android:name=".DemoNfcService" android:exported="true"
+            android:permission="android.permission.BIND_NFC_SERVICE">
+            <intent-filter><action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" /></intent-filter>
+            <meta-data android:name="android.nfc.cardemulation.host_apdu_service" android:resource="@xml/oid4vc_nfc_aids" />
+        </service>
         <activity
             android:name=".MainActivity"
             android:exported="true"

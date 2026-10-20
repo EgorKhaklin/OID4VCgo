@@ -1,9 +1,15 @@
 package dev.idfoundry.oid4vcgo.demowallet
 
+import android.app.Activity
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,10 +26,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Contactless
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -50,6 +61,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -156,10 +170,18 @@ fun InPersonScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeav
     val state = model.inPersonState
     BackHandler(onBack = onLeave)
     InPersonScaffold("Share in person", onBack = null, bottomBar = bottomBar) {
+        if (model.inPerson != null) model.notice?.let {
+            Text(it, Modifier.padding(16.dp).testTag("in-person-notice"), color = Color(0xFFE65100))
+        }
         when {
             model.inPerson == null -> NoSession(model, start)
+            model.inPerson is InPersonSession.Nfc && (state == null || state == ProximityPresentation.State.WaitingForReader) ->
+                Waiting(if (model.inPersonEngagement.nfcData)
+                    "Keep the phones together through consent and sharing by NFC."
+                else "Hold the phones together for the NFC tap. Once connected by Bluetooth, you can move them apart.", nfcTap = true)
             state == null || state == ProximityPresentation.State.WaitingForReader || state == ProximityPresentation.State.Connected ->
-                QRCodeView(model.inPerson?.qrCode.orEmpty(), connected = state == ProximityPresentation.State.Connected)
+                QRCodeView(model.inPerson?.qrCode.orEmpty(), connected = state == ProximityPresentation.State.Connected,
+                    orTap = model.inPerson is InPersonSession.Combined)
             state is ProximityPresentation.State.RequestReceived -> InPersonConsent(model, state.request, onCertificates = { certificates = it })
             state == ProximityPresentation.State.Responding -> Waiting("Sharing…")
             // Done starts the next session: a new QR code.
@@ -182,7 +204,7 @@ private fun NoSession(model: WalletModel, start: () -> Unit) {
 }
 
 @Composable
-private fun QRCodeView(qrCode: String, connected: Boolean) {
+internal fun QRCodeView(qrCode: String, connected: Boolean, orTap: Boolean = false) {
     val bitmap = remember(qrCode) { if (qrCode.isEmpty()) null else qrBitmap(qrCode) }
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         if (connected) {
@@ -197,17 +219,42 @@ private fun QRCodeView(qrCode: String, connected: Boolean) {
                     Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(Color.White).testTag("in-person-qr"),
                 )
             }
+            // QR and NFC both offered: whichever reader engages first gets the request.
+            if (orTap) {
+                Spacer(Modifier.height(16.dp))
+                NfcTapIndicator(if (bitmap == null) 120.dp else 48.dp)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (bitmap == null) "Hold the phones together for the NFC tap."
+                    else "Or hold the phones together for the NFC tap. The first reader to connect gets the request.",
+                    Modifier.testTag("in-person-or-tap"),
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun Waiting(text: String) {
-    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        CircularProgressIndicator()
+private fun Waiting(text: String, nfcTap: Boolean = false) {
+    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        if (nfcTap) NfcTapIndicator() else CircularProgressIndicator()
         Spacer(Modifier.height(16.dp))
-        Text(text)
+        Text(text, textAlign = TextAlign.Center)
     }
+}
+
+/** The contactless symbol, pulsing: waiting for the phones to be held together. */
+@Composable
+internal fun NfcTapIndicator(size: Dp = 120.dp) {
+    val pulse by rememberInfiniteTransition(label = "nfc-tap").animateFloat(
+        initialValue = 0.85f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "nfc-tap-scale",
+    )
+    Icon(
+        Icons.Default.Contactless, "NFC tap",
+        Modifier.size(size).graphicsLayer { scaleX = pulse; scaleY = pulse; alpha = pulse }.testTag("nfc-tap-indicator"),
+        tint = MaterialTheme.colorScheme.primary,
+    )
 }
 
 /** Who is asking, what for, and the holder's choice of elements. */
@@ -283,7 +330,7 @@ private fun ReaderCard(reader: ProximityReaderIdentity, onCertificates: (List<X5
 }
 
 @Composable
-private fun InPersonOutcome(state: ProximityPresentation.State, onDone: () -> Unit) {
+internal fun InPersonOutcome(state: ProximityPresentation.State, onDone: () -> Unit) {
     val text = when (state) {
         is ProximityPresentation.State.Presented -> "Shared with the reader." + if (state.linkable) " That copy had been shown to another verifier before." else ""
         ProximityPresentation.State.Declined -> "Declined: nothing was shared."
@@ -296,8 +343,16 @@ private fun InPersonOutcome(state: ProximityPresentation.State, onDone: () -> Un
         }
         else -> ""
     }
+    // Shared: a green tick; failed: red; declined, cancelled or ended: neutral.
+    val (icon, tint, tag) = when (state) {
+        is ProximityPresentation.State.Presented -> Triple(Icons.Default.CheckCircle, Color(0xFF2E7D32), "in-person-shared")
+        is ProximityPresentation.State.Failed -> Triple(Icons.Default.Error, Color(0xFFC62828), "in-person-failed")
+        else -> Triple(Icons.Default.Info, MaterialTheme.colorScheme.onSurfaceVariant, "in-person-ended")
+    }
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Text(text, Modifier.testTag("in-person-outcome"))
+        Icon(icon, null, Modifier.size(96.dp).testTag(tag), tint = tint)
+        Spacer(Modifier.height(16.dp))
+        Text(text, Modifier.testTag("in-person-outcome"), textAlign = TextAlign.Center)
         Spacer(Modifier.height(24.dp))
         Button(onDone, Modifier.testTag("in-person-done")) { Text("Done") }
     }
@@ -355,6 +410,12 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
     var preset by remember { mutableStateOf<ReaderPreset?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var denied by remember { mutableStateOf(false) }
+    val activity = LocalContext.current as? Activity
+    DisposableEffect(model, activity) {
+        onDispose {
+            if (activity?.isChangingConfigurations != true && model.nfcReadPreset != null) model.closeReading()
+        }
+    }
     val startScan = rememberBluetoothPermissions(ProximityPermissions.reader, then = {
         // An engagement handed over by link needs no scan.
         val given = model.engagementToRead
@@ -367,13 +428,19 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
         )
     }
     val state = model.readingState
-    if (model.reading == null) BackHandler(onBack = onLeave)
-    val back = if (model.reading != null) ({ model.closeReading(); preset = null }) else null
+    val hasSession = model.reading != null || model.nfcReadPreset != null
+    if (!hasSession) BackHandler(onBack = onLeave)
+    val back = if (hasSession) ({ model.closeReading(); preset = null }) else null
     InPersonScaffold("Verify in person", onBack = back, bottomBar = bottomBar) {
         when {
             !model.readerAvailable -> Text(
                 "Verifying needs a reader in the configuration: see mobile/android/DemoWallet/README.md.",
                 Modifier.padding(16.dp).testTag("reader-unavailable"),
+            )
+            model.reading == null && model.nfcReadPreset != null -> NfcReaderWaiting(
+                model.nfcReadPreset!!, model.notice,
+                onCancel = { model.closeReading(); preset = null },
+                onRetry = { model.nfcReadPreset?.let(model::armNfcReader) },
             )
             model.reading == null -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                 item {
@@ -389,19 +456,53 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
                         Column(Modifier.padding(16.dp)) {
                             Text(p.title)
                             Text(p.elements.values.flatten().joinToString { elementLabel(it) }, style = MaterialTheme.typography.bodySmall)
+                            val startNfc = rememberBluetoothPermissions(ProximityPermissions.reader,
+                                then = { preset = p; model.armNfcReader(p) }, denied = { denied = true })
+                            OutlinedButton(startNfc, Modifier.testTag("reader-nfc")) { Text("Tap with Bluetooth allowed") }
+                            TextButton({ preset = p; model.armNfcReader(p) }, Modifier.testTag("reader-nfc-only")) { Text("Tap without asking for Bluetooth") }
+                            Text("The holder chooses NFC or Bluetooth transfer. The second option skips asking for Bluetooth permissions.", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
             }
             state == null || state == ProximityReaderSession.State.Connecting -> Waiting("Connecting to the holder's phone…")
-            state == ProximityReaderSession.State.WaitingForResponse -> Waiting("Waiting for the holder to agree…")
-            else -> ReaderOutcome(state, model.readingPreset, model.reading?.mode, onDone = { model.closeReading(); preset = null })
+            state == ProximityReaderSession.State.WaitingForResponse -> Waiting(if (model.reading?.usesNfcData == true)
+                "Keep the phones together while the holder agrees and shares by NFC…"
+            else "Waiting for the holder to agree…")
+            else -> ReaderOutcome(state, model.readingPreset, model.reading?.usesNfcData == true,
+                model.reading?.takeUnless { it.usesNfcData }?.mode, onDone = { model.closeReading(); preset = null })
         }
     }
 }
 
+/** An armed NFC reader gets a dedicated screen, like the QR scanner does. */
 @Composable
-private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPreset?, mode: ProximityBLEMode?, onDone: () -> Unit) {
+internal fun NfcReaderWaiting(preset: ReaderPreset, notice: String?, onCancel: () -> Unit, onRetry: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp).testTag("reader-nfc-waiting"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("NFC verification", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(16.dp))
+        if (notice == null) {
+            NfcTapIndicator()
+            Spacer(Modifier.height(16.dp))
+            Text("Waiting for an NFC tap", Modifier.testTag("reader-nfc-ready"))
+        }
+        Text(preset.title, Modifier.padding(vertical = 12.dp), fontWeight = FontWeight.SemiBold)
+        Text("Hold the holder's phone near this phone's NFC antenna. Keep both phones unlocked and the holder's presentation screen open.")
+        Text("The holder selects NFC or Bluetooth transfer. For NFC transfer, keep the phones together through consent and sharing.", Modifier.padding(vertical = 12.dp))
+        notice?.let {
+            Text(it, Modifier.testTag("reader-nfc-notice"), color = Color(0xFFC62828))
+            OutlinedButton(onRetry, Modifier.testTag("reader-nfc-retry")) { Text("Try again") }
+        }
+        OutlinedButton(onCancel, Modifier.padding(top = 16.dp).testTag("reader-nfc-cancel")) { Text("Cancel NFC") }
+    }
+}
+
+@Composable
+private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPreset?, usesNfcData: Boolean, mode: ProximityBLEMode?, onDone: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         when (state) {
             is ProximityReaderSession.State.Verified -> {
@@ -422,18 +523,7 @@ private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPre
                 }
                 item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
                 item { Labeled("Document", v.doctype) }
-                mode?.let { m ->
-                    item {
-                        Labeled(
-                            "Bluetooth",
-                            when (m) {
-                                ProximityBLEMode.CENTRAL_CLIENT -> "Central client mode: the holder connected to this reader"
-                                ProximityBLEMode.PERIPHERAL_SERVER -> "Peripheral server mode: this reader connected to the holder"
-                            },
-                            Modifier.testTag("reader-ble-mode"),
-                        )
-                    }
-                }
+                item { ReaderDataTransport(usesNfcData, mode) }
                 item { Labeled("Issued by", "${v.issuer} (trusted via ${v.trustAnchor})") }
                 item { Labeled("Valid", "${dateFormat.format(v.validFrom)} to ${dateFormat.format(v.validUntil)}") }
                 item { Labeled("Holder's device", if (v.deviceAuth == "mac") "authenticated (MAC)" else "authenticated (signature)") }
@@ -455,6 +545,22 @@ private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPre
             else -> {}
         }
         item { Button(onDone, Modifier.padding(vertical = 16.dp).testTag("reader-done")) { Text("Done") } }
+    }
+}
+
+/** Actual session carrier; an NFC tap alone does not identify the data transport. */
+@Composable
+internal fun ReaderDataTransport(usesNfcData: Boolean, mode: ProximityBLEMode?) {
+    if (usesNfcData) {
+        Labeled("Data transfer", "NFC only", Modifier.testTag("reader-data-transport"))
+    } else if (mode != null) {
+        Column {
+            Labeled("Data transfer", "Bluetooth", Modifier.testTag("reader-data-transport"))
+            Labeled("Bluetooth", when (mode) {
+                ProximityBLEMode.CENTRAL_CLIENT -> "Central client mode: the holder connected to this reader"
+                ProximityBLEMode.PERIPHERAL_SERVER -> "Peripheral server mode: this reader connected to the holder"
+            }, Modifier.testTag("reader-ble-mode"))
+        }
     }
 }
 
@@ -488,7 +594,7 @@ fun PresentScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave
 @Composable
 fun rememberShareInPerson(model: WalletModel): () -> Unit =
     rememberBluetoothPermissions(
-        ProximityPermissions.holder(model.bleModes),
+        if (model.inPersonEngagement.usesBluetooth) ProximityPermissions.holder(model.bleModes) else emptyList(),
         then = { model.shareInPerson() },
         denied = { model.notice = "Allow nearby devices to share in person." },
     )

@@ -9,7 +9,47 @@ the app's job is to:
 3. split each message into chunks and reassemble them, and
 4. pass whole messages to and from this package.
 
-This file covers BLE only. NFC isn't supported yet, nor is BLE L2CAP.
+This file covers BLE GATT and NFC engagement. Go supports QR, static
+and negotiated handover for BLE and NFC-only carriers. Android's
+native adapters implement Type 4/TNEP and classic NFC message transfer;
+see the [Android guide](../mobile/android/docs/PresentingInPerson.md).
+BLE L2CAP is not supported.
+
+## NFC engagement messages
+
+For static handover, `NewNFCDeviceSession(nil, WithBLEModes(...))`
+creates one stable engagement. Expose `HandoverSelect()` as the Type 4
+NDEF file payload, with NLEN added by the platform. Reuse the same
+session for repeated reads. `NewNFCReaderSession(hs, readerOptions...)`
+selects its BLE carrier. Static roles share the advertised UUID; the
+existing BLE GATT transport, reader trust and consent flow then apply.
+
+For negotiated handover, the holder starts with
+`NewNFCNegotiatedDeviceSession` and passes a complete Hr to
+`HandleHandoverRequest`. The reader retains the exact output of
+`NewNFCHandoverRequest`, performs the platform TNEP exchange, and passes
+the received Hs and retained Hr to `NewNFCNegotiatedReaderSession`.
+The negotiated mdoc central-client UUID comes from Hr; its Hs omits it.
+A second identical Hr returns the same Hs before establishment; another
+request cannot replace the accepted transcript.
+
+NDEF parsing is bounded by `MaxNDEFBytes` (65535), supports short and
+normal-length records, and rejects chunked records and malformed IDs,
+references or message boundaries. The exact received Hs/Hr bytes enter
+the session transcript; do not parse and regenerate messages before
+passing them into the constructors.
+
+For classic NFC-only retrieval, use `NewNFCDataDeviceSession` with
+`NFCDataParameters` and `NewNFCDataReaderSession`. Carrier parsing is
+available through `ParseNFCDataHandover`. For TNEP NFC-only, use
+`NewNFCNegotiatedDataDeviceSession`,
+`NewNFCHandoverRequestWithNFCData`, and `NewNFCNegotiatedDataReaderSession`.
+The reader checks the selected limits against its original offer.
+Native code wraps complete encrypted messages in DO53 and
+implements ENVELOPE/GET RESPONSE. Unit tests include the exact Annex D
+negotiated transcript and credential verification for all three paths;
+real-device interoperability and specification review remain required
+before claiming conformance.
 
 The BLE details below follow ISO/IEC 18013-5:2021 §8.3.3.1.1 (Tables 11–13),
 cross-checked against [Multipaz](https://github.com/openwallet-foundation/multipaz)'s
@@ -176,3 +216,22 @@ onMessage { msg ->            // a reassembled Client2Server message
   }
 }
 ```
+
+## Combined QR and NFC offers
+
+`NewCombinedDeviceSession(random, CombinedOptions{Negotiated: false}, opts...)`
+prepares two independent `DeviceSession` offers. `QROffer()` supplies immediate
+QR/BLE metadata; `NFCOffer()` supplies Type 4/TNEP handover bytes. Serialize access
+as for `DeviceSession`. On a QR BLE connection call `Select(false)`; on valid NFC
+application selection call `Select(true)`. Drive only the returned session, stop
+the losing native transport, and call `Close()` on cancellation. A losing claim
+fails. QR omission is available for NFC data without Bluetooth permissions.
+
+Each offer has its own key and service UUIDs. QR binds null Handover; NFC binds
+the exact static `[Hs, null]` or negotiated `[Hs, Hr]`. No key-reuse exception is
+assumed. Annex D transcript tests remain unchanged; combined tests additionally
+verify signed round trips and reject device authentication with wrong handovers.
+Native Android serializes QR cleanup before NFC BLE creation and preserves the
+complete-Hs-read gate. `walletflow.StartCombinedProximityPresentation` and the
+additive gomobile/Kotlin APIs share one consent flow. See Android's
+`docs/PresentingInPerson.md` for lifecycle integration and `STATUS.md` for gates.

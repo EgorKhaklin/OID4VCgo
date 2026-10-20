@@ -79,7 +79,61 @@ wallet's own requests take it as `development_roots`, since Go reads only
 Android's system CA files. The launch extras `reset` (delete every
 credential first), `offer` and `request` (open a link) are for tests.
 
-## In person (ISO/IEC 18013-5 over BLE)
+The demo requires Android 11/API 30 and compileSdk 37. Install a matching
+debug APK with `adb -s <device> install -r <apk>` to preserve data when the
+installed signing key matches; do not uninstall or reset an existing wallet
+just to try a new build. The test-services launch helpers reset the wallet,
+so use manual configuration for an existing integration.
+
+## In person (ISO/IEC 18013-5 over QR/BLE or NFC)
+
+The demo also offers **QR code or NFC tap, then Bluetooth**, **NFC tap and
+Bluetooth**, **Negotiated NFC tap and Bluetooth**, **NFC tap and
+transfer**, and **Negotiated NFC tap and transfer** in the presentation
+settings. The first shows the QR code and answers a tap at the same time
+(`startCombinedPresentation`): the first reader to engage gets the request,
+and the other offer is withdrawn. The Bluetooth ones use the BLE mode
+chosen below them in the same menu, which stays open for both choices. The
+two transfer modes keep the phones together for the whole exchange and
+require no Bluetooth permissions, so the menu greys out the Bluetooth modes.
+The choice is kept across launches.
+Reader presets offer **Tap with Bluetooth allowed**, which requests
+Bluetooth permissions, and **Tap without asking for Bluetooth**, which
+skips that request. Both detect the holder's selected carrier; the second
+action does not force NFC-only if Bluetooth permissions were granted
+previously. To test NFC-only explicitly, select NFC tap and transfer on the
+holder and disable Bluetooth on both phones. The verified result reports
+the actual data transport and the BLE role when applicable. Consent and
+credential verification use the existing presentation flow.
+
+Selecting either tap action opens an NFC waiting screen showing the selected
+request and tap instructions. **Cancel NFC** or Back returns to the request
+list and disables reader mode; leaving the Verify screen also closes it.
+NFC errors show **Try again** without claiming the reader is ready.
+
+Use two NFC-capable Android phones, unlocked with NFC enabled. The verifier
+needs the credential issuer's IACA in `reader.issuer_roots`, and a reader
+identity in `reader.reader_chain` / `reader.reader_key`. If the holder
+requires trusted readers, put that reader's CA in its `mdoc_reader_roots`.
+These are separate trust roles. Choose a preset matching the credential's
+docType and namespace; custom schemas require a corresponding preset.
+Import `demo-config.json` through the configuration mechanism above and
+restart the app so its reader uses the new configuration. Never commit
+private keys or credentials in test evidence.
+
+Test static and negotiated BLE handover in both BLE roles, and static and
+negotiated NFC-only transfer. Verify the reader identity on the holder,
+consent and the disclosed claims on the verifier. Keep the phones together
+through NFC-only consent/transfer; for BLE, separate after handover.
+Repeat, decline, cancel, then test field loss and a fresh session. Record
+device/OS and APK/SDK identifiers. Independent Multipaz tests remain a
+separate interoperability gate.
+
+`DemoNfcService` is declared with the library AIDs; one view-model owner
+retains the session, and foreground preference is refreshed on resume.
+See the [NFC integration guide](../docs/PresentingInPerson.md#nfc-holder-and-reader).
+Emulator APDU tests do not
+establish real-device Multipaz interoperability or ISO conformance.
 
 Over the Kotlin library's `startProximityPresentation` and
 `ProximityReader` ([`mobile/README.md`](../../README.md#in-person-presentation)).

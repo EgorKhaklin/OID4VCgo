@@ -42,6 +42,19 @@ func (w *Wallet) StartProximityPresentation() (*ProximityPresentation, error) {
 // Offering both, the app advertises and scans until the reader connects
 // one way; a reader offered both should choose central client mode.
 func (w *Wallet) StartProximityPresentationWithModes(modesJSON string) (*ProximityPresentation, error) {
+	return w.startProximityPresentationWithModes(modesJSON, w.w.StartProximityPresentation)
+}
+
+// StartNFCProximityPresentationWithModes starts a static NFC handover
+// to BLE. modesJSON has the same shape as StartProximityPresentationWithModes.
+// Expose HandoverSelect as the Type 4 NDEF message (without NLEN), retain
+// the handle through the BLE transaction, and use the existing consent
+// and response methods. This does not register a platform HCE service.
+func (w *Wallet) StartNFCProximityPresentationWithModes(modesJSON string) (*ProximityPresentation, error) {
+	return w.startProximityPresentationWithModes(modesJSON, w.w.StartNFCProximityPresentation)
+}
+
+func parseProximityModes(modesJSON string) ([]proximity.BLEMode, error) {
 	var names []string
 	if err := json.Unmarshal([]byte(modesJSON), &names); err != nil {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("modes: %w", err))
@@ -60,12 +73,25 @@ func (w *Wallet) StartProximityPresentationWithModes(modesJSON string) (*Proximi
 			return nil, newError(CodeInvalidInput, fmt.Errorf("modes: %q isn't peripheral_server or central_client", cleanText(n)))
 		}
 	}
-	p, err := w.w.StartProximityPresentation(modes...)
+	return modes, nil
+}
+
+func (w *Wallet) startProximityPresentationWithModes(modesJSON string, start func(...proximity.BLEMode) (*walletflow.ProximityPresentation, error)) (*ProximityPresentation, error) {
+	modes, err := parseProximityModes(modesJSON)
+	if err != nil {
+		return nil, err
+	}
+	p, err := start(modes...)
 	if err != nil {
 		return nil, classify(err)
 	}
 	return &ProximityPresentation{p: p}, nil
 }
+
+// HandoverSelect returns a copy of the static NFC NDEF message without
+// its Type 4 NLEN prefix, or nil for a QR presentation. A platform must
+// reuse these bytes rather than starting a new presentation per read.
+func (p *ProximityPresentation) HandoverSelect() []byte { return p.p.HandoverSelect() }
 
 type bleModeJSON struct {
 	Mode        string `json:"mode"`
@@ -85,14 +111,19 @@ type bleModeJSON struct {
 // service_uuid and ble_mode are ble_modes' first, peripheral server
 // mode's when offered.
 func (p *ProximityPresentation) Engagement() string {
-	var modes []bleModeJSON
-	if u := p.p.PeripheralServerUUID(); u != "" {
+	engagement := p.p.Engagement()
+	modes := []bleModeJSON{}
+	if u := engagement.PeripheralServerUUID; u != "" {
 		modes = append(modes, bleModeJSON{"peripheral_server", u})
 	}
 	ident := ""
-	if u := p.p.CentralClientUUID(); u != "" {
+	if u := engagement.CentralClientUUID; u != "" {
 		modes = append(modes, bleModeJSON{"central_client", u})
-		ident = base64.StdEncoding.EncodeToString(p.p.BLEIdent())
+		ident = base64.StdEncoding.EncodeToString(engagement.BLEIdent)
+	}
+	first := bleModeJSON{}
+	if len(modes) > 0 {
+		first = modes[0]
 	}
 	text, _ := marshal(struct {
 		result
@@ -101,7 +132,7 @@ func (p *ProximityPresentation) Engagement() string {
 		BLEMode     string        `json:"ble_mode"`
 		BLEModes    []bleModeJSON `json:"ble_modes"`
 		Ident       string        `json:"ident,omitempty"`
-	}{result{ABIVersion}, p.p.QRCode(), modes[0].ServiceUUID, modes[0].Mode, modes, ident})
+	}{result{ABIVersion}, engagement.QRCode, first.ServiceUUID, first.Mode, modes, ident})
 	return text
 }
 

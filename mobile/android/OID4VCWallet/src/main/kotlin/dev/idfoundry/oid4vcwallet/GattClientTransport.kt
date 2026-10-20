@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
@@ -73,6 +74,7 @@ internal class GattClientTransport(
     @Volatile private var mtu = BleChunks.DEFAULT_MTU
     @Volatile private var sessionStarted = false
     @Volatile private var closed = false
+    private var activeScan: Pair<BluetoothLeScanner, ScanCallback>? = null
     /** Devices whose Ident wasn't this session's reader's: never again. */
     private val ignored: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
@@ -86,7 +88,7 @@ internal class GattClientTransport(
                     if (pending != null && !pending.isCompleted) {
                         pending.complete(if (status == BluetoothGatt.GATT_SUCCESS) BluetoothGatt.GATT_FAILURE else status)
                     } else {
-                        fail(ProximityTransportException("the other device disconnected", peerEnded = true))
+                        fail(ProximityTransportException("the other device disconnected"))
                     }
                 }
             }
@@ -213,16 +215,21 @@ internal class GattClientTransport(
                     found.completeExceptionally(ProximityTransportException("BLE scanning failed ($errorCode)"))
                 }
             }
-            scanner.startScan(
+            synchronized(this) {
+                if (closed) throw ProximityTransportException(SESSION_ENDED)
+                activeScan = scanner to scanCallback
+                scanner.startScan(
                 listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(serviceUUID)).build()),
                 ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(),
                 scanCallback,
             )
+            }
             try {
                 withTimeoutOrNull(SCAN_RESTART_MS) { found.await() }?.let { return it }
                 Log.i(TAG, "nothing found in ${SCAN_RESTART_MS / 1000} s: restarting the scan")
             } finally {
                 runCatching { scanner.stopScan(scanCallback) }
+                synchronized(this) { if (activeScan?.second === scanCallback) activeScan = null }
             }
         }
     }
@@ -231,8 +238,11 @@ internal class GattClientTransport(
     private suspend fun attemptConnection(device: BluetoothDevice): Int {
         val pending = CompletableDeferred<Int>()
         connection = pending
-        gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
-            ?: return BluetoothGatt.GATT_FAILURE
+        synchronized(this) {
+            if (closed) throw ProximityTransportException(SESSION_ENDED)
+            gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+                ?: return BluetoothGatt.GATT_FAILURE
+        }
         return withTimeoutOrNull(CONNECT_TIMEOUT_MS) { pending.await() } ?: BluetoothGatt.GATT_FAILURE
     }
 
@@ -339,9 +349,12 @@ internal class GattClientTransport(
         results.trySend(BluetoothGatt.GATT_FAILURE)
     }
 
-    override fun close() {
+    @Synchronized override fun close() {
         if (closed) return
         closed = true
+        activeScan?.let { (scanner, callback) -> runCatching { scanner.stopScan(callback) } }
+        activeScan = null
+        connection?.cancel()
         val g = gatt
         val st = state
         if (g != null && st != null && sessionStarted) {

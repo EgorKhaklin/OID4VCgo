@@ -41,6 +41,14 @@ holder, then respond or decline.
 
 ```kotlin
 import android.content.Context
+import android.app.Activity
+import android.nfc.Tag
+import dev.idfoundry.oid4vcwallet.CombinedPresentation
+import dev.idfoundry.oid4vcwallet.NfcEngagementOptions
+import dev.idfoundry.oid4vcwallet.NfcEngagementService
+import dev.idfoundry.oid4vcwallet.NfcPresentation
+import dev.idfoundry.oid4vcwallet.ProximityBLEMode
+import dev.idfoundry.oid4vcwallet.ProximityDiagnostics
 import dev.idfoundry.oid4vcwallet.MdocPresentation
 import dev.idfoundry.oid4vcwallet.ProximityPresentation
 import dev.idfoundry.oid4vcwallet.ProximityReader
@@ -119,3 +127,208 @@ suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String):
 `VerifiedMdoc` carries the disclosed elements, the document signer and
 the IACA it chains to, and its validity. Its status list reference is
 unchecked: check it before relying on the document.
+
+## NFC holder and reader
+
+The NFC additions include static and negotiated handover for BLE and
+classic NFC-only retrieval. They require physical interoperability and
+normative specification review before a conformance claim. iOS NFC,
+USB readers, L2CAP and Concurrent Channel Engagement are outside this work.
+
+Declare an application subclass, for example `class IdentityNfcService :
+NfcEngagementService()`, and its HCE service:
+
+```xml
+<service android:name=".IdentityNfcService" android:exported="true"
+    android:permission="android.permission.BIND_NFC_SERVICE">
+    <intent-filter>
+        <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
+    </intent-filter>
+    <meta-data android:name="android.nfc.cardemulation.host_apdu_service"
+        android:resource="@xml/oid4vc_nfc_aids" />
+</service>
+```
+
+The library declares optional NFC/HCE hardware and the NFC permission.
+Its AID resource uses category `other` and requires device unlock. Retain
+one `NfcPresentation` at application/view-model level. Start it with:
+
+```kotlin
+class IdentityNfcService : NfcEngagementService()
+
+suspend fun startNfcHolder(
+    context: Context, wallet: Wallet, modes: Set<ProximityBLEMode>,
+): NfcPresentation {
+    return wallet.startNfcPresentation(context, modes = modes)
+}
+// For negotiated NFC-to-BLE, pass negotiated = true.
+// For static NFC-only retrieval, pass nfcData = true.
+// For negotiated NFC-only, pass both nfcData = true and negotiated = true.
+```
+
+Follow `session.state` and use the existing `respond`/`decline` consent
+flow. On a resumed Activity, call
+`owner.preferForeground(activity, IdentityNfcService::class.java)` and
+check its Boolean result. Call `releaseForeground(activity)` on pause
+and completion, and acquire preference again on every resume. The
+platform can refuse preference; the application should explain how
+to select its NFC service. Reapply it to each new presentation.
+
+`owner.close()` cancels and awaits cleanup. Starting another NFC owner
+waits for the previous owner's tasks and radio resources to close.
+Use `startCombinedPresentation` below to offer QR and NFC together;
+do not combine two independent owners. HCE service
+recreation reuses the owner. A process restart leaves it unarmed.
+Repeated reads reuse the key/UUID/Hs and trigger BLE only once the whole
+Hs has been read. NFC removal after BLE handover leaves BLE running.
+Field loss during NFC-only retrieval ends that session; start a new one
+to recover. NFC-only mode does not require Bluetooth permissions.
+
+On the verifier, enable Android reader mode with NFC-A/NFC-B and
+`FLAG_READER_SKIP_NDEF_CHECK`, then invoke from a coroutine:
+
+```kotlin
+suspend fun startNfcReader(
+    context: Context, reader: ProximityReader, tag: Tag,
+    docType: String, elements: Map<String, List<String>>,
+): ProximityReaderSession = reader.startFromNfc(context, tag, docType, elements)
+```
+
+The reader detects static versus negotiated handover and the selected
+carrier. BLE retrieval needs `ProximityPermissions.reader` granted.
+For NFC-only, keep the phones together through consent and response;
+`session.usesNfcData` identifies this path. The BLE `mode` property has
+meaning only when `usesNfcData` is false. Disable reader mode on pause
+or after leaving the reader screen. Cancellation closes IsoDep and interrupts
+blocking transceives and negotiated-handover waits; the coroutine waits for
+its worker to exit. A successful handover keeps the tag open for NFC data
+selection. Removing the tag after BLE selection is safe.
+
+Android Type 4 supports read-only static Hs and staged TNEP writes,
+with a 32767-byte NDEF file limit and chunked NDEF records rejected.
+Classic NFC-only uses short APDUs, ENVELOPE command chaining, DO53,
+and GET RESPONSE with a Le-only command. It supports a 2 MiB complete
+message; the controller's smaller transceive limit is applied as well.
+The final ENVELOPE remains asynchronous during consent, so hardware
+timeout/WTX behavior must be included in real-device validation.
+
+The demo's presentation settings select QR, static NFC-to-BLE,
+negotiated NFC-to-BLE, or NFC-only. Reader presets offer NFC/Bluetooth
+and NFC-only actions; the latter does not request Bluetooth permissions.
+
+## Combined QR and NFC engagement
+
+Use one owner for a screen that displays a QR code and accepts an NFC tap:
+
+```kotlin
+suspend fun startCombinedHolder(
+    context: Context, wallet: Wallet, showQr: (String) -> Unit,
+): CombinedPresentation {
+    val owner = wallet.startCombinedPresentation(
+        context,
+        nfc = NfcEngagementOptions(negotiated = false, nfcData = false),
+    )
+    showQr(owner.qrCode) // Empty when NFC-only is available but BLE permission is absent.
+    return owner
+}
+// Collect owner.state, the same ProximityPresentation.State used by QR sessions.
+// On RequestReceived, use owner.respond(document, credentialID, elements)
+// or owner.decline(). owner.selectedEngagement records QR, NFC_BLE or NFC_DATA.
+```
+
+Hide the QR once `selectedEngagement` becomes non-null; it cannot accept another
+reader after either offer has won.
+
+Retain the owner at application/presentation scope across HCE recreation. Create
+it once on entering the screen, after checking NFC availability. Reuse the
+declared `NfcEngagementService` and `@xml/oid4vc_nfc_aids` manifest entry above.
+The exact activity/screen calls, while that owner exists, are:
+
+```kotlin
+// Activity.onResume(), and immediately after creating an owner while resumed:
+fun resumeCombinedHolder(
+    owner: CombinedPresentation, activity: Activity,
+    showNfcServiceSelectionInstructions: () -> Unit,
+) {
+    val preferred = owner.preferForeground(activity, IdentityNfcService::class.java)
+    if (!preferred) showNfcServiceSelectionInstructions()
+}
+
+// Activity.onPause():
+fun pauseCombinedHolder(owner: CombinedPresentation, activity: Activity) {
+    owner.releaseForeground(activity)
+}
+
+// Screen exit or terminal state, from a retained coroutine that survives navigation:
+suspend fun closeCombinedHolder(owner: CombinedPresentation, activity: Activity) {
+    owner.releaseForeground(activity)
+    owner.cancel() // Withdraw immediately, even if cleanup has to suspend.
+    owner.close()  // Await tasks and radio cleanup before dropping/replacing the owner.
+}
+```
+
+Do not create another owner on each resume or use a coroutine cancelled by the
+screen exit to await cleanup. If creation finishes after pause, retain it and
+defer foreground preference until resume. A refused foreground preference is a
+Boolean result, not proof that NFC routing is available; offer service-selection
+instructions and the QR alternative if present. Do not force a different wallet's
+routing. Pausing releases preference; explicitly close on screen exit.
+
+QR BLE advertising/scanning starts immediately. A completed QR BLE connection
+(the State-start handshake), a complete NFC-to-BLE Hs read, or an NFC data
+application SELECT after handover claims the presentation. Type 4 discovery,
+reading TNEP parameters, and preparing Hr/Hs do not withdraw QR. Field loss
+before Hs creation resets an uncommitted attempt for another tap; QR stays
+available. Static partial reads also reset. Once negotiated Hs is produced,
+field loss before its full read cancels the presentation to keep Hr/Hs frozen,
+unless QR already won. A losing NFC field loss never cancels the winning QR
+session. The losing offer cannot attach or be revived after commitment.
+After QR wins, further NFC APDUs return `6985`. After NFC wins, QR tasks stop and
+their BLE resources close before any NFC BLE transport is created. NFC BLE still
+waits until the complete Hs has been read. There are never two offer advertisers
+running together. For NFC data, keep the devices together through consent.
+
+Use static handover (`NfcEngagementOptions()`, or `negotiated = false`) for
+unknown readers; this is already the combined API default. Negotiated mode
+requires a TNEP-capable reader to select the handover service and write Hr.
+A reader that only reads the initial NDEF gets service parameters, not Hs;
+there is no automatic switch to a different static transcript. Its incomplete
+tap leaves QR available, but cannot establish NFC retrieval. To use such a
+reader over NFC, close this owner and create a static presentation.
+
+ISO/IEC 18013-5:2021's published sample, §6.3.2.3, permits a holder to offer
+either handover method or both; it requires both on the reader. See the
+[ISO-authored sample](https://standards.theiteh.com/catalog/standards/iso/8b349f37-4a4d-4379-9feb-0061079dba81/iso-iec-18013-5-2021)
+and NFC Forum's [CH overview](https://nfc-forum.org/build/specifications/connection-handover-technical-specification/).
+These support explicit mode selection, not a mandatory silent fallback.
+Detailed licensed review of §8.2.2.1, CH 1.5 and TNEP 1.0 remains an open
+conformance gate; public overviews do not replace those normative texts.
+
+For opt-in Android lifecycle diagnostics:
+
+```kotlin
+fun enableProximityDiagnostics(enabled: Boolean) {
+    ProximityDiagnostics.enabled = enabled // Turn off again after troubleshooting.
+}
+```
+
+Filter logcat by `OID4VCProximity`. Events distinguish Type 4 discovery,
+commitment, gate completion, NFC BLE startup with its modes, QR withdrawal
+and cleanup, and an aborted attempt that retains QR. Payloads and credentials
+are not logged. The default is disabled; existing app behavior is unchanged.
+
+The offers have independent ephemeral keys, DeviceEngagements and service UUIDs.
+QR uses a null Handover; NFC uses exactly `[Hs, null]` (static) or `[Hs, Hr]`
+(negotiated). Selection switches the Go session before processing any request;
+consent and response remain one state machine. This avoids assuming permission
+to reuse one EDeviceKey across engagement mechanisms. Existing Annex D vectors
+cover transcript construction; they do not establish that key reuse is permitted.
+
+With `nfcData = true`, missing Bluetooth runtime permissions omit the QR offer
+(`qrCode == ""`) and no Bluetooth transport is constructed. NFC remains armed.
+A QR transport startup failure also leaves the NFC offer available until the
+connection timeout. NFC-to-BLE requires Bluetooth permissions as before.
+
+The additive method keeps the JVM descriptors and default-argument bridges of
+the existing QR and NFC APIs unchanged. `CombinedPresentation` delegates the
+existing state/consent flow and uses the same serialized NFC owner registry.

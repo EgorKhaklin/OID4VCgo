@@ -154,20 +154,29 @@ func NewReaderSession(qr string, opts ...ReaderOption) (*ReaderSession, error) {
 	if !r.engagement.ble {
 		return nil, fmt.Errorf("proximity: DeviceEngagement offers no BLE retrieval method")
 	}
+	if err := configureReader(r, cfg); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// configureReader applies the same authentication and trust policy to
+// every engagement mechanism.
+func configureReader(r *ReaderSession, cfg readerConfig) error {
 	if cfg.maxClockSkew > MaxReaderClockSkew {
-		return nil, fmt.Errorf("proximity: clock skew allowance %s is more than %s", cfg.maxClockSkew, MaxReaderClockSkew)
+		return fmt.Errorf("proximity: clock skew allowance %s is more than %s", cfg.maxClockSkew, MaxReaderClockSkew)
 	}
 	if cfg.signerPolicy == nil {
 		cfg.signerPolicy = DefaultDocumentSignerPolicy
 	}
 	if cfg.readerAuth != nil {
 		if _, err := readerauth.CheckKey(cfg.readerAuth.signer, cfg.readerAuth.chain); err != nil {
-			return nil, fmt.Errorf("proximity: reader authentication: %w", err)
+			return fmt.Errorf("proximity: reader authentication: %w", err)
 		}
 	}
 	r.readerAuth, r.maxClockSkew, r.signerPolicy = cfg.readerAuth, cfg.maxClockSkew, cfg.signerPolicy
 	r.rootsByDocType = cfg.rootsByDocType
-	return r, nil
+	return nil
 }
 
 // newReaderSession is the engagement-independent constructor, as for

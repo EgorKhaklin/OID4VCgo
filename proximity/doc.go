@@ -5,6 +5,10 @@
 // chunking over it — stays in the mobile app; it only carries the
 // messages this package builds and reads. See README.md for how a
 // Kotlin or Swift app drives it.
+// CombinedDeviceSession offers independent QR and NFC DeviceSessions. Native
+// code selects one at connection/application selection, withdraws the loser,
+// and drives only the selected session. QR's null handover and NFC's exact
+// static/negotiated handover never share a session key or transcript.
 //
 // It builds on credential/mdoc (IssuerSigned, the MSO, device
 // signature and MAC) and oid4vpmdoc (DeviceResponse encoding), and adds
@@ -91,9 +95,9 @@
 // # Out of scope
 //
 //   - BLE, NFC and Wi-Fi Aware transport code, and BLE L2CAP.
-//   - NFC engagement and NFC handover. The session transcript takes the
-//     Handover as a parameter internally (the Annex D tests use it), but
-//     only QR engagement is exposed.
+//   - Platform Type 4 tag/APDU I/O and TNEP service state. NFC engagement
+//     constructors encode/parse static and negotiated Hs/Hr messages;
+//     the platform supplies complete NDEF messages and the BLE or NFC transport.
 //   - More than one request per session, and more than one document per
 //     response.
 //   - ISO/IEC 18013-7 (online presentation), OpenID4VP over the Digital
@@ -102,5 +106,5 @@
 // The mobile module wraps this package for apps (ProximityPresentation
 // and ProximityReader in the Swift and Kotlin libraries, through
 // walletflow.StartProximityPresentation on the holder's side), and they
-// carry the BLE GATT transport.
+// carry the BLE GATT transport and, on Android, NFC APDU transport.
 package proximity

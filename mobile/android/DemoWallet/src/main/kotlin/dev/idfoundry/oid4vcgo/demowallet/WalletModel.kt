@@ -26,6 +26,7 @@ import dev.idfoundry.oid4vcwallet.Issuance
 import dev.idfoundry.oid4vcwallet.MdocPresentation
 import dev.idfoundry.oid4vcwallet.ProximityException
 import dev.idfoundry.oid4vcwallet.ProximityPresentation
+import dev.idfoundry.oid4vcwallet.NfcEngagementOptions
 import dev.idfoundry.oid4vcwallet.ProximityReader
 import dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration
 import dev.idfoundry.oid4vcwallet.ProximityBLEMode
@@ -138,8 +139,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         this.config = config
         val reset = intent?.getBooleanExtra("reset", false) == true
         if (reset) {
-            prefs.edit().remove(COPY_POLICY).remove(BLE_MODES).apply()
+            prefs.edit().remove(COPY_POLICY).remove(BLE_MODES).remove(ENGAGEMENT).apply()
             bleModes = ProximityBLEMode.entries.toSet()
+            inPersonEngagement = InPersonEngagement.QR
         }
         copyPolicy = prefs.getString(COPY_POLICY, null)?.let { saved ->
             WalletConfiguration.CopyPolicy.entries.firstOrNull { it.name == saved }
@@ -813,11 +815,42 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     // In person (ISO/IEC 18013-5 over BLE)
 
     /** The in-person presentation in progress, the holder's side. */
-    var inPerson by mutableStateOf<ProximityPresentation?>(null)
+    var inPerson by mutableStateOf<InPersonSession?>(null)
         private set
     var inPersonState by mutableStateOf<ProximityPresentation.State?>(null)
         private set
     private var inPersonJob: Job? = null
+    private var armingJob: Job? = null
+    /** How presenting in person engages the reader, as chosen in the app's settings: QR by default. */
+    var inPersonEngagement by mutableStateOf(
+        prefs.getString(ENGAGEMENT, null).let { saved -> InPersonEngagement.entries.firstOrNull { it.name == saved } } ?: InPersonEngagement.QR,
+    )
+        private set
+
+    /** Chooses how presenting in person engages the reader, from the next session. */
+    fun chooseEngagement(choice: InPersonEngagement) {
+        closeInPerson()
+        inPersonEngagement = choice
+        prefs.edit().putString(ENGAGEMENT, choice.name).commit()
+    }
+
+    fun refreshNfcForeground() {
+        val session = inPerson?.takeIf { it.nfc } ?: return
+        // A biometric prompt can resume the activity after sharing has ended.
+        // Keep terminal sessions from reacquiring routing preference.
+        if (session.state.value.isFinal) {
+            releaseNfcForeground()
+            return
+        }
+        activity.get()?.let { host ->
+            val preferred = runCatching { session.preferForeground(host) }.getOrDefault(false)
+            if (!preferred) notice = "Could not prefer this wallet for NFC. Keep this screen open and choose this wallet if Android asks which app to use."
+        }
+    }
+
+    fun releaseNfcForeground() {
+        activity.get()?.let { host -> runCatching { inPerson?.releaseForeground(host) } }
+    }
 
     /**
      * Starts sharing in person: the QR code to show, and advertising. The
@@ -825,11 +858,21 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
      */
     fun shareInPerson() {
         val wallet = wallet ?: return
-        if (busy || inPerson != null) return
+        if (busy || inPerson != null || armingJob?.isActive == true) return
         notice = null
+        armingJob = viewModelScope.launch {
         try {
-            val p = wallet.startProximityPresentation(getApplication(), modes = bleModes)
+            val e = inPersonEngagement
+            val p = when {
+                !e.nfc -> InPersonSession.Qr(wallet.startProximityPresentation(getApplication(), modes = bleModes))
+                // Both offered: the first reader to engage, by QR or by tap, wins.
+                e.qr -> InPersonSession.Combined(wallet.startCombinedPresentation(getApplication(), modes = bleModes,
+                    nfc = NfcEngagementOptions(negotiated = e.negotiated, nfcData = e.nfcData)))
+                else -> InPersonSession.Nfc(wallet.startNfcPresentation(getApplication(), modes = bleModes,
+                    negotiated = e.negotiated, nfcData = e.nfcData))
+            }
             inPerson = p
+            refreshNfcForeground()
             // For driving two emulators: the QR code's text, an ephemeral
             // key and a service UUID, in debug builds.
             if (getApplication<Application>().applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
@@ -838,13 +881,18 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             inPersonJob = viewModelScope.launch {
                 p.state.collect { s ->
                     inPersonState = s
-                    if (s.isFinal) refresh()
+                    if (s.isFinal) { releaseNfcForeground(); refresh() }
                 }
             }
         } catch (e: ProximityException) {
             notice = e.description
         } catch (e: WalletException) {
             notice = describe(e)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            notice = describe(e)
+        }
         }
     }
 
@@ -870,7 +918,11 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
 
     /** Leaves the in-person screen, ending the session if it's still going. */
     fun closeInPerson() {
-        inPerson?.cancel()
+        armingJob?.cancel()
+        releaseNfcForeground()
+        val session = inPerson
+        session?.cancel()
+        if (session != null) viewModelScope.launch { session.close() }
         inPersonJob?.cancel()
         inPerson = null
         inPersonState = null
@@ -891,6 +943,39 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     var readingPreset by mutableStateOf<ReaderPreset?>(null)
         private set
     private var readingJob: Job? = null
+    private var nfcReadJob: Job? = null
+    var nfcReadPreset by mutableStateOf<ReaderPreset?>(null)
+        private set
+
+    fun armNfcReader(preset: ReaderPreset) {
+        closeReading()
+        notice = null
+        nfcReadPreset = preset
+        refreshNfcReader()
+    }
+
+    fun refreshNfcReader() {
+        val host = activity.get() ?: return
+        val preset = nfcReadPreset ?: return
+        val adapter = android.nfc.NfcAdapter.getDefaultAdapter(host)
+        if (adapter?.isEnabled != true) { notice = "Turn on NFC and try again."; return }
+        adapter.enableReaderMode(host, { tag ->
+            viewModelScope.launch {
+                if (nfcReadPreset !== preset || nfcReadJob?.isActive == true || reading != null) return@launch
+                nfcReadJob = viewModelScope.launch {
+                    try {
+                        val session = reader?.startFromNfc(getApplication(), tag, preset.docType, preset.elements) ?: return@launch
+                        reading = session
+                        readingPreset = preset
+                        readingJob = viewModelScope.launch { session.state.collect { readingState = it } }
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { notice = describe(e) }
+                }
+            }
+        }, android.nfc.NfcAdapter.FLAG_READER_NFC_A or android.nfc.NfcAdapter.FLAG_READER_NFC_B or android.nfc.NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK, null)
+    }
+
+    fun pauseNfcReader() { activity.get()?.let { android.nfc.NfcAdapter.getDefaultAdapter(it)?.disableReaderMode(it) } }
 
     private val reader: ProximityReader? by lazy {
         val r = config?.reader ?: return@lazy null
@@ -920,6 +1005,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeReading() {
+        nfcReadPreset = null
+        nfcReadJob?.cancel()
+        pauseNfcReader()
         engagementToRead = null
         reading?.cancel()
         readingJob?.cancel()
@@ -931,6 +1019,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val COPY_POLICY = "demo-copy-policy"
         private const val BLE_MODES = "demo-ble-modes"
+        private const val ENGAGEMENT = "demo-in-person-engagement"
 
         /** Credential Offer links' scheme, and presentation requests'. */
         const val OFFER_SCHEME = "openid-credential-offer"

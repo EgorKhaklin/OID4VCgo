@@ -104,7 +104,7 @@ states; it never sees GATT.
 - **Keep the app in the foreground** during a session: neither library
   declares Bluetooth background modes or keeps a session through the
   app being suspended.
-- **Not supported:** the L2CAP transport, NFC engagement, and more than
+- **Not supported:** the L2CAP transport, NFC on iOS, and more than
   one request per session.
 
 Build the XCFramework (Xcode and Go needed; gomobile and gobind are the
@@ -140,6 +140,15 @@ cd android
 
 The library links the release build unless `-Poid4vc.testFramework=true`,
 and `OID4VC.isTestBuild` says which one an app has.
+
+Both AAR builds explicitly link with 16 KB ELF page alignment, including
+when using an older NDK. Apps must also package native libraries with
+16 KB ZIP alignment (AGP 8.5.1 or later). Check the final APK with
+`zipalign -c -P 16 4 app.apk` and inspect every arm64-v8a/x86_64 library's
+LOAD segments with the NDK's `llvm-objdump -p`: alignment must be at least
+`2**14`. See Android's [16 KB page-size guide](https://developer.android.com/guide/practices/page-sizes).
+This preserves the gomobile ABI and the demo app's reader configuration
+and trust policy.
 
 ## Publishing the Kotlin library
 
