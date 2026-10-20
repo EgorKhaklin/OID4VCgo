@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.48.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.47.0...v0.48.0) (2026-10-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** FAPIgo v0.58.0's breaking changes reach code built on OID4VCgo's wallet and walletflow (which use fapigo/client and fapihttp) and on issuer (which pairs with fapigo/server). A client.Config Scope element must be one scope; under AssuranceProduction, AuthorizationResponseIssPolicy TolerateAbsentAuthorizationResponseIss and CallbackBindingDeviceLocalStore over a store declaring CrossInstanceConsistent are refused; a request object lifetime is at most 60 minutes; sealing keys made entirely of printable text are refused; fapihttp.NewClient offers only ECDHE AES-GCM suites under TLS 1.2; resource.OpaqueAccessTokens needs Audience under production; a federation entity key may not be a protocol key. See FAPIgo's UPGRADING.md, v0.58.0.
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.58.0 ([e856044](https://github.com/IDFoundry/OID4VCgo/commit/e856044fcf40c5e53e92ec09d88b36b8701dbece))
+
 ## [0.47.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.46.0...v0.47.0) (2026-10-19)
 
 
