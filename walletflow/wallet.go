@@ -138,8 +138,10 @@ type Config struct {
 	RequireSignedDCAPIRequests bool
 
 	// Locales are the holder's preferred languages (BCP 47 tags, most
-	// preferred first), for the issuer's display metadata. None means
-	// the issuer's entry without a locale, else its first.
+	// preferred first), for the issuer's display metadata: sent as
+	// Accept-Language when fetching it (OpenID4VCI 1.0 §12.2.2), and
+	// used to pick among its entries. None means the issuer's entry
+	// without a locale, else its first.
 	Locales []string
 
 	// RequestRefresh asks the Authorization Server, in the authorization
@@ -348,6 +350,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		IssuerMetadataRoots:        cfg.IssuerMetadataRoots, IssuerMetadataLeafPolicy: cfg.IssuerMetadataLeafPolicy,
 		RequireSignedIssuerMetadata: cfg.RequireSignedIssuerMetadata,
 		RequireIssuerMetadataName:   cfg.RequireIssuerMetadataName, MaxIssuerMetadataAge: cfg.MaxIssuerMetadataAge,
+		Locales: cfg.Locales,
 		Fetch: fapihttp.Config{
 			MaxResponseBytes: maxResponseBytes, RequestTimeout: httpTimeout, MaxRedirects: 2,
 			AllowLoopbackHosts: cfg.Development,

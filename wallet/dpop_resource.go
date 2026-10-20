@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -74,6 +75,18 @@ func (c *dpopResourceClient) Do(ctx context.Context, req *http.Request) (*http.R
 		c.mu.Unlock()
 	}
 	return res, nil
+}
+
+// UseDPoPNonce has the next Do present nonce (see DPoPNonceUser). This
+// client is bound to one access token, so to one resource server:
+// resource isn't consulted. An empty nonce changes nothing.
+func (c *dpopResourceClient) UseDPoPNonce(_ context.Context, _ *url.URL, nonce string) {
+	if nonce == "" {
+		return
+	}
+	c.mu.Lock()
+	c.nonce = nonce
+	c.mu.Unlock()
 }
 
 // send performs req with a fresh DPoP proof carrying nonce.
