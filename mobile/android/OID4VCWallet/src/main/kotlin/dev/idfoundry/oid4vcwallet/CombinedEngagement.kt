@@ -55,7 +55,7 @@ internal class CombinedEngagementArbiter(
         val isSelect = command != null && command.cla == 0 && command.ins == 0xa4 && command.p1 == 4 &&
             (command.p2 == 0 || command.p2 == 0x0c)
         if (!isSelect) return true
-        if (command!!.data.contentEquals(NfcData.aid)) {
+        if (command.data.contentEquals(NfcData.aid)) {
             if (!nfcData || !dataReady || command.p2 != 0) return false
             return select(true)
         }

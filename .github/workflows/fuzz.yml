@@ -102,6 +102,18 @@ jobs:
           - id: proximity-verify-reader-auth
             pkg: ./proximity
             name: FuzzVerifyReaderAuth
+          - id: proximity-nfc-select
+            pkg: ./proximity
+            name: FuzzNFCSelect
+          - id: proximity-nfc-request
+            pkg: ./proximity
+            name: FuzzNFCRequest
+          - id: proximity-nfc-data-handover
+            pkg: ./proximity
+            name: FuzzNFCDataHandover
+          - id: proximity-nfc-data-request
+            pkg: ./proximity
+            name: FuzzNFCDataRequest
           - id: sdjwtvc-parse
             pkg: ./credential/sdjwtvc
             name: FuzzParse

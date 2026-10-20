@@ -23,7 +23,9 @@ sealed interface InPersonSession {
     fun cancel()
     /** Prefers this app for NFC while [activity] is resumed; false if Android refused. */
     fun preferForeground(activity: Activity): Boolean = true
-    fun releaseForeground(activity: Activity) {}
+    fun releaseForeground(activity: Activity) {
+        // Nothing to release: only NFC sessions prefer this app for NFC.
+    }
     /** Withdraws the offers and waits for the radios to be released. */
     suspend fun close() = cancel()
 

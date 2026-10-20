@@ -14,6 +14,13 @@ import (
 	"github.com/idfoundry/oid4vcgo"
 )
 
+// Media types of metadata responses: JSON, and signed metadata's JWT
+// (OpenID4VCI §12.2.2, §12.2.3).
+const (
+	contentTypeJSON = "application/json"
+	contentTypeJWT  = "application/jwt"
+)
+
 // FetchCredentialIssuerMetadata fetches and decodes issuerURL's own
 // Credential Issuer Metadata (§12.2, via a hardened, SSRF-resistant GET
 // — fapihttp.Client.Fetch, the same transport ResolveCredentialOffer's
@@ -37,7 +44,7 @@ func (w *Wallet) FetchCredentialIssuerMetadata(ctx context.Context, issuerURL st
 		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: %w", err)
 	}
 	// §12.2.2: "The Wallet is RECOMMENDED to send an Accept header".
-	req := fapihttp.FetchRequest{URL: target, ExpectedContentType: "application/json", AlternateContentTypes: []string{"application/jwt"}, Accept: "application/json"}
+	req := fapihttp.FetchRequest{URL: target, ExpectedContentType: contentTypeJSON, AlternateContentTypes: []string{contentTypeJWT}, Accept: contentTypeJSON}
 	if w.cfg.IssuerMetadataRoots != nil {
 		req.Accept = acceptSignedMetadata
 	}
@@ -161,7 +168,7 @@ func (w *Wallet) FetchAuthorizationServerMetadata(ctx context.Context, issuerURL
 	if err != nil {
 		return AuthorizationServerMetadata{}, fmt.Errorf("wallet: fetch authorization server metadata: %w", err)
 	}
-	res, err := w.fetcher.Fetch(ctx, fapihttp.FetchRequest{URL: target, ExpectedContentType: "application/json"})
+	res, err := w.fetcher.Fetch(ctx, fapihttp.FetchRequest{URL: target, ExpectedContentType: contentTypeJSON})
 	if err != nil {
 		return AuthorizationServerMetadata{}, fmt.Errorf("wallet: fetch authorization server metadata: %w", err)
 	}

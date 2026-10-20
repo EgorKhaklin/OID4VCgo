@@ -15,7 +15,9 @@ class CombinedNfcHandoverTest {
         var closed = false
         var connections = 0
         override suspend fun connect() { connections++; start() }
-        override suspend fun send(message: ByteArray) {}
+        override suspend fun send(message: ByteArray) {
+            // Messages sent are not inspected here.
+        }
         override suspend fun receive(): ByteArray = byteArrayOf(1)
         override fun close() { closed = true }
     }
@@ -140,7 +142,9 @@ class CombinedNfcHandoverTest {
         withOffers(true) { f, connected ->
             f.beforeHs = { assertTrue(f.arbiter.select(false)); f.qrConnected.complete(Unit) }
             try { NfcType4Reader(f::exchange, 128).read(f.hr); fail("losing NFC reader continued") }
-            catch (_: IOException) {}
+            catch (_: IOException) {
+                // Expected: the losing NFC reader is refused.
+            }
             connected()
             assertArrayEquals(nfcResponse(0x6985), f.exchange(byteArrayOf(0, 0xb0.toByte(), 0, 0, 2)))
             f.engagement.deactivate()
@@ -173,7 +177,9 @@ class CombinedNfcHandoverTest {
                     f.exchange(command)
                 }, 128).read(f.hr)
                 fail("simulated field loss was not reached")
-            } catch (_: IOException) {}
+            } catch (_: IOException) {
+                // Expected: the simulated field loss.
+            }
             assertTrue(f.hsProduced)
             assertFalse(f.engagement.gate.isComplete)
             assertNull(f.arbiter.state.value)
