@@ -26,11 +26,10 @@ class NfcDataTest {
             finally { finished.countDown() }
         }, { closed.set(true) }, 258, NfcDataParametersJSON(255, 256))
         val job = launch(Dispatchers.Default) { reader.connect() }
-        var interrupted = false
-        try {
+        val interrupted = try {
             assertTrue("connect did not start", started.await(5, TimeUnit.SECONDS))
             job.cancel()
-            interrupted = finished.await(1, TimeUnit.SECONDS)
+            finished.await(1, TimeUnit.SECONDS)
         } finally {
             released.countDown()
             job.cancelAndJoin()

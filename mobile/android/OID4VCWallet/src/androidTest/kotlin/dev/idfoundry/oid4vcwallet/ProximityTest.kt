@@ -240,7 +240,7 @@ class ProximityTest {
                         val parameters = decode<NfcDataParametersJSON>(Mobile.parseNfcDataParameters(hs))
                         NfcDataReaderTransport({ command ->
                             val response = java.util.concurrent.ArrayBlockingQueue<ByteArray>(1)
-                            combined.owner.process(command) { response.offer(it) } ?: response.poll(30, java.util.concurrent.TimeUnit.SECONDS) ?: error("APDU timed out")
+                            combined.owner.process(command) { response.offer(it) } ?: response.poll(30, java.util.concurrent.TimeUnit.SECONDS) ?: error(APDU_TIMED_OUT)
                         }, {}, 128, parameters)
                     } else nfcReader
                     reader = s.reader.startNfcWith(hs, if (negotiated) hr else null, DOC_TYPE, mapOf(NAMESPACE to listOf("family_name")), timeouts, nfcData, transport)
@@ -288,7 +288,7 @@ class ProximityTest {
             val parameters = decode<NfcDataParametersJSON>(dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile.parseNfcDataParameters(hs))
             val transport = NfcDataReaderTransport({ command ->
                 val response = java.util.concurrent.ArrayBlockingQueue<ByteArray>(1)
-                combined.owner.process(command) { response.offer(it) } ?: response.poll(30, java.util.concurrent.TimeUnit.SECONDS) ?: error("APDU timed out")
+                combined.owner.process(command) { response.offer(it) } ?: response.poll(30, java.util.concurrent.TimeUnit.SECONDS) ?: error(APDU_TIMED_OUT)
             }, {}, 128, parameters)
             val reader = s.reader.startNfcWith(hs, null, DOC_TYPE, mapOf(NAMESPACE to listOf("family_name")), timeouts, true, transport)
             awaitRequest(combined.owner.presentation)
@@ -311,7 +311,7 @@ class ProximityTest {
             val exchange: (ByteArray) -> ByteArray = { command ->
                 commands.add(command)
                 val response = java.util.concurrent.ArrayBlockingQueue<ByteArray>(1)
-                owner.process(command) { response.offer(it) } ?: response.poll(30, java.util.concurrent.TimeUnit.SECONDS) ?: error("APDU timed out")
+                owner.process(command) { response.offer(it) } ?: response.poll(30, java.util.concurrent.TimeUnit.SECONDS) ?: error(APDU_TIMED_OUT)
             }
             val transport = NfcDataReaderTransport(exchange, {}, 128, parameters)
             val reader = s.reader.startNfcWith(hs, if (negotiated) hr else null, DOC_TYPE, mapOf(NAMESPACE to listOf("family_name")), timeouts, true, transport)
@@ -485,5 +485,6 @@ class ProximityTest {
     private companion object {
         const val DOC_TYPE = "org.example.test.1"
         const val NAMESPACE = "org.example.test.1"
+        const val APDU_TIMED_OUT = "APDU timed out"
     }
 }

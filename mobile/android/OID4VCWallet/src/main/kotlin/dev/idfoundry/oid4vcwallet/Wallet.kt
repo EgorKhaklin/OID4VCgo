@@ -20,6 +20,8 @@ import dev.idfoundry.oid4vcwallet.gomobile.mobile.MdocPresentation as MobileMdoc
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Presentation as MobilePresentation
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Wallet as MobileWallet
 
+private const val NO_BLE_MODE = "no BLE mode"
+
 /** NewWallet's configuration. */
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
@@ -686,7 +688,7 @@ public class Wallet(
         timeouts: ProximityTimeouts = ProximityTimeouts(),
         modes: Set<ProximityBLEMode> = ProximityBLEMode.entries.toSet(),
     ): ProximityPresentation {
-        require(modes.isNotEmpty()) { "no BLE mode" }
+        require(modes.isNotEmpty()) { NO_BLE_MODE }
         ProximityPermissions.require(context, ProximityPermissions.holder(modes))
         val app = context.applicationContext
         return ProximityPresentation(start(modes), { it.transport(app) }, timeouts)
@@ -707,7 +709,7 @@ public class Wallet(
         negotiated: Boolean = false,
         nfcData: Boolean = false,
     ): NfcPresentation {
-        require(modes.isNotEmpty()) { "no BLE mode" }
+        require(modes.isNotEmpty()) { NO_BLE_MODE }
         require(android.nfc.NfcAdapter.getDefaultAdapter(context)?.isEnabled == true) { "NFC unavailable or disabled" }
         if (!nfcData) ProximityPermissions.require(context, ProximityPermissions.holder(modes))
         val app = context.applicationContext
@@ -727,7 +729,7 @@ public class Wallet(
         modes: Set<ProximityBLEMode> = ProximityBLEMode.entries.toSet(),
         nfc: NfcEngagementOptions = NfcEngagementOptions(),
     ): CombinedPresentation {
-        require(modes.isNotEmpty()) { "no BLE mode" }
+        require(modes.isNotEmpty()) { NO_BLE_MODE }
         require(android.nfc.NfcAdapter.getDefaultAdapter(context)?.isEnabled == true) { "NFC unavailable or disabled" }
         val missing = ProximityPermissions.missing(context, ProximityPermissions.holder(modes))
         if (!nfc.nfcData) ProximityPermissions.require(context, ProximityPermissions.holder(modes))
@@ -757,10 +759,12 @@ public class Wallet(
         return NfcPresentations.replace {
             val encoded = json.encodeToString(ListSerializer(String.serializer()), ProximityBLEMode.entries.filter { it in modes }.map { it.rawValue })
             val nfc = OID4VC.wrap {
-                if (nfcData && negotiated) handle.startNFCNegotiatedDataProximityPresentation(255, 256)
-                else if (nfcData) handle.startNFCDataProximityPresentation(255, 256)
-                else if (negotiated) handle.startNFCNegotiatedProximityPresentationWithModes(encoded)
-                else handle.startNFCProximityPresentationWithModes(encoded)
+                when {
+                    nfcData && negotiated -> handle.startNFCNegotiatedDataProximityPresentation(255, 256)
+                    nfcData -> handle.startNFCDataProximityPresentation(255, 256)
+                    negotiated -> handle.startNFCNegotiatedProximityPresentationWithModes(encoded)
+                    else -> handle.startNFCProximityPresentationWithModes(encoded)
+                }
             }
             NfcPresentation(nfc, timeouts, negotiated, if (nfcData) NfcDataHolderTransport(timeouts.idle) else null, transportFor)
         }

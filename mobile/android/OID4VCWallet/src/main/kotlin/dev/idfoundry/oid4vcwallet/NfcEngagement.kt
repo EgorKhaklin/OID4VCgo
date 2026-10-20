@@ -11,12 +11,11 @@ internal class NfcEngagement(
     val gate = NfcHandoverGate()
     private val tnep = negotiate?.let { NfcTnepHolder(it) }
     private val type4 = NfcType4(initialMessage, tnep?.let { it::transact }) {
-        if (tnep == null || tnep.handoverReady) {
-            // NFC data commits on its own AID SELECT. BLE commits only after reading Hs.
-            if (dataTransport != null || combined == null || combined.select(true)) {
-                gate.complete()
-                ProximityDiagnostics.event("NFC handover fully read; gate complete")
-            }
+        // NFC data commits on its own AID SELECT. BLE commits only after reading Hs.
+        val handoverRead = tnep == null || tnep.handoverReady
+        if (handoverRead && (dataTransport != null || combined == null || combined.select(true))) {
+            gate.complete()
+            ProximityDiagnostics.event("NFC handover fully read; gate complete")
         }
     }
     private var dataSelected = false

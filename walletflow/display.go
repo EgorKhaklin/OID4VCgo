@@ -74,13 +74,13 @@ const (
 // displayText is s, from an issuer's metadata, fit to show the holder:
 // control characters become spaces, Unicode bidirectional formatting
 // characters (which can make text read other than it is) are dropped,
-// and at most max runes are kept.
-func displayText(s string, max int) string {
+// and at most limit runes are kept.
+func displayText(s string, limit int) string {
 	var b strings.Builder
 	n := 0
 	for _, r := range s {
 		switch {
-		case n == max:
+		case n == limit:
 			return strings.TrimSpace(b.String())
 		case r == utf8.RuneError, isBidiControl(r):
 			continue
