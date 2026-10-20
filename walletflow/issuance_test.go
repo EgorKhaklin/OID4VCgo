@@ -235,6 +235,11 @@ func TestIssuance_PreAuthorizedCodeWithPIN(t *testing.T) {
 	if err != nil || len(result.Credentials) != 1 {
 		t.Fatalf("RequestCredentials = %+v, %v", result, err)
 	}
+	// The Nonce Response's DPoP-Nonce header gave the Wallet the
+	// Credential Endpoint's nonce up front.
+	if n := f.env.NonceRetries(); n != 0 {
+		t.Fatalf("Credential Requests refused for a DPoP nonce = %d, want 0", n)
+	}
 }
 
 func TestIssuance_Deferred(t *testing.T) {

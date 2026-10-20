@@ -380,10 +380,11 @@ func TestCredential_EncryptedBothWays(t *testing.T) {
 	if len(recorder.requests) != 2 {
 		t.Fatalf("saw %d credential requests, want 2", len(recorder.requests))
 	}
-	// The Credential Endpoint requires a DPoP nonce: the first request
-	// is challenged for one, and the next reuses the nonce it was given.
-	if recorder.challenges != 1 {
-		t.Errorf("saw %d DPoP nonce challenges, want 1", recorder.challenges)
+	// The Credential Endpoint requires a DPoP nonce, which the Nonce
+	// Response's DPoP-Nonce header hands the wallet before its first
+	// request (OpenID4VCI §7.2): no request is challenged for one.
+	if recorder.challenges != 0 {
+		t.Errorf("saw %d DPoP nonce challenges, want 0", recorder.challenges)
 	}
 	for i := range recorder.requests {
 		if recorder.requests[i] != "application/jwt" || recorder.replies[i] != "application/jwt" {

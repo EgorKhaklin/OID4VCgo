@@ -400,11 +400,30 @@ type ProofBindingKeyResolver interface {
 	ResolveProofBindingKey(ctx context.Context, header map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error)
 }
 
+// CredentialDPoPNonceIssuer issues a DPoP nonce the Credential Endpoint
+// will accept. fapigo/resource's *Verifier implements it
+// (IssueDPoPNonce, FAPIgo v0.60.0 or later), returning "" when it
+// doesn't use DPoP nonces.
+type CredentialDPoPNonceIssuer interface {
+	IssueDPoPNonce(ctx context.Context) (string, error)
+}
+
 // Dependencies are this issuer's external collaborators.
 type Dependencies struct {
 	// Nonces persists issued c_nonce values. Required when
 	// Config.Endpoints.Nonce is set.
 	Nonces NonceStore
+
+	// CredentialDPoPNonces, if set, issues the DPoP nonce RequestNonce
+	// returns alongside the c_nonce, for the Nonce Response's DPoP-Nonce
+	// header (§7.2: "The Credential Issuer MAY provide a DPoP nonce"),
+	// which the Wallet then uses at the Credential Endpoint. Pass the
+	// Credential Endpoint's own fapigo/resource.Verifier: the nonce has
+	// to come from the store that Verifier checks, or the Credential
+	// Request carrying it is challenged anyway. Not DPoPNonces, which is
+	// the Token Endpoint's, for ExchangePreAuthorizedCode. Nil sends no
+	// DPoP nonce.
+	CredentialDPoPNonces CredentialDPoPNonceIssuer
 
 	// Clock supplies the current time.
 	Clock Clock
