@@ -159,7 +159,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		Revocation:             revocationStore,
 		Clock:                  server.SystemClock{},
 		Random:                 rand.Reader,
-		ClientCertificateTrust: server.NoClientCertificateChainTrust{},
+		ClientCertificateTrust: server.NoPKIClientAuthentication{},
 	}
 	if srvDeps.AttesterTrust, err = attesterTrust(cfg); err != nil {
 		return nil, err
