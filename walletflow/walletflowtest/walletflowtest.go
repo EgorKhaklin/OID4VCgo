@@ -202,6 +202,7 @@ type Env struct {
 	mu            sync.Mutex
 	grantIDs      []string // every authorization code grant's, for RevokeGrants
 	revocations   int      // refresh tokens the Authorization Server revoked
+	nonceRetries  int      // Credential Requests refused for a DPoP nonce
 	revoked       []uint8  // the status list, one entry per credential issued
 	publisher     *statuslist.Publisher
 	closers       []func()
@@ -362,7 +363,10 @@ func New(opts Options) (env *Env, err error) {
 		},
 	}, issuer.Dependencies{
 		Nonces: oid4vcgostorage.NewNonceStore(), DeferredTransactions: oid4vcgostorage.NewDeferredTransactionStore(),
-		PreAuthorizedCodes: e.preAuthCodes, AccessTokens: accessTokenAdapter{inner: e.accessTokens},
+		// The Nonce Response carries a DPoP nonce for the Credential Endpoint
+		// (OpenID4VCI §7.2), so the first Credential Request isn't challenged.
+		CredentialDPoPNonces: resourceVerifier,
+		PreAuthorizedCodes:   e.preAuthCodes, AccessTokens: accessTokenAdapter{inner: e.accessTokens},
 		Notifications: oid4vcgostorage.NewNotificationStore(), NotificationHandler: notificationRecorder{e},
 		Clock: issuer.ClockFunc(time.Now), Random: rand.Reader, DPoPReplay: oid4vcgostorage.NewDPoPReplayChecker(),
 		AttestationVerifier: issuer.X5CAttestationVerifier{Roots: e.Provider.Roots},
@@ -448,7 +452,7 @@ func New(opts Options) (env *Env, err error) {
 		}
 		result.WriteJSON(w)
 	})
-	mux.Handle("POST /credential", credentialHandler)
+	mux.Handle("POST /credential", e.countNonceRetries(credentialHandler))
 	mux.Handle("POST /deferred_credential", deferredHandler)
 	mux.Handle("POST /notification", notificationHandler)
 	e.publisher = &statuslist.Publisher{
@@ -618,6 +622,27 @@ func (e *Env) Revocations() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.revocations
+}
+
+// NonceRetries is how many Credential Requests the Credential Endpoint
+// has refused for a missing or stale DPoP nonce (RFC 9449 §9's
+// use_dpop_nonce): none when the Wallet takes its first nonce from the
+// Nonce Response's DPoP-Nonce header (OpenID4VCI §7.2).
+func (e *Env) NonceRetries() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.nonceRetries
+}
+
+func (e *Env) countNonceRetries(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		if strings.Contains(w.Header().Get("WWW-Authenticate"), `error="use_dpop_nonce"`) {
+			e.mu.Lock()
+			e.nonceRetries++
+			e.mu.Unlock()
+		}
+	})
 }
 
 // RevokeGrants revokes every grant so far, authorization code and

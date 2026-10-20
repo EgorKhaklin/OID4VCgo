@@ -17,13 +17,22 @@ type NonceResult struct {
 	// the caller as the sole top-level member of the Nonce Response
 	// body.
 	CNonce string
+
+	// DPoPNonce, when not empty, is the DPoP nonce
+	// Dependencies.CredentialDPoPNonces issued, sent as the response's DPoP-Nonce
+	// header (§7.2) for the Wallet to use at the Credential Endpoint.
+	DPoPNonce string
 }
 
 // WriteJSON writes r as a Nonce Response (§7.2): the JSON body plus the
 // required Cache-Control: no-store header ("Due to the temporal nature
 // of the c_nonce value, the Credential Issuer MUST make the response
-// uncacheable"). Must be called before anything else writes to w.
+// uncacheable"), and DPoPNonce as the DPoP-Nonce header when set. Must
+// be called before anything else writes to w.
 func (r NonceResult) WriteJSON(w http.ResponseWriter) {
+	if r.DPoPNonce != "" {
+		w.Header().Set("DPoP-Nonce", r.DPoPNonce)
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -32,7 +41,8 @@ func (r NonceResult) WriteJSON(w http.ResponseWriter) {
 
 // RequestNonce implements the Nonce Endpoint (§7): it generates a
 // fresh, unpredictable c_nonce, persists it via Dependencies.Nonces,
-// and returns it. The Nonce Endpoint is not a protected resource
+// and returns it, with a DPoP nonce from
+// Dependencies.CredentialDPoPNonces when that's set. The Nonce Endpoint is not a protected resource
 // (§7.1) — RequestNonce takes no credential of its own to check.
 func (iss *Issuer) RequestNonce(ctx context.Context) (NonceResult, error) {
 	if iss.cfg.Endpoints.Nonce.IsZero() {
@@ -52,5 +62,11 @@ func (iss *Issuer) RequestNonce(ctx context.Context) (NonceResult, error) {
 		return NonceResult{}, fmt.Errorf("issuer: persist nonce: %w", err)
 	}
 
-	return NonceResult{CNonce: nonce}, nil
+	result := NonceResult{CNonce: nonce}
+	if iss.deps.CredentialDPoPNonces != nil {
+		if result.DPoPNonce, err = iss.deps.CredentialDPoPNonces.IssueDPoPNonce(ctx); err != nil {
+			return NonceResult{}, fmt.Errorf("issuer: issue dpop nonce: %w", err)
+		}
+	}
+	return result, nil
 }
