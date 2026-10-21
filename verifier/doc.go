@@ -19,7 +19,10 @@
 //
 // For the redirect flows, use Transactions: Begin a request, mount its
 // RequestObjectHandler and ResponseHandler, and read the result with
-// Lookup (cross-device) or Redeem (same-device). It keeps each request's
+// Lookup (cross-device) or Redeem (same-device). For the Digital
+// Credentials API, BeginDCAPI a request, hand its Request to the page
+// for navigator.credentials.get, and pass the answer the page posts
+// back to HandleDCAPIResponse. It keeps each request's
 // secrets, routes each answer to its request, verifies it, and binds
 // the result to the browser that asked — the state handling OpenID4VP
 // §8.2 and §13.3 require, which the lower-level functions below leave

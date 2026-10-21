@@ -1225,7 +1225,12 @@ changes whether *every* bullet below is `(done)`.
   `direct_post.jwt` response by its `kid` and verifies it once,
   `Redeem` exchanges a same-device `response_code` only in the browser
   that began the session, and `RequestObjectHandler`/`ResponseHandler`
-  expose the two Wallet-facing endpoints. Every request needs a
+  expose the two Wallet-facing endpoints. `BeginDCAPI` and
+  `HandleDCAPIResponse` do the same for a signed request over the
+  Digital Credentials API: the request is bound to the one page origin
+  it's made from (its only `expected_origins` entry, and the answer's
+  audience), and the answer comes back through the page with the
+  browser binding, never to the response endpoint. Every request needs a
   browser binding — a secret the caller keeps, as a cookie or
   server-side — since its ID is public in the `request_uri`, and a
   refused answer's `LastError` is kept short and printable, with a
