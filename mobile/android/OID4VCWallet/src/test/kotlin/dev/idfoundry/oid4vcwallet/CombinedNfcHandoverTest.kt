@@ -1,6 +1,5 @@
 package dev.idfoundry.oid4vcwallet
 
-import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -9,6 +8,34 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
+
+/**
+ * A scripted holder: commands are [kind, tag], classified by their first
+ * byte. Go's NFCHolder does the APDU work; these tests cover what Kotlin
+ * adds around it — arbitration, the handover gate and transports.
+ */
+internal class ScriptedHolder : NfcHolderCore {
+    var onProcess: (ByteArray) -> NfcStep = { NfcStep(nfcResponse(0x9000)) }
+    var onRespond: (ByteArray) -> NfcStep = { NfcStep(nfcResponse(0x9000), delivered = true) }
+    var deactivation = NfcDeactivation(cancel = false, dataClosed = false)
+    val deactivations = mutableListOf<Pair<Boolean, Boolean>>()
+    var refused = 0
+    var closed = false
+    override fun classify(command: ByteArray): Int = command[0].toInt()
+    override fun process(command: ByteArray): NfcStep = onProcess(command)
+    override fun respond(message: ByteArray): NfcStep = onRespond(message)
+    override fun refuseMessage(): ByteArray { refused++; return nfcResponse(0x6985) }
+    override fun deactivate(handoverCommitted: Boolean, qrSelected: Boolean): NfcDeactivation {
+        deactivations += handoverCommitted to qrSelected
+        return deactivation
+    }
+    override fun close() { closed = true }
+
+    companion object {
+        fun command(kind: Int = NfcCommandKind.OTHER) = byteArrayOf(kind.toByte(), 0)
+        val readHs = NfcStep(nfcResponse(0x9000), handoverRead = true)
+    }
+}
 
 class CombinedNfcHandoverTest {
     private class Transport(private val start: suspend () -> Unit) : ProximityTransport {
@@ -22,51 +49,29 @@ class CombinedNfcHandoverTest {
         override fun close() { closed = true }
     }
 
-    private class Offers(negotiated: Boolean, data: Boolean = false) {
-        val hs = NfcTnep.record("Hs", ByteArray(120) { it.toByte() })
-        val hr = NfcTnep.record("Hr", byteArrayOf(0x15))
+    private class Offers(data: Boolean = false) {
+        val holder = ScriptedHolder()
         val qrStarted = CompletableDeferred<Unit>()
         val qrConnected = CompletableDeferred<Unit>()
         var claims = 0
         var cancelled = false
-        var hsProduced = false
-        var beforeHs: () -> Unit = {}
+        val dataTransport = if (data) NfcDataHolderTransport() else null
         val arbiter = CombinedEngagementArbiter(data) { claims++ }
-        val engagement = NfcEngagement(
-            if (negotiated) NfcTnep.parameters else hs,
-            if (negotiated) { _ -> hsProduced = true; beforeHs(); hs } else null,
-            if (data) NfcDataHolderTransport() else null,
-            arbiter,
-        ) { cancelled = true; arbiter.close() }
+        val engagement = NfcEngagement(holder, dataTransport, arbiter) { cancelled = true; arbiter.close() }
         val qr = Transport { qrStarted.complete(Unit); qrConnected.await() }
         val nfc = Transport { assertTrue("NFC started before QR cleanup", qr.closed) }
         var nativeCreated = 0
         val combined = CombinedTransport(arbiter, qr, engagement.gate.transport { nativeCreated++; nfc })
 
-        fun exchange(command: ByteArray): ByteArray = checkNotNull(engagement.process(command))
-        fun ok(command: ByteArray, trace: Boolean = false): ByteArray {
-            val response = exchange(command)
-            if (trace) println("APDU ${command.hex()} -> ${response.hex()}")
-            assertTrue("unexpected APDU status", response.takeLast(2).toByteArray().contentEquals(nfcResponse(0x9000)))
-            return response.copyOf(response.size - 2)
-        }
-        // A static reader performs only SELECT/READ BINARY; never TNEP UPDATE BINARY.
-        fun selectNdef(trace: Boolean = false): Int {
-            ok(byteArrayOf(0, 0xa4.toByte(), 4, 0, 7) + NfcType4.AID + byteArrayOf(0), trace)
-            ok(byteArrayOf(0, 0xa4.toByte(), 0, 0x0c, 2, 0xe1.toByte(), 3), trace)
-            ok(byteArrayOf(0, 0xb0.toByte(), 0, 0, 15), trace)
-            ok(byteArrayOf(0, 0xa4.toByte(), 0, 0x0c, 2, 0xe1.toByte(), 4), trace)
-            val length = ok(byteArrayOf(0, 0xb0.toByte(), 0, 0, 2), trace)
-            return ((length[0].toInt() and 255) shl 8) or (length[1].toInt() and 255)
-        }
-        fun staticRead(trace: Boolean = false): ByteArray {
-            val length = selectNdef(trace)
-            return ok(byteArrayOf(0, 0xb0.toByte(), 0, 2, length.toByte()), trace)
+        fun exchange(command: ByteArray = ScriptedHolder.command()): ByteArray? = engagement.process(command)
+        fun readHs(): ByteArray? {
+            holder.onProcess = { ScriptedHolder.readHs }
+            return exchange().also { holder.onProcess = { NfcStep(nfcResponse(0x9000)) } }
         }
     }
 
-    private suspend fun withOffers(negotiated: Boolean, block: suspend (Offers, suspend () -> Unit) -> Unit) = coroutineScope {
-        val offers = Offers(negotiated)
+    private suspend fun withOffers(block: suspend (Offers, suspend () -> Unit) -> Unit) = coroutineScope {
+        val offers = Offers()
         val connecting = async { offers.combined.connect() }
         try {
             withTimeout(5000) { offers.qrStarted.await() }
@@ -77,15 +82,13 @@ class CombinedNfcHandoverTest {
         }
     }
 
-    @Test fun staticOnlyReaderOnNegotiatedHolderLeavesQrConnectable(): Unit = runBlocking {
-        withOffers(true) { f, connected ->
-            val message = f.staticRead(trace = true)
-            assertArrayEquals(NfcTnep.parameters, message)
-            assertNull(NfcTnep.payload(message, "Hs"))
-            assertFalse(f.hsProduced)
+    @Test fun fieldLossBeforeTheHandoverIsReadLeavesQrConnectable(): Unit = runBlocking {
+        withOffers { f, connected ->
+            f.exchange(ScriptedHolder.command(NfcCommandKind.SELECT_NDEF))
+            f.exchange()
             assertFalse(f.engagement.gate.isComplete)
-            assertNull(f.arbiter.state.value)
             f.engagement.deactivate()
+            assertEquals(listOf(false to false), f.holder.deactivations)
             assertFalse(f.cancelled)
             assertFalse(f.qr.closed)
             f.qrConnected.complete(Unit)
@@ -96,58 +99,46 @@ class CombinedNfcHandoverTest {
         }
     }
 
-    @Test fun fieldLossBeforeFullStaticHsLeavesQrConnectable(): Unit = runBlocking {
-        withOffers(false) { f, connected ->
-            f.selectNdef()
-            f.ok(byteArrayOf(0, 0xb0.toByte(), 0, 2, 1))
-            assertFalse(f.engagement.gate.isComplete)
-            f.engagement.deactivate()
+    @Test fun readHandoverCommitsAndStartsNfcExactlyOnce(): Unit = runBlocking {
+        withOffers { f, connected ->
+            f.exchange()
+            assertNull("NFC committed before Hs was read", f.arbiter.state.value)
             assertFalse(f.qr.closed)
-            f.qrConnected.complete(Unit)
-            connected()
-            assertEquals(SelectedEngagement.QR, f.arbiter.state.value)
-            assertEquals(0, f.nativeCreated)
-        }
-    }
-
-    @Test fun fullStaticHsCommitsAndStartsNfcExactlyOnce(): Unit = runBlocking {
-        withOffers(false) { f, connected ->
-            assertArrayEquals(f.hs, NfcType4Reader(f::exchange, 128).read())
+            assertArrayEquals(nfcResponse(0x9000), f.readHs())
             connected()
             assertEquals(SelectedEngagement.NFC_BLE, f.arbiter.state.value)
             assertTrue(f.qr.closed)
-            assertArrayEquals(f.hs, NfcType4Reader(f::exchange, 128).read())
+            f.readHs()
             assertEquals(1, f.nativeCreated)
             assertEquals(1, f.nfc.connections)
             assertEquals(1, f.claims)
         }
     }
 
-    @Test fun negotiatedHsCommitsOnlyAfterCompleteRead(): Unit = runBlocking {
-        withOffers(true) { f, connected ->
-            f.beforeHs = {
-                assertNull(f.arbiter.state.value)
-                assertFalse(f.qr.closed)
-                assertFalse(f.engagement.gate.isComplete)
-            }
-            assertArrayEquals(f.hs, NfcType4Reader(f::exchange, 128).read(f.hr))
+    @Test fun uncommittedAttemptCanBeRetried(): Unit = runBlocking {
+        withOffers { f, connected ->
+            f.exchange()
+            f.engagement.deactivate()
+            assertNull(f.arbiter.state.value)
+            f.readHs()
             connected()
             assertEquals(SelectedEngagement.NFC_BLE, f.arbiter.state.value)
             assertEquals(1, f.nativeCreated)
-            assertEquals(1, f.nfc.connections)
         }
     }
 
-    @Test fun qrWinWhileHrIsProcessedRejectsNfcAndSurvivesFieldLoss(): Unit = runBlocking {
-        withOffers(true) { f, connected ->
-            f.beforeHs = { assertTrue(f.arbiter.select(false)); f.qrConnected.complete(Unit) }
-            try { NfcType4Reader(f::exchange, 128).read(f.hr); fail("losing NFC reader continued") }
-            catch (_: IOException) {
-                // Expected: the losing NFC reader is refused.
+    @Test fun qrWinWhileACommandIsProcessedRefusesNfcAndSurvivesFieldLoss(): Unit = runBlocking {
+        withOffers { f, connected ->
+            f.holder.onProcess = {
+                assertTrue(f.arbiter.select(false))
+                f.qrConnected.complete(Unit)
+                ScriptedHolder.readHs
             }
+            assertArrayEquals(nfcResponse(0x6985), f.exchange())
             connected()
-            assertArrayEquals(nfcResponse(0x6985), f.exchange(byteArrayOf(0, 0xb0.toByte(), 0, 0, 2)))
+            assertArrayEquals(nfcResponse(0x6985), f.exchange())
             f.engagement.deactivate()
+            assertEquals(true, f.holder.deactivations.single().second)
             assertFalse("losing NFC field loss cancelled QR", f.cancelled)
             assertFalse(f.qr.closed)
             assertEquals(SelectedEngagement.QR, f.arbiter.state.value)
@@ -156,52 +147,34 @@ class CombinedNfcHandoverTest {
         }
     }
 
-    @Test fun uncommittedAttemptCanBeRetriedForBothHandoverModes(): Unit = runBlocking {
-        for (negotiated in listOf(false, true)) withOffers(negotiated) { f, connected ->
-            f.selectNdef()
-            f.ok(byteArrayOf(0, 0xb0.toByte(), 0, 2, 1))
-            f.engagement.deactivate()
-            assertNull(f.arbiter.state.value)
-            assertArrayEquals(f.hs, NfcType4Reader(f::exchange, 128).read(if (negotiated) f.hr else null))
-            connected()
-            assertEquals(SelectedEngagement.NFC_BLE, f.arbiter.state.value)
-            assertEquals(1, f.nativeCreated)
-        }
-    }
-
-    @Test fun frozenNegotiatedHsIsCancelledAfterIncompleteRead(): Unit = runBlocking {
-        withOffers(true) { f, _ ->
-            try {
-                NfcType4Reader({ command ->
-                    if (f.hsProduced && NfcCommand.parse(command)?.ins == 0xb0) throw IOException("field lost before Hs read")
-                    f.exchange(command)
-                }, 128).read(f.hr)
-                fail("simulated field loss was not reached")
-            } catch (_: IOException) {
-                // Expected: the simulated field loss.
-            }
-            assertTrue(f.hsProduced)
-            assertFalse(f.engagement.gate.isComplete)
-            assertNull(f.arbiter.state.value)
+    @Test fun frozenNegotiatedHandoverIsCancelled(): Unit = runBlocking {
+        withOffers { f, _ ->
+            f.exchange()
+            f.holder.deactivation = NfcDeactivation(cancel = true, dataClosed = false)
             f.engagement.deactivate()
             assertTrue(f.cancelled)
             assertFalse(f.arbiter.select(false))
         }
     }
 
-    @Test fun nfcDataCommitsOnDataAidAfterHsNotType4Read() {
-        val f = Offers(false, data = true)
-        assertArrayEquals(f.hs, f.staticRead())
+    @Test fun nfcDataCommitsOnDataSelectAfterHsNotOnHsRead(): Unit = runBlocking {
+        val f = Offers(data = true)
+        f.readHs()
         assertTrue(f.engagement.gate.isComplete)
         assertNull(f.arbiter.state.value)
-        val select = byteArrayOf(0, 0xa4.toByte(), 4, 0, 7) + NfcData.aid + byteArrayOf(0)
-        assertArrayEquals(nfcResponse(0x9000), f.exchange(select))
+        f.holder.onProcess = { NfcStep(nfcResponse(0x9000), dataSelected = true) }
+        assertArrayEquals(nfcResponse(0x9000), f.exchange(ScriptedHolder.command(NfcCommandKind.SELECT_DATA)))
         assertEquals(SelectedEngagement.NFC_DATA, f.arbiter.state.value)
         assertFalse(f.arbiter.select(false))
+        withTimeout(1000) { checkNotNull(f.dataTransport).connect() }
         f.combined.close()
     }
 
-    private companion object {
-        fun ByteArray.hex(): String = joinToString("") { "%02X".format(it.toInt() and 255) }
+    @Test fun dataSelectBeforeHsIsReadIsRefused() {
+        val f = Offers(data = true)
+        assertArrayEquals(nfcResponse(0x6985), f.exchange(ScriptedHolder.command(NfcCommandKind.SELECT_DATA)))
+        assertArrayEquals(nfcResponse(0x6985), f.exchange(ScriptedHolder.command(NfcCommandKind.SELECT_DATA_NO_FCI)))
+        assertNull(f.arbiter.state.value)
+        f.combined.close()
     }
 }

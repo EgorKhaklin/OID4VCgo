@@ -32,13 +32,7 @@ public class NfcPresentation internal constructor(
     internal val combined: CombinedEngagementArbiter? = if (handle.isCombined())
         CombinedEngagementArbiter(dataTransport != null) { handle.selectEngagement(it) } else null
     private val engagement = NfcEngagement(
-        if (negotiated) NfcTnep.parameters else handle.handoverSelect(),
-        if (negotiated) { request ->
-            handle.handleHandoverRequest(request).also { hs ->
-                if (dataTransport != null) dataTransport.selectParameters(decode<NfcDataParametersJSON>(
-                    dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile.parseNfcDataParameters(hs)))
-            }
-        } else null,
+        GoNfcHolder(OID4VC.wrap { handle.nfcHolder(negotiated, dataTransport != null) }),
         dataTransport, combined,
     ) { cancelCombined() }
 

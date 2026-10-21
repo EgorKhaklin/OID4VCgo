@@ -204,7 +204,9 @@ blocking transceives and negotiated-handover waits; the coroutine waits for
 its worker to exit. A successful handover keeps the tag open for NFC data
 selection. Removing the tag after BLE selection is safe.
 
-Android Type 4 supports read-only static Hs and staged TNEP writes,
+The APDU protocols run in Go (`proximity/nfcapdu`); Kotlin passes each
+command APDU through and sends back the response. The Type 4 Tag serves
+a read-only static Hs, or staged TNEP writes,
 with a 32767-byte NDEF file limit and chunked NDEF records rejected.
 Classic NFC-only uses short APDUs, ENVELOPE command chaining, DO53,
 and GET RESPONSE with a Le-only command. It supports a 2 MiB complete

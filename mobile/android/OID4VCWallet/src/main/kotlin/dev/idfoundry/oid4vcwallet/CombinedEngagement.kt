@@ -50,16 +50,14 @@ internal class CombinedEngagementArbiter(
     suspend fun await(): SelectedEngagement = ready.await()
     @Synchronized fun close() { closed = true; ready.cancel() }
 
-    @Synchronized fun acceptNfc(command: NfcCommand?, dataReady: Boolean): Boolean {
+    /** Whether NFC may answer a command of [kind] (an [NfcCommandKind]); selecting NFC data commits NFC. */
+    @Synchronized fun acceptNfc(kind: Int, dataReady: Boolean): Boolean {
         if (closed || selected.value == SelectedEngagement.QR) return false
-        val isSelect = command != null && command.cla == 0 && command.ins == 0xa4 && command.p1 == 4 &&
-            (command.p2 == 0 || command.p2 == 0x0c)
-        if (!isSelect) return true
-        if (command.data.contentEquals(NfcData.aid)) {
-            if (!nfcData || !dataReady || command.p2 != 0) return false
-            return select(true)
+        return when (kind) {
+            NfcCommandKind.SELECT_DATA -> nfcData && dataReady && select(true)
+            NfcCommandKind.SELECT_DATA_NO_FCI -> false
+            else -> true // Type 4 discovery does not commit a handover.
         }
-        return true // Type 4 discovery does not commit a handover.
     }
 }
 

@@ -13,7 +13,7 @@ import java.util.concurrent.CountDownLatch
 import kotlin.concurrent.thread
 
 class CombinedHostTest {
-    private val select = NfcCommand.parse(byteArrayOf(0, 0xa4.toByte(), 4, 0x0c, 7) + NfcType4.AID)!!
+    private val select = NfcCommandKind.SELECT_NDEF
     @Test fun type4SelectKeepsQrAvailableUntilHandover() {
         val arbiter = CombinedEngagementArbiter(false) {}
         assertTrue(arbiter.acceptNfc(select, false))
@@ -77,9 +77,10 @@ class CombinedHostTest {
 
     @Test fun invalidSelectDoesNotWithdrawQr() {
         val arbiter = CombinedEngagementArbiter(true) {}
-        assertTrue(arbiter.acceptNfc(select.copy(cla = 1), false))
-        assertTrue(arbiter.acceptNfc(select.copy(data = byteArrayOf(1)), false))
-        assertFalse(arbiter.acceptNfc(select.copy(data = NfcData.aid), false))
+        assertTrue(arbiter.acceptNfc(NfcCommandKind.OTHER, false))
+        assertTrue(arbiter.acceptNfc(NfcCommandKind.SELECT_OTHER, false))
+        assertFalse(arbiter.acceptNfc(NfcCommandKind.SELECT_DATA_NO_FCI, false))
+        assertFalse("data before the handover was read", arbiter.acceptNfc(NfcCommandKind.SELECT_DATA, false))
         assertNull(arbiter.state.value)
         assertTrue(arbiter.select(false))
     }
@@ -109,7 +110,7 @@ class CombinedHostTest {
             val job = async { combined.connect() }
             assertTrue(arbiter.acceptNfc(select, false))
             assertNull(arbiter.state.value)
-            assertTrue(arbiter.acceptNfc(select.copy(p2 = 0, data = NfcData.aid), true))
+            assertTrue(arbiter.acceptNfc(NfcCommandKind.SELECT_DATA, true))
             withTimeout(1000) { job.await() }
             assertEquals(SelectedEngagement.NFC_DATA, arbiter.state.value)
             combined.close()

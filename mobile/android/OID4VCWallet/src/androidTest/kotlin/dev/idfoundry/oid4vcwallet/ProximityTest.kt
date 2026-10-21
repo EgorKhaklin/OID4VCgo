@@ -8,6 +8,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -217,7 +218,7 @@ class ProximityTest {
                         assertTrue(response.takeLast(2).toByteArray().contentEquals(nfcResponse(0x9000)))
                         return response.copyOf(response.size - 2)
                     }
-                    apdu(byteArrayOf(0,0xa4.toByte(),4,0,7) + NfcType4.AID + byteArrayOf(0))
+                    apdu(byteArrayOf(0,0xa4.toByte(),4,0,7) + NDEF_AID + byteArrayOf(0))
                     apdu(byteArrayOf(0,0xa4.toByte(),0,0x0c,2,0xe1.toByte(),4))
                     val length = apdu(byteArrayOf(0,0xb0.toByte(),0,0,2))
                     val count = if (negotiated) ((length[0].toInt() and 255) shl 8) or (length[1].toInt() and 255) else 1
@@ -227,7 +228,7 @@ class ProximityTest {
                     assertEquals(ProximityPresentation.State.WaitingForReader, combined.state.value)
                     reader = s.reader.startWith(combined.qrCode, DOC_TYPE, mapOf(NAMESPACE to listOf("family_name")), timeouts, qrReader)
                     awaitRequest(combined.owner.presentation)
-                    val select = byteArrayOf(0, 0xa4.toByte(), 4, 0x0c, 7) + NfcType4.AID
+                    val select = byteArrayOf(0, 0xa4.toByte(), 4, 0x0c, 7) + NDEF_AID
                     assertTrue(nfcResponse(0x6985).contentEquals(combined.owner.process(select)))
                     assertEquals(SelectedEngagement.QR, combined.selectedEngagement.value)
                     assertEquals(1, created.get())
@@ -272,10 +273,10 @@ class ProximityTest {
             previous?.let {
                 assertEquals(ProximityPresentation.State.Cancelled, it.state.value)
                 assertTrue(checkNotNull(previousTransport).closed)
-                assertTrue(nfcResponse(0x6985).contentEquals(it.owner.process(byteArrayOf(0,0xa4.toByte(),4,0x0c,7)+NfcType4.AID)))
+                assertTrue(nfcResponse(0x6985).contentEquals(it.owner.process(byteArrayOf(0,0xa4.toByte(),4,0x0c,7)+NDEF_AID)))
             }
             assertTrue(NfcPresentations.owner() === next.owner)
-            if (index % 3 == 0) next.owner.process(byteArrayOf(0,0xa4.toByte(),4,0x0c,7)+NfcType4.AID)
+            if (index % 3 == 0) next.owner.process(byteArrayOf(0,0xa4.toByte(),4,0x0c,7)+NDEF_AID)
             previous = next
             previousTransport = holder
         }
@@ -295,6 +296,20 @@ class ProximityTest {
             combined.decline()
             assertEquals(ProximityReaderSession.State.Declined, awaitFinal(reader.state) { it.isFinal })
         } finally { combined.close() }
+    }
+
+    /** Kotlin's command kinds mirror Go's ClassifyNFCCommand. */
+    @Test
+    fun nfcCommandKindsMatchGo() {
+        val mobile = dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile::class.java
+        for ((name, kind) in listOf(
+            "NFCCommandOther" to NfcCommandKind.OTHER,
+            "NFCCommandSelectNDEF" to NfcCommandKind.SELECT_NDEF,
+            "NFCCommandSelectData" to NfcCommandKind.SELECT_DATA,
+            "NFCCommandSelectDataNoFCI" to NfcCommandKind.SELECT_DATA_NO_FCI,
+            "NFCCommandSelectOther" to NfcCommandKind.SELECT_OTHER,
+        )) assertEquals(name, mobile.getField(name).getLong(null), kind.toLong())
+        assertEquals(NfcCommandKind.SELECT_NDEF.toLong(), dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile.classifyNFCCommand(byteArrayOf(0, 0xa4.toByte(), 4, 0, 7) + NDEF_AID))
     }
 
     /** APDUs carry the real encrypted messages end to end, without an RF field. */
@@ -322,9 +337,15 @@ class ProximityTest {
             assertEquals("Doe", verified.result.claims[NAMESPACE]!!.jsonObject["family_name"]!!.jsonPrimitive.content)
             // NFC has no State 0x02: the reader ends with session termination, so a holder
             // keeping the session open for another request doesn't see only a lost field.
-            val last = checkNotNull(NfcCommand.parse(commands.last()))
-            assertEquals(0xc3, last.ins)
-            assertEquals("a16673746174757314", NfcData.unwrap(last.data).joinToString("") { "%02x".format(it) })
+            // The reader sends it after Verified, so wait for it: a short ENVELOPE (header, Lc,
+            // DO53 (tag, length, message), Le) after the response's last GET RESPONSE.
+            val last = withTimeout(10.seconds) {
+                while ((commands.last()[1].toInt() and 255) != 0xc3) delay(20)
+                commands.last()
+            }
+            val do53 = last.copyOfRange(5, 5 + (last[4].toInt() and 255))
+            assertEquals(0x53, do53[0].toInt())
+            assertEquals("a16673746174757314", do53.copyOfRange(2, do53.size).joinToString("") { "%02x".format(it) })
         } finally { owner.close() }
         }
     }
@@ -486,5 +507,7 @@ class ProximityTest {
         const val DOC_TYPE = "org.example.test.1"
         const val NAMESPACE = "org.example.test.1"
         const val APDU_TIMED_OUT = "APDU timed out"
+        /** The Type 4 Tag NDEF application's AID. */
+        val NDEF_AID = byteArrayOf(0xd2.toByte(), 0x76, 0, 0, 0x85.toByte(), 1, 1)
     }
 }

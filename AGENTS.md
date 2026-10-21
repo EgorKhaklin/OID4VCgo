@@ -106,9 +106,11 @@ package layout and design rationale as it's built out.
   (`walletflow.StartDCAPIPresentation`, `wallet.ParseDCAPIRequestData`;
   Android's route), and `org-iso-mdoc` is ISO/IEC TS 18013-7 Annex C
   (`walletflow.StartMdocPresentation`, `mdocdcapi`; Safari's, so iOS's).
-- `proximity` carries no transport: the native libraries carry BLE GATT
-  (and chunking) and hand it whole messages. Keep platform transport
-  out of the Go packages.
+- `proximity` carries no radio: the native libraries carry BLE GATT
+  (and chunking) and the NFC tag connection, and hand Go whole messages
+  or, for NFC, single APDUs (`proximity/nfcapdu` does the APDU, Type 4
+  Tag, TNEP and DO53 protocols without I/O). Keep platform radio APIs,
+  threads and timers out of the Go packages.
 - The ISO standards these packages implement are paid documents: cite
   their section numbers, but never commit their text.
 
