@@ -119,8 +119,8 @@ over OpenID4VCI 1.0 and presents them over OpenID4VP 1.0, under HAIP 1.0,
 with SD-JWT VC and ISO mdoc credentials, from links and, through
 Credential Manager, from Chrome's Digital Credentials API. OID4VCgo is
 OpenID Certified for those roles (over links). It also presents in
-person over Bluetooth (ISO/IEC 18013-5), as the holder or as the
-reader.
+person (ISO/IEC 18013-5), as the holder or as the reader: engaged by a
+QR code, an NFC tap, or either, then over Bluetooth LE or NFC.
 
 The protocols run in OID4VCgo's Go code, compiled with gomobile into the
 library. Your app owns the keys, the storage and the UI:
@@ -157,10 +157,13 @@ Check the download against the release's \`SHA256SUMS\`
 (\`sha256sum -c SHA256SUMS\`), and its provenance with the GitHub CLI:
 \`gh attestation verify oid4vcwallet-$VERSION.aar --repo IDFoundry/OID4VCgo\`.
 
-In-person presentation needs Bluetooth permissions, which the
-library's manifest adds to your app's: request
+In-person presentation over Bluetooth needs Bluetooth permissions,
+which the library's manifest adds to your app's: request
 \`ProximityPermissions.holder\` or \`.reader\` at runtime before starting
-a session.
+a session. Answering an NFC tap as the holder needs your own
+\`NfcEngagementService\` subclass declared in your manifest, with the
+library's \`@xml/oid4vc_nfc_aids\`; the library adds the \`NFC\` permission.
+[Presenting in person](docs/PresentingInPerson.md) has both.
 
 The AAR goes in an app module: an Android library can't depend on a
 local AAR. It holds the Go library for every Android ABI (arm64-v8a,
@@ -172,8 +175,11 @@ It's compiled for Kotlin 2.2 and later.
 ## Documentation
 
 - [Guides](docs/GettingStarted.md): getting started, receiving
-  credentials, presenting from a link, to Chrome and in person,
-  handling errors, and going to production.
+  credentials, presenting from a link, to Chrome and in person (QR code
+  and NFC), handling errors, and going to production.
+- [The integration checklist](docs/IntegrationChecklist.md): every step
+  and rule in order, each with how to check it.
+- What's new: each [release](https://github.com/$REPO/releases)'s notes.
 - [The API reference](https://$(echo "${REPO%%/*}" | tr '[:upper:]' '[:lower:]').github.io/${REPO#*/}/$VERSION/), for this
   release.
 - [The Android library's sources](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile/android/OID4VCWallet),
@@ -184,6 +190,16 @@ It's compiled for Kotlin 2.2 and later.
 - [MOBILE.md](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/MOBILE.md): the design.
 - [The demo wallet app](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile/android/DemoWallet):
   a complete app on this library.
+
+## For coding assistants
+
+Integrating this library for someone? Follow
+[the integration checklist](docs/IntegrationChecklist.md), and read the
+guide for each feature first. Use only the public API in
+\`dev.idfoundry.oid4vcwallet\` that the guides and the API reference
+name: never the generated \`gomobile\` package, and don't reimplement
+the protocols, Bluetooth or NFC the library already carries. Match the
+version of the guides you read to the AAR you install.
 
 ## Contributing
 
