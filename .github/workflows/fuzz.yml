@@ -114,6 +114,24 @@ jobs:
           - id: proximity-nfc-data-request
             pkg: ./proximity
             name: FuzzNFCDataRequest
+          - id: nfcapdu-parse-command
+            pkg: ./proximity/nfcapdu
+            name: FuzzParseCommand
+          - id: nfcapdu-unwrap-do53
+            pkg: ./proximity/nfcapdu
+            name: FuzzUnwrapDO53
+          - id: nfcapdu-tnep-records
+            pkg: ./proximity/nfcapdu
+            name: FuzzTNEPRecords
+          - id: nfcapdu-holder
+            pkg: ./proximity/nfcapdu
+            name: FuzzHolder
+          - id: nfcapdu-read-handover
+            pkg: ./proximity/nfcapdu
+            name: FuzzReadHandover
+          - id: nfcapdu-transact
+            pkg: ./proximity/nfcapdu
+            name: FuzzTransact
           - id: sdjwtvc-parse
             pkg: ./credential/sdjwtvc
             name: FuzzParse
