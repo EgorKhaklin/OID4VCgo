@@ -67,6 +67,16 @@ class NfcDataTest {
         reader.close()
     }
 
+    @Test fun readerTransportSendsAgainAsSoonAsItReceives(): Unit = runBlocking {
+        val reader = NfcDataReaderTransport({ it }, {}, 258, NfcDataParametersJSON(255, 256), OpaqueCodec)
+        reader.connect()
+        repeat(500) { i ->
+            reader.send(byteArrayOf(i.toByte()))
+            assertArrayEquals(byteArrayOf(i.toByte()), withTimeout(1000) { reader.receive() })
+        }
+        reader.close()
+    }
+
     @Test fun finalResponseWaitsForConsentThenForTheReader(): Unit = runBlocking {
         val holder = ScriptedHolder()
         val transport = NfcDataHolderTransport(sendTimeout = 2000.milliseconds)

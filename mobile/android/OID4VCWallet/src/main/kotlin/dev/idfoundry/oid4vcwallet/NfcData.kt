@@ -112,9 +112,13 @@ internal class NfcDataReaderTransport(
             if (closed || sending) throw ProximityTransportException("NFC exchange already pending or closed")
             sending = true
             scope.launch {
-                try { incoming.send(transact(message)) }
-                catch (e: Exception) { incoming.close(ProximityTransportException("NFC exchange failed", cause = e)) }
-                finally { synchronized(this@NfcDataReaderTransport) { sending = false } }
+                val answer = runCatching { transact(message) }
+                // Free the exchange before the answer wakes the session, which may send at once.
+                synchronized(this@NfcDataReaderTransport) { sending = false }
+                answer.fold(
+                    { runCatching { incoming.send(it) } },
+                    { incoming.close(ProximityTransportException("NFC exchange failed", cause = it)) },
+                )
             }
         }
     }
