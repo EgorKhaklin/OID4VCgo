@@ -264,9 +264,10 @@ func TestDCAPI_AgeCheck(t *testing.T) {
 // The age check, answered over OpenID4VP, as Chrome's wallets do: the
 // mdoc presented bound to the page's origin verifies into the same
 // decision; one bound to another origin doesn't.
-func TestDCAPI_AgeCheckOverOpenID4VP(t *testing.T) {
-	iss := newDCAPIIssuer(t)
-	c := newDCAPIApp(t, iss)
+// openID4VPAnswerer answers the page's latest OpenID4VP request with an
+// mdoc of iss's, presented bound to an origin.
+func openID4VPAnswerer(t *testing.T, c *dcapiClient, iss dcapiIssuer) func(origin string) string {
+	t.Helper()
 	issuerSigned, device := iss.passportMdoc(t, map[string]any{"age_over_18": true})
 	encoded, err := issuerSigned.Marshal()
 	if err != nil {
@@ -276,7 +277,7 @@ func TestDCAPI_AgeCheckOverOpenID4VP(t *testing.T) {
 		Format: "mso_mdoc", Credential: base64.RawURLEncoding.EncodeToString(encoded),
 		HolderKey: device, HolderKeyAlg: oid4vci.ES256, MdocDocType: credential.DocType,
 	}
-	answer := func(origin string) string {
+	return func(origin string) string {
 		data, _ := json.Marshal(c.openID)
 		req, err := wallet.ParseDCAPIRequestData(wallet.ParseDCAPIRequestDataParams{
 			Protocol: wallet.DCAPIProtocolSigned, Data: data, Origin: dcapiOrigin, VerifierTrust: wallet.NoVerifierTrust{},
@@ -299,6 +300,12 @@ func TestDCAPI_AgeCheckOverOpenID4VP(t *testing.T) {
 		}
 		return jwe
 	}
+}
+
+func TestDCAPI_AgeCheckOverOpenID4VP(t *testing.T) {
+	iss := newDCAPIIssuer(t)
+	c := newDCAPIApp(t, iss)
+	answer := openID4VPAnswerer(t, c, iss)
 
 	page := c.startPage(verifierapp.ScenarioAge)
 	c.askInBrowser(page)
@@ -311,6 +318,34 @@ func TestDCAPI_AgeCheckOverOpenID4VP(t *testing.T) {
 	}
 	if text := c.pageText(page); !strings.Contains(text, "Sale allowed") {
 		t.Errorf("the page doesn't show the decision:\n%s", text)
+	}
+}
+
+// A refused OpenID4VP answer leaves its request open, so the page's
+// browser can still answer it; once answered, it's spent, and the page's
+// other requests are closed.
+func TestDCAPI_OpenID4VPRequestStaysOpenUntilAnswered(t *testing.T) {
+	iss := newDCAPIIssuer(t)
+	c := newDCAPIApp(t, iss)
+	answer := openID4VPAnswerer(t, c, iss)
+	page := c.startPage(verifierapp.ScenarioAge)
+	c.askInBrowser(page)
+	if status, _ := c.postResponseAs(page, wallet.DCAPIProtocolSigned, answer("https://attacker.example")); status != http.StatusBadRequest {
+		t.Errorf("an answer bound to another origin: status %d, want 400", status)
+	}
+	valid := answer(dcapiOrigin)
+	if status, body := c.postResponseAs(page, wallet.DCAPIProtocolSigned, valid); status != http.StatusNoContent {
+		t.Fatalf("the valid answer after a refused one: status %d: %s", status, body)
+	}
+	if status, _ := c.postResponseAs(page, wallet.DCAPIProtocolSigned, valid); status != http.StatusBadRequest {
+		t.Errorf("a second answer: status %d, want 400", status)
+	}
+	if _, ok := c.app.Outcome(strings.TrimPrefix(page, "/demo/requests/")); !ok {
+		t.Error("no outcome after the answer")
+	}
+	// The org-iso-mdoc request offered with it is spent too.
+	if status, _ := c.postResponse(page, "x"); status != http.StatusConflict {
+		t.Errorf("an org-iso-mdoc answer after the OpenID4VP one: status %d, want 409", status)
 	}
 }
 

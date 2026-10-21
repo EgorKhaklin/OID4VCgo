@@ -77,11 +77,8 @@ type Config struct {
 
 // App is a running passport-vdc verifier.
 type App struct {
-	cfg Config
-	txs map[Scenario]*verifier.Transactions // each scenario's relying party has its own identity
-	// rps are the same relying parties, for the Digital Credentials API's
-	// OpenID4VP requests, which no transaction holds.
-	rps    map[Scenario]relyingParty
+	cfg    Config
+	txs    map[Scenario]*verifier.Transactions // each scenario's relying party has its own identity
 	caCert *x509.Certificate
 	// registrarCA is the trust anchor of the registrar that registers
 	// the trusted scenarios' relying parties.
@@ -112,8 +109,9 @@ type App struct {
 // A session is one "verify a passport credential" page: a presentation
 // request offered two ways — cross-device (a QR code) and, for a request
 // created in a browser, same-device (a link to the web wallet) — each a
-// verifier.Transactions request. The first to complete answers the page;
-// the other is then closed. The page's own ID is unrelated to either
+// verifier.Transactions request, and, once the page asks in the browser,
+// a third over the Digital Credentials API. The first to complete
+// answers the page; the others are then closed. The page's own ID is unrelated to either
 // request's (OpenID4VP §14.3.3): only the page that created it knows it.
 type session struct {
 	scenario     Scenario
@@ -122,11 +120,12 @@ type session struct {
 	expiresAt    time.Time
 	cross, same  channel // same.id is "" without a browser
 
-	// dcapi is the page's Digital Credentials API request waiting for
-	// its answer, and dcapiOutcome what its answer established; both
-	// under App.mu.
+	// dcapi is the page's org-iso-mdoc Digital Credentials API request
+	// waiting for its answer, and dcapiOutcome what its answer
+	// established; dcapiOpenID is the verifier.Transactions ID of the
+	// OpenID4VP request offered with it. All under App.mu.
 	dcapi        *mdocdcapi.Pending
-	dcapiOpenID  *openID4VPPending
+	dcapiOpenID  string
 	dcapiOutcome *Outcome
 }
 
@@ -230,7 +229,7 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	a := &App{
-		cfg: cfg, txs: map[Scenario]*verifier.Transactions{}, rps: map[Scenario]relyingParty{}, caCert: ids.ca, registrarCA: ids.registrarCA, readerCA: ids.readerCA,
+		cfg: cfg, txs: map[Scenario]*verifier.Transactions{}, caCert: ids.ca, registrarCA: ids.registrarCA, readerCA: ids.readerCA,
 		issuerRoots: issuerRoots, issuerTrusted: issuerTrusted, now: time.Now,
 		origin: origin, readers: map[Scenario]mdocdcapi.ReaderKey{},
 		sessions: map[string]*session{}, byTx: map[string]string{}, outcomes: map[string]map[string]*Outcome{},
@@ -285,7 +284,6 @@ func (a *App) newTransactions(sc Scenario, sg signer, registrar signer) (*verifi
 		MaxClockSkew: time.Minute,
 		Now:          func() time.Time { return a.now() },
 	}
-	a.rps[sc] = relyingParty{v: v, verify: verify}
 	txs, err := verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
 		RequestURIBase: base + "/request-objects",
 		RedirectURI:    base + "/continue",
@@ -495,12 +493,9 @@ type pageState struct {
 // completed, the other is closed.
 func (a *App) state(ctx context.Context, s *session) pageState {
 	var st pageState
-	for _, ch := range []channel{s.cross, s.same} {
-		if ch.id == "" {
-			continue
-		}
-		if view, err := a.txs[s.scenario].Lookup(ctx, ch.id, s.binding); err == nil {
-			a.note(&st, ch.id, view)
+	for _, id := range a.requestIDs(s) {
+		if view, err := a.txs[s.scenario].Lookup(ctx, id, s.binding); err == nil {
+			a.note(&st, id, view)
 		}
 	}
 	a.mu.Lock()
@@ -510,13 +505,29 @@ func (a *App) state(ctx context.Context, s *session) pageState {
 	a.mu.Unlock()
 	if st.outcome != nil {
 		st.awaiting, st.closed = false, false
-		for _, ch := range []channel{s.cross, s.same} {
-			if ch.id != "" {
-				_ = a.txs[s.scenario].Close(ctx, ch.id) // the other one; a completed request is left as is
-			}
+		for _, id := range a.requestIDs(s) {
+			_ = a.txs[s.scenario].Close(ctx, id) // the others; a completed request is left as is
 		}
 	}
 	return st
+}
+
+// requestIDs are s's verifier.Transactions requests: cross-device,
+// same-device if it has one, and the Digital Credentials API's OpenID4VP
+// request once the page has asked in the browser.
+func (a *App) requestIDs(s *session) []string {
+	var ids []string
+	for _, ch := range []channel{s.cross, s.same} {
+		if ch.id != "" {
+			ids = append(ids, ch.id)
+		}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if s.dcapiOpenID != "" {
+		ids = append(ids, s.dcapiOpenID)
+	}
+	return ids
 }
 
 // note adds what request id's view says to st.
@@ -616,11 +627,17 @@ func (a *App) outcomeOf(ctx context.Context, sc Scenario, result verifier.Verify
 // otherAnswered reports whether s's other request, not txID, has
 // already been answered.
 func (a *App) otherAnswered(ctx context.Context, s *session, txID string) bool {
-	for _, ch := range []channel{s.cross, s.same} {
-		if ch.id == "" || ch.id == txID {
+	a.mu.Lock()
+	mdocAnswered := s.dcapiOutcome != nil
+	a.mu.Unlock()
+	if mdocAnswered {
+		return true
+	}
+	for _, id := range a.requestIDs(s) {
+		if id == txID {
 			continue
 		}
-		view, err := a.txs[s.scenario].Lookup(ctx, ch.id, s.binding)
+		view, err := a.txs[s.scenario].Lookup(ctx, id, s.binding)
 		if err == nil && (view.Status == verifier.TransactionDone || view.Status == verifier.TransactionAwaitingRedirect) {
 			return true
 		}
