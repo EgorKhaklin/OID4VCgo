@@ -119,6 +119,10 @@ func (r polarisFixedKey) ResolveIssuerKey(context.Context, map[string]any, map[s
 	return r.pub, alg, err
 }
 
+// Capabilities declares LiveFetchHardened only so that AssuranceProduction,
+// which this test runs under, accepts a fixed key. polarisFixedKey fetches
+// nothing; the declaration is no claim about any key source outside this
+// test.
 func (polarisFixedKey) Capabilities() KeySourceCapabilities {
 	return KeySourceCapabilities{LiveFetchHardened: true}
 }
@@ -266,7 +270,11 @@ func (r polarisRun) judge(t *testing.T, v polarisVector) (verdict, why string) {
 		t.Fatalf("vector trust %q is not one this test knows", v.Trust)
 	}
 	// The vectors' Client Identifier is a fixed string, not one derived from
-	// a certificate this test holds, so the Verifier is built from its parts.
+	// a certificate this test holds, so the Verifier is built from its parts
+	// rather than through New: cfg and clientID are set here, and deps is
+	// left zero, since its Signer and Random serve requests, which this test
+	// never builds. If Verifier gains a field, set it here too or leave it
+	// zero on purpose.
 	verifier := &Verifier{cfg: Config{Assurance: AssuranceProduction}, clientID: r.settings.Audience}
 	skew := time.Duration(r.settings.MaxSkewSeconds) * time.Second
 	now := func() time.Time { return time.Unix(r.settings.Now, 0) }
