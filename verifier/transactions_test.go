@@ -396,7 +396,6 @@ func TestNewTransactions_Validates(t *testing.T) {
 	v := newTestVerifier(t)
 	store := storage.NewVerifierTransactionStore()
 	for name, cfg := range map[string]verifier.TransactionsConfig{
-		"no request_uri base":       {},
 		"relative request_uri base": {RequestURIBase: "/request-objects"},
 		"http request_uri base":     {RequestURIBase: "http://verifier.example.com/r"},
 		"http redirect_uri":         {RequestURIBase: txBase, RedirectURI: "http://verifier.example.com/c"},

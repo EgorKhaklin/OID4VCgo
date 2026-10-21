@@ -60,6 +60,11 @@ type Transaction struct {
 	ResponseDecryptionKey *ecdsa.PrivateKey
 	RequestObject         string
 
+	// Origin is set for a Digital Credentials API request (BeginDCAPI):
+	// the origin of the page that makes it, and the request's only
+	// expected_origins entry. "" for a redirect-flow request.
+	Origin string
+
 	// BrowserBindingHash is SHA-256 of the browser binding Begin was
 	// given; nil for an unbound request.
 	BrowserBindingHash []byte
@@ -143,7 +148,9 @@ var (
 // TransactionsConfig configures Transactions.
 type TransactionsConfig struct {
 	// RequestURIBase is the URL request objects are served under; a
-	// request's request_uri is RequestURIBase + "/" + its ID. REQUIRED.
+	// request's request_uri is RequestURIBase + "/" + its ID. REQUIRED
+	// for Begin; a Digital Credentials API request (BeginDCAPI) has no
+	// request_uri.
 	RequestURIBase string
 
 	// Lifetime bounds how long a request stays answerable, and how long
@@ -154,8 +161,8 @@ type TransactionsConfig struct {
 	// Verify is the verification every answer gets: its IssuerKeys,
 	// MdocIssuerKeys, TrustedAuthorities, MaxKeyBindingAge and Now.
 	// Query, Response, ExpectedNonce and ResponseEncryptionKey are set
-	// per request, and Origin (the DC API flow) isn't supported yet;
-	// leave them zero.
+	// per request, and Origin and ExpectedOrigins per Digital
+	// Credentials API request (BeginDCAPI); leave them zero.
 	Verify VerifyResponseRequest
 
 	// Accept, if set, runs after an answer verifies and before the
@@ -203,9 +210,10 @@ type TransactionsConfig struct {
 // leave the request open, so they can't be used to cancel it.
 //
 // It covers the redirect flows (cross-device and same-device) with
-// request_uri fetched by GET. Use the lower-level BuildAuthorizationRequest,
-// ParseDirectPostJWTResponse and VerifyResponse directly for anything
-// else, such as the DC API.
+// request_uri fetched by GET, and signed OpenID4VP requests over the
+// Digital Credentials API (BeginDCAPI, HandleDCAPIResponse). Use the
+// lower-level BuildAuthorizationRequest, ParseDirectPostJWTResponse and
+// VerifyResponse directly for anything else.
 type Transactions struct {
 	v     *Verifier
 	store TransactionStore
@@ -220,8 +228,10 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 	case store == nil:
 		return nil, errors.New("verifier: transactions: a TransactionStore is required")
 	}
-	if err := checkAbsoluteURL("request_uri_base", cfg.RequestURIBase, v.cfg.Assurance); err != nil {
-		return nil, err
+	if cfg.RequestURIBase != "" {
+		if err := checkAbsoluteURL("request_uri_base", cfg.RequestURIBase, v.cfg.Assurance); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.RedirectURI != "" {
 		if err := checkAbsoluteURL("redirect_uri", cfg.RedirectURI, v.cfg.Assurance); err != nil {
@@ -234,8 +244,8 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 	if cfg.Lifetime == 0 {
 		cfg.Lifetime = 10 * time.Minute
 	}
-	if cfg.Verify.Query.Credentials != nil || cfg.Verify.ExpectedNonce != "" || cfg.Verify.ResponseEncryptionKey != nil || cfg.Verify.Origin != "" || cfg.Verify.Response.VPToken != nil {
-		return nil, errors.New("verifier: transactions: verify: query, response, expected_nonce, response_encryption_key and origin are set per request; leave them zero")
+	if cfg.Verify.Query.Credentials != nil || cfg.Verify.ExpectedNonce != "" || cfg.Verify.ResponseEncryptionKey != nil || cfg.Verify.Origin != "" || cfg.Verify.ExpectedOrigins != nil || cfg.Verify.Response.VPToken != nil {
+		return nil, errors.New("verifier: transactions: verify: query, response, expected_nonce, response_encryption_key, origin and expected_origins are set per request; leave them zero")
 	}
 	if err := checkTimeBounds(cfg.Verify); err != nil {
 		return nil, err
@@ -311,6 +321,9 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 	if len(browserBinding) < MinBrowserBindingLength {
 		return Begun{}, fmt.Errorf("verifier: transactions: a browser binding of at least %d bytes is required: an unguessable random token", MinBrowserBindingLength)
 	}
+	if t.cfg.RequestURIBase == "" {
+		return Begun{}, errors.New("verifier: transactions: Begin needs TransactionsConfig.RequestURIBase")
+	}
 	if sameDevice && t.cfg.RedirectURI == "" {
 		return Begun{}, errors.New("verifier: transactions: a same-device request needs TransactionsConfig.RedirectURI")
 	}
@@ -356,6 +369,10 @@ func (t *Transactions) RequestObject(ctx context.Context, id string) (string, er
 	tx, err := t.store.Get(ctx, id)
 	if err != nil {
 		return "", err
+	}
+	if tx.Origin != "" {
+		// A Digital Credentials API request goes to the page, not to a request_uri.
+		return "", ErrTransactionUnknown
 	}
 	if err := t.checkPending(tx); err != nil {
 		return "", err
@@ -404,6 +421,11 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 	tx, err := t.store.Get(ctx, id)
 	if err != nil {
 		return Answered{}, storeFault(err)
+	}
+	if tx.Origin != "" {
+		// A Digital Credentials API request's answer comes back through
+		// its page (HandleDCAPIResponse), never to the response endpoint.
+		return Answered{}, ErrTransactionUnknown
 	}
 	if err := t.checkPending(tx); err != nil {
 		return Answered{}, err
@@ -467,8 +489,16 @@ func (t *Transactions) verify(ctx context.Context, tx Transaction, responseJWE s
 	if subtle.ConstantTimeCompare([]byte(parsed.State), []byte(tx.State)) != 1 {
 		return VerifyResponseResult{}, newError(ReasonStateMismatch, "the response's state doesn't match the request", nil)
 	}
+	return t.verifyParsed(ctx, tx, parsed)
+}
+
+// verifyParsed verifies and accepts one decrypted answer to tx.
+func (t *Transactions) verifyParsed(ctx context.Context, tx Transaction, parsed ParsedResponse) (VerifyResponseResult, error) {
 	req := t.cfg.Verify
 	req.Query, req.Response, req.ExpectedNonce, req.ResponseEncryptionKey = tx.Query, parsed, tx.Nonce, tx.ResponseDecryptionKey
+	if tx.Origin != "" {
+		req.Origin, req.ExpectedOrigins = tx.Origin, []string{tx.Origin}
+	}
 	req.statusByTransactions = true
 	result, err := t.v.VerifyResponse(ctx, req)
 	if err != nil {
@@ -502,7 +532,7 @@ func (t *Transactions) HandleUnencryptedError(ctx context.Context, code, state s
 		return Answered{}
 	}
 	tx, err := t.store.Get(ctx, id)
-	if err != nil || subtle.ConstantTimeCompare([]byte(state), []byte(tx.State)) != 1 || t.checkPending(tx) != nil {
+	if err != nil || tx.Origin != "" || subtle.ConstantTimeCompare([]byte(state), []byte(tx.State)) != 1 || t.checkPending(tx) != nil {
 		return Answered{}
 	}
 	walletErr := &ResponseError{Code: errorCodeOf(code)}
