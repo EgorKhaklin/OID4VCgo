@@ -147,10 +147,12 @@ unchecked: check it before relying on the document.
 
 Android only. NFC engagement uses static or negotiated (TNEP) handover,
 then Bluetooth LE or NFC-only retrieval. Every combination, with both
-Bluetooth roles, interoperates with the independent Multipaz
-implementation on physical phones, in both directions. That's not a
-conformance claim: the licensed ISO/IEC 18013-5 and NFC Forum texts
-haven't been reviewed against it. iOS NFC, USB readers, L2CAP and
+Bluetooth roles, interoperated with the independent Multipaz
+implementation on physical phones, in both directions, at 6aef12e
+(#659), when the APDU protocols still ran in Kotlin. They now run in Go
+(`proximity/nfcapdu`), which hasn't been re-tested on phones yet. None of
+this is a conformance claim: the licensed ISO/IEC 18013-5 and NFC Forum
+texts haven't been reviewed against it. iOS NFC, USB readers, L2CAP and
 Concurrent Channel Engagement aren't supported.
 
 The holder answers taps through host card emulation (HCE): Android

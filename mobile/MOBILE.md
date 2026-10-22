@@ -27,8 +27,11 @@ reads, partial writes, 180 KB responses, consent delay, field loss and
 every refusal's status word, fuzz each parser, and verify credentials and
 Annex D; Kotlin host tests cover arbitration, the handover gate,
 transports and cancellation.
-Physical interop and normative specification review remain pending.
-See `ABI.md`'s NFC additions and `../proximity/README.md`.
+Physical interop with Multipaz passed in every mode and both directions
+at 6aef12e (#659), when the APDU protocols ran in Kotlin; the Go
+`nfcapdu` path hasn't been re-tested on phones. Normative specification
+review remains pending. See `ABI.md`'s NFC additions and
+`../proximity/README.md`.
 
 The Kotlin owner delays BLE resource creation until all Hs bytes have
 been read. Replacing it awaits bounded cleanup; HCE services never
@@ -1301,5 +1304,7 @@ consent state machine. Independent ephemeral keys prevent cross-offer transcript
 reuse; the native arbiter claims QR at BLE State-start or NFC at application
 SELECT. QR resources stop before gated NFC BLE starts. NFC data can omit QR when
 Bluetooth permissions are absent. Tests and local validation gates are tracked
-in the root `STATUS.md`; physical RF/BLE, competing-wallet routing and refused
-foreground preference remain device-validation gates.
+in the root `STATUS.md`. On phones at 6aef12e, combined engagement passed
+with Multipaz (the tap won and QR was withdrawn), and with a second wallet
+registered for the same AID the presenting app held foreground preference
+and released it once the session ended.

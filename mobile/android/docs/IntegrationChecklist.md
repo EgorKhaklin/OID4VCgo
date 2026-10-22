@@ -84,8 +84,10 @@ is a complete, working app on this library to compare against.
     default, static handover, works with every reader.
 - [ ] Keep **one** presentation at a time, held above the screen (an
   application or view-model scope) so it survives the HCE service being
-  recreated. Never start a second owner while one exists; close the old
-  one first.
+  recreated. Starting another replaces it: the new one waits for the
+  previous one's tasks and radio resources to close. Don't run two
+  side by side; to offer QR and NFC together, use
+  `startCombinedPresentation`.
 - [ ] Routing, in the activity:
   - `onResume`: if the session's state isn't final, call
     `preferForeground(activity, IdentityNfcService::class.java)`; if it
