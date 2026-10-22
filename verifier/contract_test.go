@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/storage"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/verifier/verifiertest"
 )
@@ -19,5 +20,13 @@ func TestContractSuitesAgainstX5CResolvers(t *testing.T) {
 	})
 	verifiertest.TestX5ChainTrustContract(t, func(roots *x509.CertPool) verifier.MdocIssuerKeyResolver {
 		return verifier.X5ChainIssuerKeyResolver{Roots: roots}
+	})
+}
+
+// TestContractSuiteAgainstTransactionStore runs TestTransactionStoreContract
+// against storage's in-memory store.
+func TestContractSuiteAgainstTransactionStore(t *testing.T) {
+	verifiertest.TestTransactionStoreContract(t, func() verifier.TransactionStore {
+		return storage.NewVerifierTransactionStore()
 	})
 }
