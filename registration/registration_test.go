@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/registration"
 )
 
@@ -126,6 +127,33 @@ func TestVerify_Refuses(t *testing.T) {
 	} {
 		if _, err := registration.Verify(c.token, c.roots, c.clientID, c.now); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v, want an error containing %q", name, err, c.want)
+		}
+	}
+}
+
+// A registration whose claims another parser would read differently —
+// sub twice, or a case variant of it — is refused, though the
+// registrar signed it.
+func TestVerify_RefusesAmbiguousClaims(t *testing.T) {
+	reg := newRegistrar(t)
+	token, err := registration.Issue(shop(), reg.key, reg.chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header, payload, err := jose.DecodeUnverified(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, prefix := range map[string]string{
+		"sub twice":        `{"sub":"x509_hash:other",`,
+		"case-variant sub": `{"SUB":"x509_hash:other",`,
+	} {
+		resigned, err := jose.Sign(jose.ES256, reg.key, header, append([]byte(prefix), payload[1:]...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := registration.Verify(resigned, reg.roots, clientID, time.Now()); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
 	}
 }

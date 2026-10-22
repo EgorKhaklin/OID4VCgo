@@ -9,6 +9,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // signedMetadataTyp is a signed Credential Issuer Metadata JWT's "typ"
@@ -87,7 +88,7 @@ func (w *Wallet) verifySignedMetadata(token, issuerURL string) ([]byte, error) {
 		return nil, fmt.Errorf("signed metadata: %w", err)
 	}
 	var claims map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &claims); err != nil {
+	if err := strictjson.Unmarshal(payload, &claims); err != nil {
 		return nil, fmt.Errorf("signed metadata: claims: %w", err)
 	}
 	if err := w.checkSignedMetadataClaims(claims, issuerURL); err != nil {

@@ -23,6 +23,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 )
 
@@ -623,7 +624,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		return nil, nil, newError(ReasonMalformed, "decode issuer jwt", err)
 	}
 	var payload map[string]any
-	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+	if err := strictjson.Unmarshal(rawPayload, &payload); err != nil {
 		return nil, nil, newError(ReasonMalformed, "unmarshal issuer jwt payload", err)
 	}
 
