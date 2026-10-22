@@ -517,7 +517,13 @@ type reservedCopy struct {
 	wasPresented, wasShown bool
 	// linkable is a copy another Verifier has seen.
 	linkable bool
+	// seq orders reservations of one copy (Wallet.reservations).
+	seq uint64
 }
+
+// copyRef names one copy of a stored credential: its ID and the copy's
+// holder key.
+type copyRef struct{ id, keyID string }
 
 // reserve picks each selected credential's copy from the store, as it is
 // now, by Config.CopyPolicy, and marks it presented to this Verifier
@@ -610,8 +616,9 @@ func (w *Wallet) loadForReserve(ctx context.Context, id string) (StoredCredentia
 }
 
 // reserveCopy picks c's copy to answer query q with, by
-// Config.CopyPolicy, and marks it presented to verifier in c. toldLinkable
-// is whether the holder was told presenting it would be linkable.
+// Config.CopyPolicy, and marks it presented to verifier in c, with
+// credMu held. toldLinkable is whether the holder was told presenting it
+// would be linkable.
 func (w *Wallet) reserveCopy(c *StoredCredential, q, id, verifier string, toldLinkable bool) (reservedCopy, error) {
 	i, cp, reused := c.copyFor(w.cfg.CopyPolicy, verifier, w.deps.Clock())
 	linkable := slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
@@ -621,6 +628,12 @@ func (w *Wallet) reserveCopy(c *StoredCredential, q, id, verifier string, toldLi
 	}
 	r := reservedCopy{query: q, id: id, index: i, keyID: cp.HolderKeyID, reused: reused,
 		wasPresented: cp.Presented, wasShown: slices.Contains(cp.ShownTo, verifier), linkable: linkable}
+	if w.reservations == nil {
+		w.reservations = map[copyRef]uint64{}
+	}
+	w.reserveSeq++
+	r.seq = w.reserveSeq
+	w.reservations[copyRef{id, cp.HolderKeyID}] = r.seq
 	c.Copies[i].Presented = true
 	if !r.wasShown {
 		c.Copies[i].ShownTo = append(slices.Clone(cp.ShownTo), verifier)
@@ -631,8 +644,11 @@ func (w *Wallet) reserveCopy(c *StoredCredential, q, id, verifier string, toldLi
 }
 
 // release undoes what reserve recorded for a response that wasn't
-// sent, unless the credential has changed since. It's best effort: a
-// copy left marked is one fewer to use, never one presented twice.
+// sent, unless the credential has changed since or another presentation
+// has reserved the copy since: what that one recorded, which release's
+// snapshot would undo, stands whether or not it was sent. It's best
+// effort: a copy left marked is one fewer to use, never one presented
+// twice.
 func (p *Presentation) release(ctx context.Context, reserved []reservedCopy) {
 	p.w.release(ctx, reserved, p.verifier())
 }
@@ -648,6 +664,11 @@ func (w *Wallet) release(ctx context.Context, reserved []reservedCopy, verifier 
 		if r.reused {
 			continue
 		}
+		ref := copyRef{r.id, r.keyID}
+		if w.reservations[ref] != r.seq {
+			continue
+		}
+		delete(w.reservations, ref)
 		c, ok := changed[r.id]
 		if !ok {
 			var err error

@@ -277,6 +277,12 @@ type Wallet struct {
 	// recording a status, replacing a refreshed one, deleting one. It's
 	// never held across a network request.
 	credMu sync.Mutex
+	// reservations are, by copy, the latest presentation reserving it
+	// (reservedCopy.seq), under credMu: a presentation that isn't sent
+	// undoes its reservation only when no other has reserved the copy
+	// since, as that one may have been sent.
+	reservations map[copyRef]uint64
+	reserveSeq   uint64
 	// grantMu serializes refreshes per refresh grant (grantLocks, by
 	// grant ID), held across the refresh's requests.
 	grantMu    sync.Mutex
