@@ -17,6 +17,9 @@ import (
 // unset: issuer.RequestCredential binds each issued instance to the
 // Wallet's own key.
 //
+// exp is ValidUntil: the start of a UTC day, the same for every
+// credential issued that day. nbf isn't set.
+//
 // iss and iat are deliberately omitted. The issuer is conveyed by the
 // x5c end-entity certificate (HAIP requires x5c; SD-JWT VC draft-13
 // §3.2.2.2 and §3.5), and an HTTPS iss would instead point verifiers at
@@ -53,7 +56,7 @@ func SDJWTClaims(e passport.Evidence, vct string, o Options) (*sdjwtvc.Claims, e
 	if len(e.Portrait) > 0 {
 		claims[SDJWTPicture] = sdjwtvc.SD(portraitDataURI(e.Portrait))
 	}
-	if ages := ageClaims(e, o); len(ages) > 0 {
+	if ages := ageClaims(e, o, validUntil); len(ages) > 0 {
 		over := make(map[string]any, len(ages))
 		for threshold, v := range ages {
 			over[strconv.Itoa(threshold)] = sdjwtvc.SD(v)

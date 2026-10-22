@@ -49,8 +49,12 @@ type IssuedStatus struct {
 	// let anyone match a presented credential's index to when it was
 	// issued, which unpredictable indices are meant to prevent (HAIP
 	// 1.0 §6.1).
-	Handle   string
-	Format   string
+	Handle string
+	Format string
+	// IssuedAt is when the credential was issued. The revocation page
+	// shows only its UTC day, which every credential issued that day
+	// shares: a time would let a verifier holding one find its
+	// entry, and revoke it.
 	IssuedAt time.Time
 	Revoked  bool
 	// Unchecked marks a credential issued without Passive Authentication
@@ -195,7 +199,7 @@ var statusTemplate = template.Must(template.New("status").Parse(pageHead + `
 <table>
 <tr><th>Format</th><th>Issued</th><th>Status</th><th></th></tr>
 {{range .Entries}}
-<tr><td><code>{{.Format}}</code>{{if .Unchecked}} <span class="warn">— issued without Passive Authentication (gmrtd's sample)</span>{{end}}</td><td>{{.IssuedAt.Format "15:04:05"}}</td>
+<tr><td><code>{{.Format}}</code>{{if .Unchecked}} <span class="warn">— issued without Passive Authentication (gmrtd's sample)</span>{{end}}</td><td>{{.IssuedAt.UTC.Format "2006-01-02"}}</td>
 <td>{{if .Revoked}}<span class="warn">revoked</span>{{else}}<span class="ok">valid</span>{{end}}</td>
 <td>{{if not .Revoked}}<form method="post" action="/demo/status/revoke"><input type="hidden" name="handle" value="{{.Handle}}"><button>Revoke</button></form>{{end}}</td></tr>
 {{end}}
