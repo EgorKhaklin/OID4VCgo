@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"crypto/rand"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -143,7 +144,9 @@ type Dependencies struct {
 
 	// Random is the source of cryptographically secure randomness for
 	// a DPoP proof's own jti claim (RFC 9449 §4.2) — required only for
-	// RequestPreAuthorizedCodeToken.
+	// RequestPreAuthorizedCodeToken and GenerateDPoPProof. Under
+	// AssuranceProduction it must be crypto/rand.Reader, which nil
+	// then means, as issuer and verifier require.
 	Random io.Reader
 }
 
@@ -176,6 +179,14 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	deps.HTTP = httpClient
 	if deps.Clock == nil {
 		return nil, fmt.Errorf("wallet: dependencies: clock is required")
+	}
+	if cfg.Assurance == AssuranceProduction {
+		if deps.Random == nil {
+			deps.Random = rand.Reader
+		}
+		if deps.Random != rand.Reader {
+			return nil, fmt.Errorf("wallet: dependencies: random must be crypto/rand.Reader, or nil, under AssuranceProduction")
+		}
 	}
 
 	if err := checkIssuerMetadataConfig(cfg); err != nil {
