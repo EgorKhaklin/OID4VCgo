@@ -97,18 +97,11 @@ func WithIssuerRootsByDocType(roots map[string]*x509.CertPool) ReaderOption {
 }
 
 // DefaultDocumentSignerPolicy is the document signer check Verify makes
-// unless WithDocumentSignerPolicy replaces it: a certificate whose key
-// usage extension doesn't allow digital signatures, or that is an OCSP
-// signer — the other end-entity certificates an IACA issues — doesn't
-// sign mdocs. It accepts a certificate without those extensions.
-func DefaultDocumentSignerPolicy(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
-	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
-		return errors.New("the document signer certificate's key usage doesn't allow digital signatures")
-	}
-	if slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageOCSPSigning) {
-		return errors.New("the document signer certificate is an OCSP signer's")
-	}
-	return nil
+// unless WithDocumentSignerPolicy replaces it: mdoc.DefaultDocumentSignerPolicy,
+// which refuses the end-entity certificates an IACA issues for other
+// jobs.
+func DefaultDocumentSignerPolicy(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+	return mdoc.DefaultDocumentSignerPolicy(leaf, chains)
 }
 
 // AnyDocumentSigner is a WithDocumentSignerPolicy policy accepting any

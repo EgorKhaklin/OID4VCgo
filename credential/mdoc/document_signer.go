@@ -25,6 +25,25 @@ const (
 // checks issuing_country and issuing_jurisdiction in.
 var issuingAuthorityNameSpaces = []string{MDLNameSpace, ISO23220NameSpace, EUDIPIDNameSpace}
 
+// DefaultDocumentSignerPolicy is the document signer check made where
+// no other is configured — verifier.X5ChainIssuerKeyResolver with no
+// LeafPolicy, a wallet receiving an mdoc with no IssuerLeafPolicy,
+// proximity's reader without WithDocumentSignerPolicy: a certificate
+// whose key usage extension doesn't allow digital signatures, or that
+// is an OCSP signer — the other end-entity certificates an IACA issues
+// (ISO/IEC 18013-5 Annex B) — doesn't sign mdocs. Chain validation
+// alone would accept them. It accepts a certificate without those
+// extensions.
+func DefaultDocumentSignerPolicy(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
+	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return errors.New("mdoc: the document signer certificate's key usage doesn't allow digital signatures")
+	}
+	if slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageOCSPSigning) {
+		return errors.New("mdoc: the document signer certificate is an OCSP signer's")
+	}
+	return nil
+}
+
 // CheckDocumentSigner applies ISO/IEC 18013-5's checks of a verified
 // mdoc against its document signer (DS) certificate, on top of
 // certificate path validation and Verify's signature check. chains are
