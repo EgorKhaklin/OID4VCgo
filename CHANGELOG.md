@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.51.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.50.0...v0.51.0) (2026-10-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **walletflow:** outside Development, walletflow.New refuses a Config whose IssuerMetadataRoots is the same certificate pool as IssuerRoots, RegistrarRoots, MdocReaderRoots or the VerifierTrust roots, unless both roles have a leaf policy. Give IssuerMetadataLeafPolicy and the other role's leaf policy an extended key usage each, or use separate pools.
+* **walletflow:** walletflow refuses an SD-JWT VC whose iss isn't the offer's credential_issuer. A wallet receiving from an issuer whose credentials carry a different iss sets Config.AllowForeignIss (mobile: allow_foreign_iss), where its IssuerRoots certify that issuer alone.
+* **mdocdcapi:** mdocdcapi.VerifyParams.Assurance is required; a zero value is refused. Set verifier.AssuranceDevelopment to keep the previous behaviour, or verifier.AssuranceProduction with IssuerAuthorized or AnyIssuerForAnyType, and Accept (e.g. verifier.RequireValidStatus(checker)) or NoStatusCheck. A status check done on Verified after VerifyResponse returns can move into Accept, where Verified.Credential's IssuerChain lets RequireValidStatus bind the status list to the issuer.
+* **issuer:** SignMetadataJWS's JWS now expires DefaultMetadataLifetime (24 hours) after it is signed. A deployment that signs metadata once and serves that copy indefinitely must sign it again before it expires, or serve it with NewMetadataHandler, which re-signs every MetadataSigner.Refresh.
+
+### Bug Fixes
+
+* decode raw JSON members with strictjson ([0c3f570](https://github.com/IDFoundry/OID4VCgo/commit/0c3f57052bb8329b9d7f7bfc6e3e18fc61d0c93e))
+* decode signed payloads and issuer metadata with strictjson ([1ab155b](https://github.com/IDFoundry/OID4VCgo/commit/1ab155b9ee5575c7280215d2538790ef4644d344))
+* **issuer:** check the grant before running a deferred Resolve ([4d6aee0](https://github.com/IDFoundry/OID4VCgo/commit/4d6aee09d2346ff6bc91f8ef38d7d2aa2e7a44d3))
+* **issuer:** give signed Credential Issuer Metadata an exp ([1420001](https://github.com/IDFoundry/OID4VCgo/commit/1420001f9d760abef3a6e3d9509a47e9bcf09a02))
+* **issuer:** ignore authorization details located at another issuer ([e31192e](https://github.com/IDFoundry/OID4VCgo/commit/e31192e767f88c8cbe92263ae5693fd42e907cca))
+* **jose,jwe,sdjwtvc:** decode base64url strictly ([5501d7e](https://github.com/IDFoundry/OID4VCgo/commit/5501d7e5a12a3adb26ab45b43eab7a1409e2f8e9))
+* **jose,jwe:** reject duplicate header parameters and an empty crit ([932dc5b](https://github.com/IDFoundry/OID4VCgo/commit/932dc5b207b38672b1e23237459b3416c3149fcc))
+* **jwk:** decode base64url strictly ([50b3dc4](https://github.com/IDFoundry/OID4VCgo/commit/50b3dc4002bb8f90fff96a0be0e27c44072bdd53))
+* **mdocdcapi:** require production's issuer and status decisions ([f692881](https://github.com/IDFoundry/OID4VCgo/commit/f6928817fd1d6e4e08c41d6e907f7aeb4d9f090c))
+* **mobile:** sanitise mdoc reader names as walletflow does display text ([f338b8a](https://github.com/IDFoundry/OID4VCgo/commit/f338b8af14d66e9ca8dac592051e092e42b4767f))
+* parse Digital Credentials API data with strictjson ([485f1e1](https://github.com/IDFoundry/OID4VCgo/commit/485f1e168b7b5e1d81a081e97885f0bf6753f2da))
+* refuse duplicate CBOR map keys inside raw fragments ([4c1ca57](https://github.com/IDFoundry/OID4VCgo/commit/4c1ca575dc932493d04a4e3d8d99fac95ae5524f))
+* **verifier:** keep sender-chosen text out of a request's LastError ([91c4408](https://github.com/IDFoundry/OID4VCgo/commit/91c44081a9a3d4a20a3201726a6cf54fcdb3e09d))
+* **verifier:** refuse one credential presented twice under multiple ([7de2d89](https://github.com/IDFoundry/OID4VCgo/commit/7de2d890462169f7cf33a831e6b1e7393b3cf338))
+* **verifier:** stop the response endpoint revealing whether the holder presented ([7012ea7](https://github.com/IDFoundry/OID4VCgo/commit/7012ea703b614d2e1f867cb9e8760b67dbe20f35))
+* **walletflow:** drop invisible format characters and line separators from display text ([b22dd13](https://github.com/IDFoundry/OID4VCgo/commit/b22dd1314e79c134ac0899a655db5830b3d3bfd6))
+* **walletflow:** keep issuer metadata roots apart from other roles' in production ([a8948a4](https://github.com/IDFoundry/OID4VCgo/commit/a8948a47f6aac9a861f6d26cd01978bac2eb7c8f))
+* **walletflow:** refresh the Credential Dataset a credential holds ([7276e5e](https://github.com/IDFoundry/OID4VCgo/commit/7276e5ef8813a650b2029c1a6f9cbd677b9d63ec))
+* **walletflow:** refuse an SD-JWT VC naming another issuer than the one asked ([fc9052f](https://github.com/IDFoundry/OID4VCgo/commit/fc9052f7e9cb0f7325afd44d94e1e49db9ccc9d4))
+* **walletflow:** send key attestations in audience-bound jwt proofs ([2e3458e](https://github.com/IDFoundry/OID4VCgo/commit/2e3458e7cb068479a6066f0bc07d351b555236a2))
+
 ## [0.50.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.49.0...v0.50.0) (2026-10-21)
 
 
