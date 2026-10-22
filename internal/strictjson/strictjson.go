@@ -106,52 +106,70 @@ func checkCase(data []byte, t reflect.Type) error {
 	trimmed := bytes.TrimSpace(data)
 	switch t.Kind() {
 	case reflect.Struct:
-		if !bytes.HasPrefix(trimmed, []byte("{")) {
-			return nil // encoding/json reports the type mismatch
-		}
-		var members map[string]json.RawMessage
-		if err := json.Unmarshal(trimmed, &members); err != nil {
-			return err
-		}
-		fields := fieldTypes(t)
-		for member, raw := range members {
-			if ft, ok := fields[member]; ok {
-				if err := checkCase(raw, ft); err != nil {
-					return err
-				}
-				continue
-			}
-			for name := range fields {
-				if strings.EqualFold(member, name) {
-					return fmt.Errorf("json: member %q isn't %q: names are case-sensitive", member, name)
-				}
-			}
-		}
+		return checkStructCase(trimmed, t)
 	case reflect.Slice, reflect.Array:
-		if !bytes.HasPrefix(trimmed, []byte("[")) {
-			return nil
-		}
-		var elems []json.RawMessage
-		if err := json.Unmarshal(trimmed, &elems); err != nil {
-			return err
-		}
-		for _, e := range elems {
-			if err := checkCase(e, t.Elem()); err != nil {
-				return err
-			}
-		}
+		return checkArrayCase(trimmed, t)
 	case reflect.Map:
-		if !bytes.HasPrefix(trimmed, []byte("{")) {
-			return nil
-		}
-		var members map[string]json.RawMessage
-		if err := json.Unmarshal(trimmed, &members); err != nil {
-			return err
-		}
-		for _, raw := range members {
-			if err := checkCase(raw, t.Elem()); err != nil {
+		return checkMapCase(trimmed, t)
+	}
+	return nil
+}
+
+// checkStructCase is checkCase for a struct type t.
+func checkStructCase(trimmed []byte, t reflect.Type) error {
+	if !bytes.HasPrefix(trimmed, []byte("{")) {
+		return nil // encoding/json reports the type mismatch
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &members); err != nil {
+		return err
+	}
+	fields := fieldTypes(t)
+	for member, raw := range members {
+		if ft, ok := fields[member]; ok {
+			if err := checkCase(raw, ft); err != nil {
 				return err
 			}
+			continue
+		}
+		for name := range fields {
+			if strings.EqualFold(member, name) {
+				return fmt.Errorf("json: member %q isn't %q: names are case-sensitive", member, name)
+			}
+		}
+	}
+	return nil
+}
+
+// checkArrayCase is checkCase for a slice or array type t.
+func checkArrayCase(trimmed []byte, t reflect.Type) error {
+	if !bytes.HasPrefix(trimmed, []byte("[")) {
+		return nil
+	}
+	var elems []json.RawMessage
+	if err := json.Unmarshal(trimmed, &elems); err != nil {
+		return err
+	}
+	for _, e := range elems {
+		if err := checkCase(e, t.Elem()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkMapCase is checkCase for a map type t.
+func checkMapCase(trimmed []byte, t reflect.Type) error {
+	if !bytes.HasPrefix(trimmed, []byte("{")) {
+		return nil
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &members); err != nil {
+		return err
+	}
+	for _, raw := range members {
+		if err := checkCase(raw, t.Elem()); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -179,15 +197,9 @@ func addFields(t reflect.Type, names map[string]reflect.Type) {
 			continue
 		}
 		name, _, _ := strings.Cut(tag, ",")
-		if f.Anonymous && name == "" {
-			ft := f.Type
-			if ft.Kind() == reflect.Pointer {
-				ft = ft.Elem()
-			}
-			if ft.Kind() == reflect.Struct {
-				addFields(ft, names)
-				continue
-			}
+		if ft, ok := embeddedStruct(f, name); ok {
+			addFields(ft, names)
+			continue
 		}
 		if !f.IsExported() {
 			continue
@@ -197,4 +209,17 @@ func addFields(t reflect.Type, names map[string]reflect.Type) {
 		}
 		names[name] = f.Type
 	}
+}
+
+// embeddedStruct reports the struct type of f, through a pointer, when
+// f is an untagged embedded struct whose fields encoding/json promotes.
+func embeddedStruct(f reflect.StructField, name string) (reflect.Type, bool) {
+	if !f.Anonymous || name != "" {
+		return nil, false
+	}
+	ft := f.Type
+	if ft.Kind() == reflect.Pointer {
+		ft = ft.Elem()
+	}
+	return ft, ft.Kind() == reflect.Struct
 }
