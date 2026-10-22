@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 )
 
 // tag24 is CBOR tag 24, an encoded CBOR data item (RFC 8949 §3.4.5.1).
@@ -23,7 +24,7 @@ var encMode = func() cbor.EncMode {
 
 // decMode decodes what a wallet receives: a duplicate map key is an
 // error, and nesting and sizes are bounded.
-var decMode = func() cbor.DecMode {
+var decMode = func() strictcbor.DecMode {
 	mode, err := cbor.DecOptions{
 		DupMapKey: cbor.DupMapKeyEnforcedAPF,
 		// A struct field matches only its exact key: "DocType" isn't
@@ -36,7 +37,7 @@ var decMode = func() cbor.DecMode {
 	if err != nil {
 		panic(fmt.Sprintf("mdocdcapi: build CBOR decoder: %v", err))
 	}
-	return mode
+	return strictcbor.Wrap(mode)
 }()
 
 // wrapTag24 is #6.24(bstr .cbor v).

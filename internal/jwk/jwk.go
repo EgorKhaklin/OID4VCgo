@@ -11,7 +11,9 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
-var b64 = base64.RawURLEncoding
+// b64 decodes strictly: an encoding whose unused trailing bits aren't zero
+// (RFC 4648 §3.5) is refused, so a key has one encoding of each member.
+var b64 = base64.RawURLEncoding.Strict()
 
 // JWK is the minimal JWK (RFC 7517) shape this package supports: P-256
 // EC keys ("kty":"EC") and Ed25519 OKP keys ("kty":"OKP"). D is only

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 )
@@ -140,7 +141,7 @@ func UnmarshalDeviceResponseMax(data []byte, maxBytes int) (Document, error) {
 
 // decMode decodes an untrusted DeviceResponse within credential/mdoc's
 // bounds, before any signature is checked.
-var decMode = func() cbor.DecMode {
+var decMode = func() strictcbor.DecMode {
 	mode, err := cbor.DecOptions{
 		MaxNestedLevels:  mdoc.MaxCBORNestedLevels,
 		MaxArrayElements: mdoc.MaxCBORContainerItems,
@@ -153,5 +154,5 @@ var decMode = func() cbor.DecMode {
 	if err != nil {
 		panic("oid4vpmdoc: build CBOR decoder: " + err.Error())
 	}
-	return mode
+	return strictcbor.Wrap(mode)
 }()

@@ -30,7 +30,7 @@ type VerifierInfo struct {
 // DataString returns Data when it's a JSON string.
 func (vi VerifierInfo) DataString() (string, bool) {
 	var s string
-	if err := json.Unmarshal(vi.Data, &s); err != nil {
+	if err := strictjson.Unmarshal(vi.Data, &s); err != nil {
 		return "", false
 	}
 	return s, true

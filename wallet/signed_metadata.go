@@ -106,12 +106,12 @@ func (w *Wallet) verifySignedMetadata(token, issuerURL string) ([]byte, error) {
 // (RFC 7519 §2).
 func (w *Wallet) checkSignedMetadataClaims(claims map[string]json.RawMessage, issuerURL string) error {
 	var sub string
-	if err := json.Unmarshal(claims["sub"], &sub); err != nil || sub != issuerURL {
+	if err := strictjson.Unmarshal(claims["sub"], &sub); err != nil || sub != issuerURL {
 		return fmt.Errorf("sub %s doesn't name the issuer %q", claims["sub"], issuerURL)
 	}
 	now := w.deps.Clock.Now()
 	var iatValue float64
-	if err := json.Unmarshal(claims["iat"], &iatValue); err != nil {
+	if err := strictjson.Unmarshal(claims["iat"], &iatValue); err != nil {
 		return errors.New("iat is missing or not a number")
 	}
 	iat := numericDateTime(iatValue)
@@ -124,14 +124,14 @@ func (w *Wallet) checkSignedMetadataClaims(claims map[string]json.RawMessage, is
 	if raw, present := claims["exp"]; present {
 		var exp float64
 		// RFC 7519 §4.1.4: not accepted on or after exp.
-		if err := json.Unmarshal(raw, &exp); err != nil || !now.Before(numericDateTime(exp)) {
+		if err := strictjson.Unmarshal(raw, &exp); err != nil || !now.Before(numericDateTime(exp)) {
 			return errors.New("expired")
 		}
 	}
 	if raw, present := claims["nbf"]; present {
 		var nbf float64
 		// RFC 7519 §4.1.5: not accepted before nbf.
-		if err := json.Unmarshal(raw, &nbf); err != nil || now.Add(maxSignedMetadataClockSkew).Before(numericDateTime(nbf)) {
+		if err := strictjson.Unmarshal(raw, &nbf); err != nil || now.Add(maxSignedMetadataClockSkew).Before(numericDateTime(nbf)) {
 			return errors.New("not valid yet (nbf)")
 		}
 	}

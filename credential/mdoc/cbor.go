@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 )
 
 // encMode/decMode encode time.Time as CBOR tag 0 (tdate, RFC 8949
@@ -36,7 +37,7 @@ const (
 	MaxCBORContainerItems = 4096
 )
 
-func mustDecMode() cbor.DecMode {
+func mustDecMode() strictcbor.DecMode {
 	mode, err := cbor.DecOptions{
 		TimeTag: cbor.DecTagRequired,
 		// Bounds on what an untrusted IssuerSigned or DeviceResponse
@@ -55,7 +56,7 @@ func mustDecMode() cbor.DecMode {
 	if err != nil {
 		panic(fmt.Sprintf("mdoc: build CBOR decoder: %v", err))
 	}
-	return mode
+	return strictcbor.Wrap(mode)
 }
 
 // MaxBytes bounds how large an IssuerSigned/DeviceSigned

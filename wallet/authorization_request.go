@@ -590,9 +590,9 @@ func checkRequestObjectClaims(wire wireRequestObjectPayload, nowFunc func() time
 		var one string
 		var many []string
 		switch {
-		case json.Unmarshal(wire.Aud, &one) == nil:
+		case strictjson.Unmarshal(wire.Aud, &one) == nil:
 			many = []string{one}
-		case json.Unmarshal(wire.Aud, &many) == nil:
+		case strictjson.Unmarshal(wire.Aud, &many) == nil:
 		default:
 			return errors.New("aud is neither a string nor an array of strings")
 		}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // staticIssuerKeyResolver implements verifier.SDJWTVCIssuerKeyResolver
@@ -30,7 +31,7 @@ func newStaticIssuerKeyResolver(rawJWK json.RawMessage) (staticIssuerKeyResolver
 	var withAlg struct {
 		Alg jose.Alg `json:"alg"`
 	}
-	if err := json.Unmarshal(rawJWK, &withAlg); err != nil {
+	if err := strictjson.Unmarshal(rawJWK, &withAlg); err != nil {
 		return staticIssuerKeyResolver{}, fmt.Errorf("parse credential_issuer_jwk: %w", err)
 	}
 	alg := withAlg.Alg

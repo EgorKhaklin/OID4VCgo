@@ -13,6 +13,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/idfoundry/oid4vcgo/internal/ecdsafixed"
+	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 )
 
 // Alg identifies a COSE algorithm this package supports, by its IANA
@@ -597,7 +598,7 @@ func verifyBytes(alg Alg, pub crypto.PublicKey, toVerify, sig []byte) error {
 // decMode decodes the COSE structures this package parses, before any
 // signature is checked, with bounds: nesting, elements per array and
 // pairs per map, and no duplicate map key.
-var decMode = func() cbor.DecMode {
+var decMode = func() strictcbor.DecMode {
 	mode, err := cbor.DecOptions{
 		MaxNestedLevels:  16,
 		MaxArrayElements: 4096,
@@ -610,7 +611,7 @@ var decMode = func() cbor.DecMode {
 	if err != nil {
 		panic("cose: build CBOR decoder: " + err.Error())
 	}
-	return mode
+	return strictcbor.Wrap(mode)
 }()
 
 // X5ChainOf is a COSE_Sign1's x5chain (RFC 9360): from the protected

@@ -12,6 +12,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
@@ -674,7 +675,7 @@ func (iss *Issuer) issueInstance(cc CredentialConfiguration, instance Credential
 // Wallet chose beyond its key ends up in the signed credential.
 func (iss *Issuer) issueSDJWT(claims sdjwtvc.Claims, key resolvedKey, typeMetadata *sdjwtvc.TypeMetadata) (string, error) {
 	var cnfJWK map[string]any
-	if err := json.Unmarshal(key.JWKRaw, &cnfJWK); err != nil {
+	if err := strictjson.Unmarshal(key.JWKRaw, &cnfJWK); err != nil {
 		return "", fmt.Errorf("issuer: unmarshal jwk for cnf: %w", err)
 	}
 	claims.CNF = map[string]any{"jwk": cnfJWK}
