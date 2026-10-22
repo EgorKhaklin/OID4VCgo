@@ -383,8 +383,11 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 }
 
 // RequestObject returns the signed Request Object to serve at the
-// request_uri of the request id, while it's still waiting for an
-// answer.
+// request_uri of the request id, until the request expires. It's served
+// alike whether the request is pending, answered or closed: anyone
+// holding the request's QR code can fetch it, and a request_uri that
+// stopped answering would tell them the holder had presented. An answer
+// a Wallet sends to a request that's no longer pending is refused.
 func (t *Transactions) RequestObject(ctx context.Context, id string) (string, error) {
 	tx, err := t.store.Get(ctx, id)
 	if err != nil {
@@ -394,8 +397,8 @@ func (t *Transactions) RequestObject(ctx context.Context, id string) (string, er
 		// A Digital Credentials API request goes to the page, not to a request_uri.
 		return "", ErrTransactionUnknown
 	}
-	if err := t.checkPending(tx); err != nil {
-		return "", err
+	if !t.now().Before(tx.ExpiresAt) {
+		return "", ErrTransactionExpired
 	}
 	return tx.RequestObject, nil
 }
@@ -429,6 +432,15 @@ type Answered struct {
 // request's public Request Object and anyone could send one — which is
 // also why LastError mustn't be shown as the holder declining. One whose
 // state doesn't match is refused like any other answer.
+//
+// An error response carrying the state of a request that's no longer
+// pending — answered, closed or expired — is answered as a pending
+// request's is: returned as a *ResponseError (which also matches the
+// request's ErrTransactionAnswered, ErrTransactionClosed or
+// ErrTransactionExpired), with a same-device request's redirect_uri,
+// though not recorded. Anyone holding the request's QR code or link can
+// send one, and a reply that differed would tell them whether the
+// holder had presented.
 func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (Answered, error) {
 	kid, err := ResponseKeyID(responseJWE)
 	if err != nil {
@@ -448,7 +460,7 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 		return Answered{}, ErrTransactionUnknown
 	}
 	if err := t.checkPending(tx); err != nil {
-		return Answered{}, err
+		return t.answerNotPending(tx, responseJWE, err)
 	}
 	result, err := t.verify(ctx, tx, responseJWE)
 	if err != nil {
@@ -489,6 +501,27 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 		answered.RedirectURI = withQuery(t.cfg.RedirectURI, "response_code", code)
 	}
 	return answered, nil
+}
+
+// answerNotPending answers responseJWE, sent to tx when it's no longer
+// pending (notPending says why), as it would have been answered while
+// pending, so the reply doesn't tell whoever holds the request's public
+// key whether the holder has presented: an error response carrying the
+// request's state is acknowledged — returned as a *ResponseError, with
+// a same-device request's redirect_uri — though not recorded, and
+// anything else is refused with notPending. It's decrypted either way,
+// as a pending request's answer is.
+func (t *Transactions) answerNotPending(tx Transaction, responseJWE string, notPending error) (Answered, error) {
+	_, err := t.v.ParseDirectPostJWTResponse(responseJWE, tx.ResponseDecryptionKey)
+	var walletErr *ResponseError
+	if !errors.As(err, &walletErr) || subtle.ConstantTimeCompare([]byte(walletErr.State), []byte(tx.State)) != 1 {
+		return Answered{}, notPending
+	}
+	var answered Answered
+	if tx.SameDevice {
+		answered = Answered{ID: tx.ID, RedirectURI: withQuery(t.cfg.RedirectURI, "error", errorCodeOf(walletErr.Code))}
+	}
+	return answered, fmt.Errorf("%w: %w", notPending, walletErr)
 }
 
 // verify decrypts, checks state, verifies and accepts one answer.
@@ -552,18 +585,23 @@ const stateSeparator = "."
 // pending, and a same-device request is answered with its redirect_uri
 // (HAIP 1.0 §5.1). It's unauthenticated, so it never closes the
 // request: anyone who saw the Request Object could send one. A state
-// that names no pending request is acknowledged with nothing.
+// that names no request is acknowledged with nothing. One naming a
+// request that's no longer pending is answered as if it were, though
+// not recorded, so the reply doesn't tell whoever sent it whether the
+// holder has presented.
 func (t *Transactions) HandleUnencryptedError(ctx context.Context, code, state string) Answered {
 	id, _, ok := strings.Cut(state, stateSeparator)
 	if !ok || id == "" {
 		return Answered{}
 	}
 	tx, err := t.store.Get(ctx, id)
-	if err != nil || tx.Origin != "" || subtle.ConstantTimeCompare([]byte(state), []byte(tx.State)) != 1 || t.checkPending(tx) != nil {
+	if err != nil || tx.Origin != "" || subtle.ConstantTimeCompare([]byte(state), []byte(tx.State)) != 1 {
 		return Answered{}
 	}
 	walletErr := &ResponseError{Code: errorCodeOf(code)}
-	t.recordFailure(ctx, id, walletErr)
+	if t.checkPending(tx) == nil {
+		t.recordFailure(ctx, id, walletErr)
+	}
 	if !tx.SameDevice {
 		return Answered{ID: id}
 	}
