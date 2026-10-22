@@ -188,10 +188,15 @@ func MatchDCQLQuery(ctx context.Context, query dcql.Query, candidates []HeldCred
 			}
 		}
 	}
+	return newMatcher(candidates, trustedAuthorities).matchQuery(ctx, query)
+}
+
+// matchQuery is MatchDCQLQuery once query is validated.
+func (m *matcher) matchQuery(ctx context.Context, query dcql.Query) (map[string][]HeldCredential, error) {
 	if len(query.CredentialSets) == 0 {
 		matches := make(map[string][]HeldCredential, len(query.Credentials))
 		for _, cq := range query.Credentials {
-			match, err := matchCredentialQuery(ctx, cq, candidates, trustedAuthorities)
+			match, err := m.match(ctx, cq)
 			if err != nil {
 				return nil, fmt.Errorf("wallet: match dcql query: credential query %q: %w", cq.ID, err)
 			}
@@ -206,7 +211,10 @@ func MatchDCQLQuery(ctx context.Context, query dcql.Query, candidates []HeldCred
 	}
 	matches := make(map[string][]HeldCredential, len(query.Credentials))
 	for _, cs := range query.CredentialSets {
-		option, err := satisfiableCredentialSetOption(ctx, cs, byID, candidates, trustedAuthorities)
+		option, err := m.satisfiableCredentialSetOption(ctx, cs, byID)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("wallet: match dcql query: %w", ctxErr)
+		}
 		if err != nil {
 			if cs.IsRequired() {
 				return nil, fmt.Errorf("wallet: match dcql query: credential set: %w", err)
@@ -220,19 +228,63 @@ func MatchDCQLQuery(ctx context.Context, query dcql.Query, candidates []HeldCred
 	return matches, nil
 }
 
+// matcher matches Credential Queries against one set of candidates.
+// It decodes each candidate at most once, and matches each Credential
+// Query id at most once, however many credential_sets options name it:
+// without that, a query whose options each fail on their last id
+// re-decoded every held credential for every earlier id of every
+// option. A matcher is for one query, whose ids Validate made unique.
+type matcher struct {
+	candidates         []HeldCredential
+	trustedAuthorities dcql.TrustedAuthoritiesChecker
+	decoded            []*decodedCandidate
+	decodes            int // candidates decoded so far
+	results            map[string]matchResult
+}
+
+// matchResult is one Credential Query's own outcome.
+type matchResult struct {
+	matches []HeldCredential
+	err     error
+}
+
+// decodedCandidate is what matching reads from one held credential:
+// for "dc+sd-jwt", its resolved claims and Issuer JWT header; for
+// "mso_mdoc", its namespaces and IssuerAuth x5chain. ok is false for a
+// credential that doesn't decode, which matches nothing.
+type decodedCandidate struct {
+	ok          bool
+	claims      map[string]any
+	header      map[string]any
+	nameSpaces  map[string]map[string]any
+	issuerChain [][]byte
+}
+
+func newMatcher(candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) *matcher {
+	return &matcher{
+		candidates:         candidates,
+		trustedAuthorities: trustedAuthorities,
+		decoded:            make([]*decodedCandidate, len(candidates)),
+		results:            make(map[string]matchResult),
+	}
+}
+
 // satisfiableCredentialSetOption returns the HeldCredential matches
 // for the first entry in cs.Options (most-preferred first, §6.4.2)
 // whose every referenced Credential Query id actually matches some
 // candidate, or an error naming the last option's own failure if none
 // does.
-func satisfiableCredentialSetOption(ctx context.Context, cs dcql.CredentialSetQuery, byID map[string]dcql.CredentialQuery, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (map[string][]HeldCredential, error) {
+func (m *matcher) satisfiableCredentialSetOption(ctx context.Context, cs dcql.CredentialSetQuery, byID map[string]dcql.CredentialQuery) (map[string][]HeldCredential, error) {
 	var lastErr error
 	for _, option := range cs.Options {
 		matched := make(map[string][]HeldCredential, len(option))
 		satisfied := true
 		for _, id := range option {
-			match, err := matchCredentialQuery(ctx, byID[id], candidates, trustedAuthorities)
+			match, err := m.match(ctx, byID[id])
 			if err != nil {
+				if ctx.Err() != nil {
+					return nil, err
+				}
 				satisfied = false
 				lastErr = fmt.Errorf("credential query %q: %w", id, err)
 				break
@@ -246,27 +298,95 @@ func satisfiableCredentialSetOption(ctx context.Context, cs dcql.CredentialSetQu
 	return nil, fmt.Errorf("no option is satisfied: %w", lastErr)
 }
 
-// matchCredentialQuery returns every candidate satisfying cq, trimmed
-// to just the first when cq.Multiple is false (§6.1's own default) —
-// or an error if none satisfy it at all.
-func matchCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) ([]HeldCredential, error) {
-	var matchAll func(context.Context, dcql.CredentialQuery, []HeldCredential, dcql.TrustedAuthoritiesChecker) []HeldCredential
+// match returns every candidate satisfying cq, trimmed to just the
+// first when cq.Multiple is false (§6.1's own default) — or an error
+// if none satisfy it at all, or ctx is done.
+func (m *matcher) match(ctx context.Context, cq dcql.CredentialQuery) ([]HeldCredential, error) {
+	if r, ok := m.results[cq.ID]; ok {
+		return r.matches, r.err
+	}
+	var satisfiedBy func(context.Context, dcql.CredentialQuery, HeldCredential, *decodedCandidate) bool
 	switch cq.Format {
 	case sdjwtvc.CredentialFormat:
-		matchAll = matchAllSDJWTVCQuery
+		satisfiedBy = m.sdjwtvcSatisfies
 	case mdoc.CredentialFormat:
-		matchAll = matchAllMdocQuery
+		satisfiedBy = m.mdocSatisfies
 	default:
 		return nil, fmt.Errorf("format %q is not yet supported", cq.Format)
 	}
-	matches := matchAll(ctx, cq, candidates, trustedAuthorities)
-	if len(matches) == 0 {
-		return nil, ErrNoMatchingCredential
+	matches, err := m.matchAll(ctx, cq, satisfiedBy)
+	if err != nil {
+		return nil, err // ctx is done: not an outcome to remember
 	}
-	if !cq.Multiple {
-		return matches[:1], nil
+	r := matchResult{matches: matches}
+	switch {
+	case len(matches) == 0:
+		r = matchResult{err: ErrNoMatchingCredential}
+	case !cq.Multiple:
+		r.matches = matches[:1]
+	}
+	m.results[cq.ID] = r
+	return r.matches, r.err
+}
+
+// matchAll returns every candidate of cq's format that satisfiedBy
+// accepts, or ctx's error once it is done.
+func (m *matcher) matchAll(ctx context.Context, cq dcql.CredentialQuery, satisfiedBy func(context.Context, dcql.CredentialQuery, HeldCredential, *decodedCandidate) bool) ([]HeldCredential, error) {
+	var matches []HeldCredential
+	for i, cand := range m.candidates {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if cand.Format != cq.Format {
+			continue
+		}
+		d := m.decode(i)
+		if !d.ok {
+			continue // a malformed held credential isn't this query's fault; skip it
+		}
+		if satisfiedBy(ctx, cq, cand, d) {
+			matches = append(matches, cand)
+		}
 	}
 	return matches, nil
+}
+
+// decode returns candidate i decoded, decoding it on first use.
+func (m *matcher) decode(i int) *decodedCandidate {
+	if d := m.decoded[i]; d != nil {
+		return d
+	}
+	m.decodes++
+	d := &decodedCandidate{}
+	m.decoded[i] = d
+	cand := m.candidates[i]
+	switch cand.Format {
+	case sdjwtvc.CredentialFormat:
+		pres, _, claims, err := resolveHeldSDJWTVC(cand.Credential)
+		if err != nil {
+			return d
+		}
+		header, _, err := jose.DecodeUnverified(pres.IssuerJWT)
+		if err != nil {
+			return d
+		}
+		d.ok, d.claims, d.header = true, claims, header
+	case mdoc.CredentialFormat:
+		raw, err := base64.RawURLEncoding.DecodeString(cand.Credential)
+		if err != nil {
+			return d
+		}
+		issuerSigned, err := mdoc.UnmarshalIssuerSigned(raw)
+		if err != nil {
+			return d
+		}
+		protected, unprotected, _, err := cose.DecodeUnverified(issuerSigned.IssuerAuth)
+		if err != nil {
+			return d
+		}
+		d.ok, d.nameSpaces, d.issuerChain = true, resolveHeldMdocNameSpaces(issuerSigned), cose.X5ChainOf(protected, unprotected)
+	}
+	return d
 }
 
 // candidateSatisfiesTrustedAuthorities reports whether cand's own
@@ -289,61 +409,21 @@ func candidateSatisfiesTrustedAuthorities(ctx context.Context, cq dcql.Credentia
 	return trustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, issuerChain) == nil
 }
 
-func matchAllSDJWTVCQuery(ctx context.Context, cq dcql.CredentialQuery, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) []HeldCredential {
-	var matches []HeldCredential
-	for _, cand := range candidates {
-		if cand.Format != cq.Format {
-			continue
-		}
-		pres, _, claims, err := resolveHeldSDJWTVC(cand.Credential)
-		if err != nil {
-			continue // a malformed held credential isn't this query's fault; skip it
-		}
-		if cq.SatisfiedBySDJWTVCClaims(claims) != nil {
-			continue
-		}
-		if _, bound := claims["cnf"]; !bound && cq.RequiresCryptographicHolderBinding() {
-			continue // no holder key to bind it to, which the query requires (OID4VP §6.1)
-		}
-		header, _, err := jose.DecodeUnverified(pres.IssuerJWT)
-		if err != nil {
-			continue
-		}
-		if !candidateSatisfiesTrustedAuthorities(ctx, cq, trustedAuthorities, header, nil) {
-			continue
-		}
-		matches = append(matches, cand)
+func (m *matcher) sdjwtvcSatisfies(ctx context.Context, cq dcql.CredentialQuery, _ HeldCredential, d *decodedCandidate) bool {
+	if cq.SatisfiedBySDJWTVCClaims(d.claims) != nil {
+		return false
 	}
-	return matches
+	if _, bound := d.claims["cnf"]; !bound && cq.RequiresCryptographicHolderBinding() {
+		return false // no holder key to bind it to, which the query requires (OID4VP §6.1)
+	}
+	return candidateSatisfiesTrustedAuthorities(ctx, cq, m.trustedAuthorities, d.header, nil)
 }
 
-func matchAllMdocQuery(ctx context.Context, cq dcql.CredentialQuery, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) []HeldCredential {
-	var matches []HeldCredential
-	for _, cand := range candidates {
-		if cand.Format != cq.Format {
-			continue
-		}
-		raw, err := base64.RawURLEncoding.DecodeString(cand.Credential)
-		if err != nil {
-			continue
-		}
-		issuerSigned, err := mdoc.UnmarshalIssuerSigned(raw)
-		if err != nil {
-			continue
-		}
-		if cq.SatisfiedByMdocClaims(cand.MdocDocType, resolveHeldMdocNameSpaces(issuerSigned)) != nil {
-			continue
-		}
-		protected, unprotected, _, err := cose.DecodeUnverified(issuerSigned.IssuerAuth)
-		if err != nil {
-			continue
-		}
-		if !candidateSatisfiesTrustedAuthorities(ctx, cq, trustedAuthorities, nil, cose.X5ChainOf(protected, unprotected)) {
-			continue
-		}
-		matches = append(matches, cand)
+func (m *matcher) mdocSatisfies(ctx context.Context, cq dcql.CredentialQuery, cand HeldCredential, d *decodedCandidate) bool {
+	if cq.SatisfiedByMdocClaims(cand.MdocDocType, d.nameSpaces) != nil {
+		return false
 	}
-	return matches
+	return candidateSatisfiesTrustedAuthorities(ctx, cq, m.trustedAuthorities, nil, d.issuerChain)
 }
 
 // PresentSDJWTVC builds a "dc+sd-jwt" Presentation (a VP Token array
