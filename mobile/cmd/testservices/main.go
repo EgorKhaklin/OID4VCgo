@@ -30,7 +30,9 @@
 //	                               refreshing a credential is then reissue_required
 //	GET  /dcapi?format=<fmt>     → a page asking over the Digital Credentials API
 //	                               (dcapi.go), for the Android demo's
-//	                               Credential Manager provider
+//	                               Credential Manager provider; its requests are
+//	                               bound to -dcapi-origin, by default the control
+//	                               endpoint's own origin
 //
 // Every service is HTTPS with one self-signed certificate, written to
 // -cert for the Simulator to trust (xcrun simctl keychain booted
@@ -61,13 +63,14 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:8600", "control endpoint address")
 	redirect := flag.String("redirect", "dev.idfoundry.oid4vcgo.demowallet:/callback", "the app's redirect URI, registered with the issuer")
 	certOut := flag.String("cert", "", "write the services' TLS certificate here, as PEM")
+	dcapiOrigin := flag.String("dcapi-origin", "", "the /dcapi page's origin, as the browser sees it; default the control endpoint's (https://<addr>)")
 	flag.Parse()
-	if err := run(*addr, *redirect, *certOut); err != nil {
+	if err := run(*addr, *redirect, *certOut, *dcapiOrigin); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(addr, redirect, certOut string) error {
+func run(addr, redirect, certOut, dcapiOrigin string) error {
 	// Batches of three: the app presents a fresh copy each time.
 	env, err := walletflowtest.New(walletflowtest.Options{RedirectURIs: []string{redirect}, BatchSize: 3})
 	if err != nil {
@@ -111,13 +114,18 @@ func run(addr, redirect, certOut string) error {
 		"reader":       map[string]any{"issuer_roots": issuerRoots, "reader_chain": reader.chainPEM, "reader_key": reader.keyPEM},
 	}
 	mux := services{env: env, v: v, rv: rv}.routes(config)
-	(&dcapiRequests{v: v, requests: map[string]*walletflowtest.DCAPIRequest{}, results: map[string]map[string]any{}}).routes(mux, env)
+	dcapi := &dcapiRequests{v: v, requests: map[string]*walletflowtest.DCAPIRequest{}, results: map[string]map[string]any{}}
+	dcapi.routes(mux, env)
 	control := httptest.NewUnstartedServer(mux)
 	if err := control.Listener.Close(); err != nil {
 		return err
 	}
 	if control.Listener, err = netListen(addr); err != nil {
 		return err
+	}
+	dcapi.origin = dcapiOrigin
+	if dcapi.origin == "" {
+		dcapi.origin = "https://" + control.Listener.Addr().String()
 	}
 	control.StartTLS()
 	defer control.Close()
