@@ -76,6 +76,9 @@ func TestRedeemPreAuthorizedCode_AuthorizationDetails(t *testing.T) {
 			t.Errorf("the code after refused requests: %+v, %v; want redeemed, without details", got, err)
 		}
 	})
+	// What the code grants is known only once Consume hands over its
+	// record, so this refusal spends the code (as
+	// ExchangePreAuthorizedCodeRequest.AuthorizationDetails documents).
 	t.Run("a configuration the code doesn't grant", func(t *testing.T) {
 		f := newFixture(t, false)
 		r := record(f)
@@ -83,6 +86,8 @@ func TestRedeemPreAuthorizedCode_AuthorizationDetails(t *testing.T) {
 		f.issue(t, "code-3", r)
 		_, err := redeem(f, "code-3", detail("IdentityCredential"))
 		assertIssuerError(t, err, issuer.ErrorInvalidAuthorizationDetails)
+		_, err = redeem(f, "code-3")
+		assertIssuerError(t, err, issuer.ErrorInvalidGrant)
 	})
 }
 

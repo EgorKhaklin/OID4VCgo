@@ -70,7 +70,11 @@ type ExchangePreAuthorizedCodeRequest struct {
 	// authorization_details parameter is used in ... the Token Request").
 	// Their form is checked before the code is consumed; whether the
 	// code grants them, after, so a request for more than it grants
-	// spends it.
+	// spends it: what a code grants is in its PreAuthorizedCodeRecord,
+	// which PreAuthorizedCodeStore hands over only by consuming the code
+	// (Consume), the single atomic step that also keeps it single-use.
+	// A Wallet that names only the offer's credential_configuration_ids
+	// never meets this.
 	AuthorizationDetails []oid4vci.AuthorizationDetail
 }
 
