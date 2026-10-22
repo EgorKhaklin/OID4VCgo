@@ -99,8 +99,9 @@ type WalletClient struct {
 	//     a URI SAN, with this CA bound to ProviderIssuer alone
 	//     (AttesterIssuerBoundToAnchor);
 	//   - Key Attestations, which every credential request must prove
-	//     its holder key with (the attestation proof type, OID4VCI 1.0
-	//     Appendix F.3).
+	//     its holder key with (in jwt proofs' key_attestation header,
+	//     OID4VCI 1.0 Appendix D.1 and F.1, or the attestation proof
+	//     type, Appendix F.3).
 	ProviderCA []byte
 }
 

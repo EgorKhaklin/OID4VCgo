@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
+	"github.com/idfoundry/oid4vcgo/internal/displaytext"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"math"
 	"net/url"
@@ -15,8 +16,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -71,33 +70,10 @@ const (
 	maxDisplayDescription = 1000
 )
 
-// displayText is s, from an issuer's metadata, fit to show the holder:
-// control characters become spaces, Unicode bidirectional formatting
-// characters (which can make text read other than it is) are dropped,
-// and at most limit runes are kept.
-func displayText(s string, limit int) string {
-	var b strings.Builder
-	n := 0
-	for _, r := range s {
-		switch {
-		case n == limit:
-			return strings.TrimSpace(b.String())
-		case r == utf8.RuneError, isBidiControl(r):
-			continue
-		case unicode.IsControl(r):
-			r = ' '
-		}
-		b.WriteRune(r)
-		n++
-	}
-	return strings.TrimSpace(b.String())
-}
-
-// isBidiControl reports whether r is a bidirectional formatting
-// character: the embeddings, overrides and isolates, and the marks.
-func isBidiControl(r rune) bool {
-	return r == '\u061c' || r == '\u200e' || r == '\u200f' || (r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069')
-}
+// displayText is s, from an issuer's metadata, fit to show the holder
+// (displaytext.Clean): no control, line separator or invisible format
+// characters, and at most limit runes.
+func displayText(s string, limit int) string { return displaytext.Clean(s, limit) }
 
 // displayColor is c, an issuer's background_color or text_color
 // (OpenID4VCI 1.0 §12.2.4: a CSS color), if it's a hex color or a

@@ -173,6 +173,10 @@ func TestNew_RoleSeparation(t *testing.T) {
 		"one pool, both narrowed":                  {Config{IssuerRoots: shared, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, true},
 		"separate pools":                           {Config{IssuerRoots: shared, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifiers}}, true},
 		"one pool for issuers and readers, in dev": {Config{IssuerRoots: shared, MdocReaderRoots: shared, Development: true}, true},
+		"one pool for metadata and Verifiers":      {Config{IssuerRoots: verifiers, IssuerMetadataRoots: shared, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, false},
+		"one pool for credentials and metadata":    {Config{IssuerRoots: shared, IssuerLeafPolicy: policy, IssuerMetadataRoots: shared}, false},
+		"one pool for metadata, both narrowed":     {Config{IssuerRoots: shared, IssuerLeafPolicy: policy, IssuerMetadataRoots: shared, IssuerMetadataLeafPolicy: policy}, true},
+		"separate metadata pool":                   {Config{IssuerRoots: shared, IssuerMetadataRoots: verifiers}, true},
 	} {
 		_, err := New(tc.cfg, deps)
 		refused := err != nil && strings.Contains(err.Error(), "same certificate pool")

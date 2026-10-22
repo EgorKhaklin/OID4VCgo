@@ -64,6 +64,18 @@ type Config struct {
 	// another's name.
 	RequireIssuerName bool
 
+	// AllowForeignIss receives an SD-JWT VC whose iss isn't the
+	// Credential Issuer Identifier it was requested from (the offer's
+	// credential_issuer). By default one is refused, received, deferred
+	// or refreshed (wallet.VerifyIssuedCredentialParams.CredentialIssuer):
+	// IssuerRoots may certify several issuers, and an issuer the holder
+	// was sent to could otherwise hand over another's credential, issued
+	// for the holder's keys, as its own. A credential with no iss names
+	// none to check. OpenID4VCI 1.0 §14.4 lets an issued credential name
+	// its issuer differently from the Credential Issuer Identifier: set
+	// it only for issuers that do, where IssuerRoots certify them alone.
+	AllowForeignIss bool
+
 	// IssuerMetadataRoots, IssuerMetadataLeafPolicy,
 	// RequireSignedIssuerMetadata, RequireIssuerMetadataName and
 	// MaxIssuerMetadataAge are the
@@ -395,8 +407,8 @@ func (c Config) validateChoices() error {
 // given to two roles unless both narrow their certificates by a leaf
 // policy (an extended key usage, say): otherwise a Verifier's
 // certificate under the shared pool could sign credentials the wallet
-// accepts, an issuer's pass for a trusted Verifier or mdoc reader, or a
-// Verifier register itself. Pools are compared as wholes (CertPool
+// accepts or an issuer's metadata, an issuer's pass for a trusted
+// Verifier or mdoc reader, or a Verifier register itself. Pools are compared as wholes (CertPool
 // can't be listed), so only the same pool is caught; the mobile façade,
 // which has the certificates, also catches overlapping ones.
 func checkRoleSeparation(c Config) error {
@@ -407,6 +419,7 @@ func checkRoleSeparation(c Config) error {
 	}
 	roles := []role{
 		{"IssuerRoots", c.IssuerRoots, c.IssuerLeafPolicy != nil},
+		{"IssuerMetadataRoots", c.IssuerMetadataRoots, c.IssuerMetadataLeafPolicy != nil},
 		{"RegistrarRoots", c.RegistrarRoots, c.RegistrarLeafPolicy != nil},
 		{"MdocReaderRoots", c.MdocReaderRoots, c.MdocReaderLeafPolicy != nil},
 	}

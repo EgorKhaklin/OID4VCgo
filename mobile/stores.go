@@ -80,6 +80,9 @@ type credentialRecord struct {
 	StatusListCWT bool            `json:"status_list_cwt,omitempty"`
 	Status        *statusJSON     `json:"status,omitempty"`
 	GrantID       string          `json:"grant_id,omitempty"`
+	// CredentialIdentifier: absent from a record written before it was
+	// kept, or for a credential requested by its configuration.
+	CredentialIdentifier string `json:"credential_identifier,omitempty"`
 }
 
 // copyJSON is a walletflow.CredentialCopy.
@@ -184,6 +187,7 @@ func recordOf(c walletflow.StoredCredential) (credentialRecord, error) {
 		ID: c.ID, CredentialIssuer: c.CredentialIssuer, ConfigurationID: c.ConfigurationID, Format: c.Format,
 		VCT: c.VCT, DocType: c.DocType, Credential: c.Credential, HolderKeyID: c.HolderKeyID, ReceivedAt: c.ReceivedAt,
 		Display: displayOf(c.Display), StatusListCWT: c.StatusListCWT, GrantID: c.GrantID,
+		CredentialIdentifier: c.CredentialIdentifier,
 	}
 	for _, cp := range c.Copies {
 		r.Copies = append(r.Copies, copyOf(cp))
@@ -212,6 +216,7 @@ func (r credentialRecord) stored() (walletflow.StoredCredential, error) {
 		ID: r.ID, CredentialIssuer: r.CredentialIssuer, ConfigurationID: r.ConfigurationID, Format: r.Format,
 		VCT: r.VCT, DocType: r.DocType, Credential: r.Credential, HolderKeyID: r.HolderKeyID, ReceivedAt: r.ReceivedAt,
 		Display: r.Display.display(), StatusListCWT: r.StatusListCWT, GrantID: r.GrantID,
+		CredentialIdentifier: r.CredentialIdentifier,
 	}
 	for _, cp := range r.Copies {
 		c.Copies = append(c.Copies, cp.copy())
@@ -437,6 +442,9 @@ type deferredRecord struct {
 	// TokenType is "Bearer" for a Bearer access token, with no
 	// dpop_key_id; absent for a DPoP-bound one.
 	TokenType string `json:"token_type,omitempty"`
+	// CredentialIdentifier: absent from a record written before it was
+	// kept, or for a credential requested by its configuration.
+	CredentialIdentifier string `json:"credential_identifier,omitempty"`
 }
 
 // deferredStoreID is the CredentialStore ID a pending deferred
@@ -453,7 +461,7 @@ func (s deferredStore) PutDeferred(_ context.Context, p walletflow.PendingDeferr
 		Kind: deferredKind, ID: p.ID, CredentialIssuer: p.CredentialIssuer, ConfigurationID: p.ConfigurationID,
 		TransactionID: p.TransactionID, AccessToken: p.AccessToken.Reveal(),
 		DPoPKeyID: p.DPoPKeyID, HolderKeyIDs: p.HolderKeyIDs, IntervalSeconds: p.Interval.Seconds(), DeferredAt: p.DeferredAt,
-		GrantID: p.GrantID, Replaces: p.Replaces, TokenType: p.TokenType,
+		GrantID: p.GrantID, Replaces: p.Replaces, TokenType: p.TokenType, CredentialIdentifier: p.CredentialIdentifier,
 	}
 	if !p.AccessTokenExpiresAt.IsZero() {
 		r.AccessTokenExpiresAt = &p.AccessTokenExpiresAt
@@ -491,7 +499,7 @@ func (s deferredStore) ListDeferred(context.Context) ([]walletflow.PendingDeferr
 			ID: r.ID, CredentialIssuer: r.CredentialIssuer, ConfigurationID: r.ConfigurationID, TransactionID: r.TransactionID,
 			AccessToken: fapi.NewSecret(r.AccessToken), DPoPKeyID: r.DPoPKeyID, HolderKeyIDs: r.HolderKeyIDs,
 			Interval: time.Duration(r.IntervalSeconds * float64(time.Second)), DeferredAt: r.DeferredAt,
-			GrantID: r.GrantID, Replaces: r.Replaces, TokenType: r.TokenType,
+			GrantID: r.GrantID, Replaces: r.Replaces, TokenType: r.TokenType, CredentialIdentifier: r.CredentialIdentifier,
 		}
 		if r.AccessTokenExpiresAt != nil {
 			p.AccessTokenExpiresAt = *r.AccessTokenExpiresAt
