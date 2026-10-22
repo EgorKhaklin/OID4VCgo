@@ -1389,28 +1389,30 @@ func plaintextPaths(credential string) ([]string, bool) {
 	for _, name := range perCopyClaims {
 		delete(payload, name)
 	}
-	var out []string
-	var walk func(prefix string, v any)
-	walk = func(prefix string, v any) {
-		switch v := v.(type) {
-		case map[string]any:
-			if _, digest := v["..."]; digest && len(v) == 1 {
-				return // a selectively disclosable array element
-			}
-			for k, child := range v {
-				if k == "_sd" || k == "_sd_alg" {
-					continue
-				}
-				out = append(out, prefix+"/"+k)
-				walk(prefix+"/"+k, child)
-			}
-		case []any:
-			for _, child := range v {
-				walk(prefix+"/[]", child)
-			}
-		}
-	}
-	walk("", payload)
+	out := appendPlaintextPaths(nil, "", payload)
 	slices.Sort(out)
 	return slices.Compact(out), true
+}
+
+// appendPlaintextPaths appends to out the plaintext claim paths of v,
+// found at prefix, as plaintextPaths names them.
+func appendPlaintextPaths(out []string, prefix string, v any) []string {
+	switch v := v.(type) {
+	case map[string]any:
+		if _, digest := v["..."]; digest && len(v) == 1 {
+			return out // a selectively disclosable array element
+		}
+		for k, child := range v {
+			if k == "_sd" || k == "_sd_alg" {
+				continue
+			}
+			out = append(out, prefix+"/"+k)
+			out = appendPlaintextPaths(out, prefix+"/"+k, child)
+		}
+	case []any:
+		for _, child := range v {
+			out = appendPlaintextPaths(out, prefix+"/[]", child)
+		}
+	}
+	return out
 }

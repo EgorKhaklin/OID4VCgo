@@ -332,29 +332,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err := cfg.TLSPins.Validate(); err != nil {
 		return nil, err
 	}
-	if deps.HTTP == nil {
-		client, err := defaultHTTPClient(cfg.Development, cfg.TLSPins)
-		if err != nil {
-			return nil, err
-		}
-		deps.HTTP = client
-	} else if len(cfg.TLSPins) > 0 {
-		return nil, errors.New("walletflow: Config.TLSPins applies to the wallet's own HTTP client, not Dependencies.HTTP: set TLSPins.VerifyConnection on that client's TLS configuration instead")
-	}
-	if deps.Clock == nil {
-		deps.Clock = time.Now
-	}
-	if deps.Random == nil {
-		deps.Random = rand.Reader
-	}
-	if deps.Deferred == nil {
-		deps.Deferred = NewMemoryDeferredStore()
-	}
-	if deps.Authorizations == nil {
-		deps.Authorizations = NewMemoryAuthorizationStore()
-	}
-	if deps.Grants == nil {
-		deps.Grants = NewMemoryGrantStore()
+	deps, err := withDefaultDependencies(cfg, deps)
+	if err != nil {
+		return nil, err
 	}
 	core, err := wallet.New(wallet.Config{
 		Assurance: cfg.assurance(), ProofSigningAlg: oid4vci.ES256, VerifierTrust: cfg.VerifierTrust,
@@ -375,17 +355,59 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, liveKeys: map[string]int{}, resuming: map[string]bool{},
 		openGrants: map[string]bool{}, grantLocks: map[string]*sync.Mutex{},
 	}
-	// What receiving credentials needs in production, checked now rather
-	// than when a holder first tries to receive one.
-	if !cfg.Development && cfg.IssuerRoots != nil {
-		if err := w.checkProductionReceiving(); err != nil {
-			return nil, err
-		}
-		if cfg.RedirectURI != "" && !deps.Authorizations.Durable() {
-			return nil, errors.New("walletflow: receiving credentials in production needs a Durable Dependencies.Authorizations, so an authorization survives the app being suspended")
-		}
+	if err := w.checkReceivingAtNew(); err != nil {
+		return nil, err
 	}
 	return w, nil
+}
+
+// withDefaultDependencies is deps with the wallet's own HTTP client,
+// pinned to cfg.TLSPins, and in-memory stores and the system clock and
+// randomness for those deps leaves nil. It refuses TLSPins alongside a
+// caller's HTTP client, which they wouldn't apply to.
+func withDefaultDependencies(cfg Config, deps Dependencies) (Dependencies, error) {
+	if deps.HTTP == nil {
+		client, err := defaultHTTPClient(cfg.Development, cfg.TLSPins)
+		if err != nil {
+			return deps, err
+		}
+		deps.HTTP = client
+	} else if len(cfg.TLSPins) > 0 {
+		return deps, errors.New("walletflow: Config.TLSPins applies to the wallet's own HTTP client, not Dependencies.HTTP: set TLSPins.VerifyConnection on that client's TLS configuration instead")
+	}
+	if deps.Clock == nil {
+		deps.Clock = time.Now
+	}
+	if deps.Random == nil {
+		deps.Random = rand.Reader
+	}
+	if deps.Deferred == nil {
+		deps.Deferred = NewMemoryDeferredStore()
+	}
+	if deps.Authorizations == nil {
+		deps.Authorizations = NewMemoryAuthorizationStore()
+	}
+	if deps.Grants == nil {
+		deps.Grants = NewMemoryGrantStore()
+	}
+	return deps, nil
+}
+
+// checkReceivingAtNew checks what receiving credentials needs in
+// production now rather than when a holder first tries to receive one:
+// checkProductionReceiving's checks, and a Durable Authorizations store
+// when issuance redirects.
+func (w *Wallet) checkReceivingAtNew() error {
+	if w.cfg.Development || w.cfg.IssuerRoots == nil {
+		return nil
+	}
+	if err := w.checkProductionReceiving(); err != nil {
+		return err
+	}
+	if w.cfg.RedirectURI != "" && !w.deps.Authorizations.Durable() {
+		return errors.New("walletflow: receiving credentials in production needs a Durable Dependencies.Authorizations, so an authorization survives the app being suspended")
+	}
+	return nil
 }
 
 // validateChoices refuses a Config field set to a value it has no
