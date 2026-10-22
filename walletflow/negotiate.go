@@ -31,8 +31,9 @@ const (
 	// Client authentication mechanism"), a credential with no scope
 	// (§4.2), one bound to a key with no nonce endpoint (§4.1), and an
 	// access token that isn't DPoP-bound (§4, FAPI 2.0's
-	// sender-constrained tokens). It prefers the attestation proof type
-	// where the issuer offers it. It doesn't refuse an issuer that asks
+	// sender-constrained tokens). It sends a key attestation where the
+	// issuer offers to take one, in jwt proofs' key_attestation header
+	// where it takes those. It doesn't refuse an issuer that asks
 	// for no key attestation: a Wallet must support them (§4.5.1), and
 	// whether one is needed is the issuer's to say.
 	ProfileHAIP
@@ -150,11 +151,20 @@ const (
 // bound to a key (checkBindable). The proof is signed with ES256, which
 // the proof type must take. The default profile sends a plain jwt
 // proof unless the issuer requires a key attestation with it
-// (key_attestations_required), when it sends the attestation proof type
-// instead, or, where the issuer offers only jwt, jwt proofs carrying the
-// key attestation: a key attestation the issuer didn't ask for tells it
-// more about the holder's device than it needs. ProfileHAIP prefers the
-// attestation proof type wherever the issuer offers it.
+// (key_attestations_required): a key attestation the issuer didn't ask
+// for tells it more about the holder's device than it needs.
+// ProfileHAIP sends a key attestation wherever the issuer offers to
+// take one (HAIP 1.0 §4.5.1).
+//
+// A key attestation goes in the key_attestation header of jwt proofs
+// (Appendix D.1, F.1) wherever the issuer takes those, and only
+// otherwise as the attestation proof type (Appendix F.3). A jwt proof's
+// aud is the Credential Issuer Identifier (Appendix F.1), while a key
+// attestation names no audience and the c_nonce it carries comes from
+// an unauthenticated Nonce Endpoint: an issuer handed the attestation
+// proof type could fetch the c_nonce it signs from another issuer the
+// wallet trusts, and redeem the proof there for a credential bound to
+// the holder's keys.
 func (w *Wallet) chooseProof(conf oid4vci.CredentialConfigurationMetadata) (proofPlan, error) {
 	if err := checkBindable(conf); err != nil {
 		return 0, err
@@ -166,16 +176,15 @@ func (w *Wallet) chooseProof(conf oid4vci.CredentialConfigurationMetadata) (proo
 	jwt, hasJWT := usable(oid4vci.ProofTypeJWT)
 	_, hasAttestation := usable(oid4vci.ProofTypeAttestation)
 	hasAttestation = hasAttestation && w.deps.Provider != nil
+	attest := jwt.KeyAttestationsRequired != nil || (w.cfg.IssuanceProfile == ProfileHAIP && hasAttestation)
 	switch {
-	case w.cfg.IssuanceProfile == ProfileHAIP && hasAttestation:
-		return proofAttestation, nil
-	case hasJWT && jwt.KeyAttestationsRequired == nil:
+	case hasJWT && !attest:
 		return proofJWT, nil
-	case hasAttestation:
-		return proofAttestation, nil
 	case hasJWT && w.deps.Provider != nil:
 		// HAIP 1.0 §4.5.1's "jwt proof type using key_attestation".
 		return proofJWTKeyAttestation, nil
+	case hasAttestation:
+		return proofAttestation, nil
 	case hasJWT:
 		return 0, fmt.Errorf("%w: it requires a key attestation in a jwt proof, and there's no Wallet Provider", ErrProofUnsupported)
 	default:
