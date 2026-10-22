@@ -72,9 +72,16 @@ const (
 )
 
 // displayText is s, from an issuer's metadata, fit to show the holder:
-// control characters become spaces, Unicode bidirectional formatting
-// characters (which can make text read other than it is) are dropped,
-// and at most limit runes are kept.
+// control characters and line and paragraph separators become spaces,
+// so the text stays on the lines the app gives it, format characters
+// are dropped, and at most limit runes are kept. Format characters
+// (Cf) are invisible: the bidirectional formatting ones can make text
+// read other than it is, and the rest (zero-width space, word joiner,
+// byte order mark, soft hyphen, tag characters) can hide text or
+// break it where the app doesn't expect. The zero-width joiner and
+// non-joiner stay: scripts such as Persian and Devanagari, and emoji
+// sequences, need them to render right, and they join or part
+// neighbouring characters without hiding or reordering any.
 func displayText(s string, limit int) string {
 	var b strings.Builder
 	n := 0
@@ -82,9 +89,9 @@ func displayText(s string, limit int) string {
 		switch {
 		case n == limit:
 			return strings.TrimSpace(b.String())
-		case r == utf8.RuneError, isBidiControl(r):
+		case r == utf8.RuneError, isHiddenFormat(r):
 			continue
-		case unicode.IsControl(r):
+		case unicode.IsControl(r), unicode.In(r, unicode.Zl, unicode.Zp):
 			r = ' '
 		}
 		b.WriteRune(r)
@@ -93,10 +100,11 @@ func displayText(s string, limit int) string {
 	return strings.TrimSpace(b.String())
 }
 
-// isBidiControl reports whether r is a bidirectional formatting
-// character: the embeddings, overrides and isolates, and the marks.
-func isBidiControl(r rune) bool {
-	return r == '\u061c' || r == '\u200e' || r == '\u200f' || (r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069')
+// isHiddenFormat reports whether r is a format character (Cf) other than
+// the zero-width non-joiner and joiner: among them the bidirectional
+// embeddings, overrides, isolates and marks.
+func isHiddenFormat(r rune) bool {
+	return r != '\u200c' && r != '\u200d' && unicode.Is(unicode.Cf, r)
 }
 
 // displayColor is c, an issuer's background_color or text_color
