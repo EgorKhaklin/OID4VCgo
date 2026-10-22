@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // The Credential Format Identifiers whose meta this package knows.
@@ -74,7 +76,7 @@ func (m SDJWTVCMeta) validate() error {
 // meta shape (Appendix B.3.5).
 func (c CredentialQuery) SDJWTVCMeta() (SDJWTVCMeta, error) {
 	var m SDJWTVCMeta
-	if err := json.Unmarshal(c.Meta, &m); err != nil {
+	if err := strictjson.Unmarshal(c.Meta, &m); err != nil {
 		return SDJWTVCMeta{}, fmt.Errorf("dcql: credential query %q: sd-jwt vc meta: %w", c.ID, err)
 	}
 	return m, nil
@@ -84,7 +86,7 @@ func (c CredentialQuery) SDJWTVCMeta() (SDJWTVCMeta, error) {
 // (Appendix B.2.3).
 func (c CredentialQuery) MdocMeta() (MdocMeta, error) {
 	var m MdocMeta
-	if err := json.Unmarshal(c.Meta, &m); err != nil {
+	if err := strictjson.Unmarshal(c.Meta, &m); err != nil {
 		return MdocMeta{}, fmt.Errorf("dcql: credential query %q: mdoc meta: %w", c.ID, err)
 	}
 	return m, nil

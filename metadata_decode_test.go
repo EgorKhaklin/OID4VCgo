@@ -38,3 +38,21 @@ func TestDecodeMetadata_AllowLoopbackHTTPStillRejectsRemoteHTTP(t *testing.T) {
 		t.Error("DecodeMetadata(non-loopback http, AllowLoopbackHTTP) = nil error, want error")
 	}
 }
+
+// Metadata another parser would read differently — a member twice, or
+// one named like a known member in another case — is refused: signed
+// metadata (§12.2.3) is decoded this way once its signature checks.
+func TestDecodeMetadata_RefusesAmbiguousMembers(t *testing.T) {
+	valid := metadataAt("https://issuer.example")
+	if _, err := DecodeMetadata(valid); err != nil {
+		t.Fatal(err)
+	}
+	for name, prefix := range map[string]string{
+		"credential_endpoint twice":        `{"credential_endpoint":"https://attacker.example/credential",`,
+		"case-variant credential_endpoint": `{"Credential_Endpoint":"https://attacker.example/credential",`,
+	} {
+		if _, err := DecodeMetadata(append([]byte(prefix), valid[1:]...)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

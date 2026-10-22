@@ -167,6 +167,10 @@ func TestFetchCredentialIssuerMetadata_SignedClaims(t *testing.T) {
 			return map[string]any{"sub": u, "iat": float64(now) + 0.25, "exp": float64(now) + 3600.5}
 		}, ok: true},
 		"self-signed cert": {claims: func(u string) map[string]any { return map[string]any{"sub": u, "iat": now} }, key: selfSignedKey, cert: selfSigned, roots: selfRoots},
+		// A reader matching names exactly takes a different endpoint.
+		"case-variant member": {claims: func(u string) map[string]any {
+			return map[string]any{"sub": u, "iat": now, "Credential_Endpoint": "https://attacker.example/credential"}
+		}},
 	} {
 		key, cert, pool := leafKey, leaf, roots
 		if tc.key != nil {

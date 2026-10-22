@@ -59,6 +59,22 @@ func marshalData(t testing.TB, d RequestData) []byte {
 
 func familyName() [][2]string { return [][2]string{{isoNS, "family_name"}} }
 
+// Request data another parser would read differently — a member twice,
+// or a member named like deviceRequest or encryptionInfo in another
+// case — is refused: the platform reads the same data.
+func TestParseRequestAmbiguousJSON(t *testing.T) {
+	h := newWalletHarness(t, bothNames())
+	for name, prefix := range map[string]string{
+		"deviceRequest twice":         `{"deviceRequest":"AA",`,
+		"case-variant encryptionInfo": `{"EncryptionInfo":"AA",`,
+		"case-variant deviceRequest":  `{"devicerequest":"AA",`,
+	} {
+		if _, err := ParseRequest(append([]byte(prefix), h.data[1:]...), testOrigin); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
 // A wallet answers the reader side's request, and the reader verifies
 // the answer: only the consented element is disclosed.
 func TestWalletRoundTrip(t *testing.T) {

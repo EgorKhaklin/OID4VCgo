@@ -6,6 +6,8 @@ import (
 	"math"
 	"regexp"
 	"slices"
+
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // idPattern is the character set §6.1 ("id" in a Credential Query) and
@@ -188,7 +190,7 @@ func (c CredentialQuery) validateMeta() error {
 		return fmt.Errorf("dcql: credential query %q: meta is required", c.ID)
 	}
 	var probe any
-	if err := json.Unmarshal(c.Meta, &probe); err != nil {
+	if err := strictjson.Unmarshal(c.Meta, &probe); err != nil {
 		return fmt.Errorf("dcql: credential query %q: meta is not valid JSON: %w", c.ID, err)
 	}
 	if _, ok := probe.(map[string]any); !ok {

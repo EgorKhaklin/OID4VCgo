@@ -195,7 +195,30 @@ func TestVerifyRejectsCriticalExtension(t *testing.T) {
 	}
 }
 
-func TestVerifyAcceptsEmptyCrit(t *testing.T) {
+// A signature segment whose unused trailing bits aren't zero decodes to
+// the same signature under a lenient decoder, which would give one JWS
+// a second serialization: it's refused.
+func TestVerifyRejectsNonCanonicalBase64(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	compact, err := Sign(ES256, key, map[string]any{}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	// A 64-byte ES256 signature is 86 characters: the last carries 4
+	// unused bits.
+	last := strings.IndexByte(alphabet, compact[len(compact)-1])
+	variant := compact[:len(compact)-1] + string(alphabet[last|1])
+	if _, _, err := Verify(ES256, &key.PublicKey, variant); err == nil {
+		t.Error("Verify accepted a non-canonical signature encoding")
+	}
+}
+
+// RFC 7515 §4.1.11: "Producers MUST NOT use the empty list".
+func TestVerifyRejectsEmptyCrit(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
@@ -205,8 +228,46 @@ func TestVerifyAcceptsEmptyCrit(t *testing.T) {
 		t.Fatalf("Sign: %v", err)
 	}
 
-	if _, _, err := Verify(ES256, &key.PublicKey, compact); err != nil {
-		t.Errorf("Verify: %v", err)
+	if _, _, err := Verify(ES256, &key.PublicKey, compact); err == nil {
+		t.Error("Verify = nil error, want error (empty crit)")
+	}
+}
+
+// signRawHeader signs payload under a header given as raw JSON, which
+// Sign, taking a map, can't express when a member appears twice.
+func signRawHeader(t *testing.T, key *ecdsa.PrivateKey, header string, payload []byte) string {
+	t.Helper()
+	signingInput := b64.EncodeToString([]byte(header)) + "." + b64.EncodeToString(payload)
+	sig, err := signBytes(ES256, key, []byte(signingInput))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signingInput + "." + b64.EncodeToString(sig)
+}
+
+// RFC 7515 §4: a JWS with a Header Parameter named twice is rejected,
+// not read last-wins — {"crit":["exp"],"crit":[]} isn't a JWS without
+// a critical extension.
+func TestVerifyRejectsDuplicateHeaderParameters(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	for _, header := range []string{
+		`{"alg":"ES256","crit":["exp"],"exp":1,"crit":[]}`,
+		`{"alg":"ES256","typ":"a","typ":"b"}`,
+		`{"alg":"ES256","jwk":{"kty":"EC","kty":"OKP"}}`,
+	} {
+		compact := signRawHeader(t, key, header, []byte(`{}`))
+		if _, _, err := Verify(ES256, &key.PublicKey, compact); err == nil {
+			t.Errorf("%s: Verify = nil error, want error", header)
+		}
+		if _, _, err := DecodeUnverified(compact); err == nil {
+			t.Errorf("%s: DecodeUnverified = nil error, want error", header)
+		}
+	}
+	if _, _, err := Verify(ES256, &key.PublicKey, signRawHeader(t, key, `{"alg":"ES256","typ":"a"}`, []byte(`{}`))); err != nil {
+		t.Errorf("the same header without the duplicate: %v", err)
 	}
 }
 

@@ -414,7 +414,7 @@ func verifyRequestObject(requestObject string, trust VerifierTrust) (*x509.Certi
 // Request Object's client_metadata (§5.1).
 func responseEncryption(clientMetadata json.RawMessage) (*ecdsa.PublicKey, string, string, error) {
 	var meta wireClientMetadata
-	if err := json.Unmarshal(clientMetadata, &meta); err != nil {
+	if err := strictjson.Unmarshal(clientMetadata, &meta); err != nil {
 		return nil, "", "", fmt.Errorf("parse client_metadata: %w", err)
 	}
 	if len(meta.Jwks.Keys) == 0 {
@@ -511,7 +511,7 @@ func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clie
 func selectResponseEncryptionKey(keys []json.RawMessage) (*ecdsa.PublicKey, string, error) {
 	for _, raw := range keys {
 		var kid wireJWKKid
-		if err := json.Unmarshal(raw, &kid); err != nil {
+		if err := strictjson.Unmarshal(raw, &kid); err != nil {
 			continue
 		}
 		if !usableForEncryption(kid.Use, kid.KeyOps) || (kid.Alg != "" && kid.Alg != string(jwe.ECDHES)) {

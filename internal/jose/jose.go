@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/idfoundry/oid4vcgo/internal/ecdsafixed"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // Alg identifies a JWS signature algorithm this package supports.
@@ -51,7 +52,9 @@ func IsSupported(alg Alg) bool {
 	}
 }
 
-var b64 = base64.RawURLEncoding
+// b64 decodes strictly: an encoding whose unused trailing bits aren't zero
+// (RFC 4648 §3.5) is refused, as every encoder emits zero bits.
+var b64 = base64.RawURLEncoding.Strict()
 
 // MaxCompactBytes bounds how large a compact JWS Verify/DecodeUnverified
 // will attempt to parse, to avoid doing unbounded base64url-decode and
@@ -219,8 +222,13 @@ func decodeHeader(encHeader string) (map[string]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jose: decode header: %w", err)
 	}
+	// strictjson: a Header Parameter named twice is refused (RFC 7515
+	// §4: "MUST either reject JWSs with duplicate Header Parameter
+	// names or use a JSON parser that returns only the lexically last
+	// duplicate member name"), not read last-wins, which another
+	// parser of the same header may not do.
 	var header map[string]any
-	if err := json.Unmarshal(raw, &header); err != nil {
+	if err := strictjson.Unmarshal(raw, &header); err != nil {
 		return nil, fmt.Errorf("jose: unmarshal header: %w", err)
 	}
 	// "crit" (RFC 7515 §4.1.11) names header parameters a receiver
@@ -230,11 +238,13 @@ func decodeHeader(encHeader string) (map[string]any, error) {
 	// signer in this repo ever sets "crit" — so any non-empty "crit"
 	// on an incoming JWS is, by construction, naming something this
 	// package doesn't understand, and rejection is unconditional
-	// rather than needing a caller-supplied "understood" set.
+	// rather than needing a caller-supplied "understood" set. An empty
+	// one is refused too: producers "MUST NOT use the empty list".
 	if crit, ok := header["crit"]; ok {
-		if arr, ok := crit.([]any); !ok || len(arr) > 0 {
-			return nil, fmt.Errorf("jose: JWS names a critical header extension this package does not understand: %v", crit)
+		if arr, ok := crit.([]any); ok && len(arr) == 0 {
+			return nil, errors.New(`jose: JWS has an empty "crit" header parameter`)
 		}
+		return nil, fmt.Errorf("jose: JWS names a critical header extension this package does not understand: %v", crit)
 	}
 	return header, nil
 }

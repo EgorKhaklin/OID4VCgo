@@ -13,13 +13,13 @@
 package fapiresource
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 
 	"github.com/idfoundry/fapigo/resource"
 
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
@@ -78,7 +78,7 @@ func (v *Verifier) Verify(r *http.Request, endpoint *url.URL) (issuer.Grant, err
 		Authorized: issuer.AuthorizedRequest{ClientIdentity: client, Subject: authCtx.InternalSubject, Scopes: authCtx.Scopes},
 	}
 	if raw, ok := authCtx.Claims["authorization_details"]; ok {
-		if err := json.Unmarshal(raw, &grant.Authorized.AuthorizationDetails); err != nil {
+		if err := strictjson.Unmarshal(raw, &grant.Authorized.AuthorizationDetails); err != nil {
 			return issuer.Grant{}, resource.NewError(resource.ErrorInvalidToken, http.StatusUnauthorized,
 				"access token authorization_details is malformed")
 		}

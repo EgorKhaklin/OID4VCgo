@@ -8,6 +8,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // KeyAttestationRequirement is a proof type's key_attestations_required
@@ -472,7 +473,7 @@ func DecodeMetadata(data []byte, opts ...fapi.URLOption) (Metadata, error) {
 
 func (m *Metadata) decode(data []byte, opts []fapi.URLOption) error {
 	var wire wireMetadata
-	if err := json.Unmarshal(data, &wire); err != nil {
+	if err := strictjson.Unmarshal(data, &wire); err != nil {
 		return err
 	}
 	issuerURL, err := fapi.ParseIssuerURL(wire.CredentialIssuer, opts...)

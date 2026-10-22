@@ -3,11 +3,11 @@ package verifier
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"net/url"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // DCAPIProtocolSigned is the Digital Credentials API protocol of a
@@ -170,7 +170,7 @@ func (t *Transactions) verifyDCAPI(ctx context.Context, tx Transaction, data []b
 		Response string `json:"response"`
 		Error    string `json:"error"`
 	}
-	if err := json.Unmarshal(data, &answer); err != nil {
+	if err := strictjson.Unmarshal(data, &answer); err != nil {
 		return VerifyResponseResult{}, newError(ReasonMalformed, "the Digital Credentials API response isn't a JSON object", err)
 	}
 	switch {

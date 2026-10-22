@@ -134,6 +134,17 @@ func TestTransactions_DCAPIRefusals(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+	// A valid answer behind a member another parser would read instead:
+	// the same name twice, or in another case.
+	valid := f.dcapiAnswer(begun, dcapiOrigin)
+	for name, prefix := range map[string]string{
+		"response twice":        `{"response":"x",`,
+		"case-variant response": `{"Response":"x",`,
+	} {
+		if _, err := f.txs.HandleDCAPIResponse(ctx, begun.ID, testBinding, append([]byte(prefix), valid[1:]...)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
 	view, err := f.txs.Lookup(ctx, begun.ID, testBinding)
 	if err != nil || view.Status != verifier.TransactionPending {
 		t.Fatalf("refused answers closed the request: %+v, %v", view, err)
