@@ -12,7 +12,8 @@ import (
 )
 
 // One key has one thumbprint, however its members are written:
-// base64url decoding forgives a line break and stray trailing bits.
+// base64url decoding forgives a line break. Stray trailing bits are
+// refused instead (RFC 4648 §3.5).
 func TestThumbprint_NonCanonicalEncodings(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -30,9 +31,12 @@ func TestThumbprint_NonCanonicalEncodings(t *testing.T) {
 	// bits: flip one.
 	last := strings.Index("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", canonical.X[42:])
 	alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	trailing := jwk.JWK{Kty: "EC", Crv: "P-256", X: canonical.X[:42] + string(alphabet[last^1]), Y: canonical.Y}
+	if _, err := trailing.PublicKey(); err == nil {
+		t.Error("trailing bits: PublicKey accepted a non-canonical x encoding")
+	}
 	variants := map[string]jwk.JWK{
-		"a line break":  {Kty: "EC", Crv: "P-256", X: canonical.X[:20] + "\n" + canonical.X[20:], Y: canonical.Y},
-		"trailing bits": {Kty: "EC", Crv: "P-256", X: canonical.X[:42] + string(alphabet[last^1]), Y: canonical.Y},
+		"a line break": {Kty: "EC", Crv: "P-256", X: canonical.X[:20] + "\n" + canonical.X[20:], Y: canonical.Y},
 	}
 	for name, v := range variants {
 		if _, err := v.PublicKey(); err != nil {
