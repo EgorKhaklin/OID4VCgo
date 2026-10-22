@@ -12,6 +12,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/hkdf"
+	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 )
 
 // DeviceAuthType identifies which of §12.4's two mdoc authentication
@@ -129,12 +130,13 @@ func UnmarshalDeviceSignedMax(data []byte, maxBytes int) (DeviceSigned, error) {
 	if len(data) > maxBytes {
 		return DeviceSigned{}, fmt.Errorf("mdoc: DeviceSigned is %d bytes, exceeds the %d byte limit", len(data), maxBytes)
 	}
+	mode := decMode.WithBudget(strictcbor.DefaultMaxItems)
 	var wire wireDeviceSigned
-	if err := decMode.Unmarshal(data, &wire); err != nil {
+	if err := mode.Unmarshal(data, &wire); err != nil {
 		return DeviceSigned{}, fmt.Errorf("mdoc: unmarshal DeviceSigned: %w", err)
 	}
 	var nameSpaces map[string]map[string]interface{}
-	if err := unwrapTag24(wire.NameSpaces, &nameSpaces); err != nil {
+	if err := unwrapTag24With(mode, wire.NameSpaces, &nameSpaces); err != nil {
 		return DeviceSigned{}, fmt.Errorf("mdoc: decode DeviceNameSpaces: %w", err)
 	}
 	switch {
