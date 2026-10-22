@@ -96,8 +96,9 @@ func (v *Verifier) ParseDirectPostJWTResponse(responseJWE string, decryptionKey 
 	}
 	// Only a content encryption this Verifier offered in
 	// encrypted_response_enc_values_supported (OpenID4VP §8.3).
+	// Its value isn't echoed: the header is the sender's.
 	if enc, _ := header["enc"].(string); !slices.Contains(v.cfg.EncValuesSupported, oid4vci.JWEEnc(enc)) {
-		return ParsedResponse{}, newError(ReasonMalformed, fmt.Sprintf("parse direct_post.jwt response: enc %q isn't one this Verifier offered", enc), nil)
+		return ParsedResponse{}, newError(ReasonMalformed, "parse direct_post.jwt response: its enc isn't one this Verifier offered", nil)
 	}
 	plaintext, err := jwe.Decrypt(decryptionKey, responseJWE)
 	if err != nil {

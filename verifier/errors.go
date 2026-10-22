@@ -50,6 +50,26 @@ const (
 	ReasonHolderBinding Reason = "holder_binding"
 )
 
+// description is a fixed description of r, for a display that mustn't
+// show what an answer's sender wrote (Transaction.LastError).
+func (r Reason) description() string {
+	switch r {
+	case ReasonMalformed:
+		return "it is malformed (malformed)"
+	case ReasonStateMismatch:
+		return "its state isn't this request's (state_mismatch)"
+	case ReasonNotAnswered:
+		return "what it presents doesn't answer the request (not_answered)"
+	case ReasonUntrustedIssuer:
+		return "a credential's issuer isn't trusted for it (untrusted_issuer)"
+	case ReasonInvalidCredential:
+		return "a credential's signature or validity failed (invalid_credential)"
+	case ReasonHolderBinding:
+		return "a credential's holder binding failed (holder_binding)"
+	}
+	return "it failed verification"
+}
+
 func newError(reason Reason, description string, cause error) *Error {
 	return &Error{reason: reason, description: description, cause: cause}
 }

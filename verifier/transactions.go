@@ -86,9 +86,17 @@ type Transaction struct {
 	// request (its QR code or link is enough) can send an answer that
 	// fails, or an error response such as access_denied, which
 	// OpenID4VP doesn't authenticate — so don't show it as the holder
-	// declining. It may carry text derived from such an answer: it's
-	// kept short and printable, and an error response is reduced to its
-	// error code, but it must still be escaped when displayed.
+	// declining.
+	//
+	// It never carries text the answer's sender chose: a refused answer
+	// is recorded as a fixed description of its Reason, and an error
+	// response as its error code alone. Only a TransactionsConfig.Accept
+	// refusal keeps its own text — Accept runs only on an answer that
+	// verified, holder binding included — kept short and printable. It
+	// must still be escaped when displayed. The full error, for the
+	// Verifier's logs, is the one HandleResponse (or
+	// HandleDCAPIResponse) returns, which TransactionsConfig.OnRefused
+	// also sees.
 	LastError string
 }
 
@@ -180,7 +188,19 @@ type TransactionsConfig struct {
 	// answers to one request arrive together, both can be accepted and
 	// only one completes it. Keep it free of side effects, or tie what
 	// it records to the result that completed (TransactionView.Result).
+	//
+	// Its error's text is LastError (see Transaction.LastError): keep it
+	// to what the Verifier's own display may show.
 	Accept func(ctx context.Context, id string, result VerifyResponseResult) error
+
+	// OnRefused, if set, is called with each refused answer to request
+	// id and its full error, for the Verifier's logs: LastError keeps
+	// only a fixed description of why (Transaction.LastError), and
+	// ResponseHandler tells the sender nothing. The error's text may
+	// carry values the sender chose — anyone with the request's QR code
+	// or link can send an answer — so log it as data, quoted, and never
+	// render it as markup.
+	OnRefused func(ctx context.Context, id string, err error)
 
 	// RedirectURI is where a same-device answer sends the browser back
 	// to, with response_code added to its query (OpenID4VP §8.2).
@@ -506,11 +526,18 @@ func (t *Transactions) verifyParsed(ctx context.Context, tx Transaction, parsed 
 	}
 	if t.cfg.Accept != nil {
 		if err := t.cfg.Accept(ctx, tx.ID, result); err != nil {
-			return VerifyResponseResult{}, err
+			return VerifyResponseResult{}, &acceptError{err}
 		}
 	}
 	return result, nil
 }
+
+// acceptError is TransactionsConfig.Accept's refusal of an answer that
+// verified: its text is the Verifier's own, so LastError keeps it.
+type acceptError struct{ err error }
+
+func (e *acceptError) Error() string { return e.err.Error() }
+func (e *acceptError) Unwrap() error { return e.err }
 
 // recordFailure notes why an answer was refused, if the request is
 // still pending. Best effort: a store error here doesn't change the
@@ -544,6 +571,9 @@ func (t *Transactions) HandleUnencryptedError(ctx context.Context, code, state s
 }
 
 func (t *Transactions) recordFailure(ctx context.Context, id string, cause error) {
+	if t.cfg.OnRefused != nil {
+		t.cfg.OnRefused(ctx, id, cause)
+	}
 	_ = t.store.Update(ctx, id, func(cur *Transaction) error {
 		if cur.Status != TransactionPending {
 			return ErrTransactionAnswered
@@ -556,20 +586,43 @@ func (t *Transactions) recordFailure(ctx context.Context, id string, cause error
 // maxFailureText bounds LastError.
 const maxFailureText = 256
 
-// failureText is what LastError records for cause. A Wallet's error
-// response — which anyone holding the request's public key can send —
-// is reduced to its error code when that's a plain token; otherwise
-// the text is cut to maxFailureText and anything unprintable replaced.
+// failureText is what LastError records for cause. Anyone holding the
+// request's public key can send an answer, and an error's text can
+// carry values from it — a JWE header, a claim, an error description
+// — so only fixed text is recorded for one: a Wallet's error response
+// is reduced to its error code when that's a plain token, and a failed
+// verification to a description of its Reason. An Accept refusal,
+// which only an answer that verified can reach, keeps its own text,
+// cut to maxFailureText with anything unprintable replaced.
+//
+// Every refusal is recorded, whether or not the answer decrypted:
+// decrypting proves nothing about its sender, since anyone can encrypt
+// to the request's public key, and a genuine Wallet's answer can fail
+// before it decrypts too.
 func failureText(cause error) string {
 	var walletErr *ResponseError
-	if errors.As(cause, &walletErr) {
+	var accepted *acceptError
+	var verr *Error
+	switch {
+	case errors.As(cause, &walletErr):
 		if isErrorCode(walletErr.Code) {
 			return "an error response arrived: " + walletErr.Code
 		}
 		return "an error response arrived"
+	case errors.As(cause, &accepted):
+		return printableText(accepted.err.Error())
+	case errors.As(cause, &verr):
+		return "the answer was refused: " + verr.Reason().description()
 	}
+	// A plain error: a mistake in the Verifier's own configuration.
+	return "the answer couldn't be verified: the Verifier's configuration is incomplete (see the returned error)"
+}
+
+// printableText is text cut to maxFailureText, with anything
+// unprintable replaced.
+func printableText(text string) string {
 	var b strings.Builder
-	for _, r := range cause.Error() {
+	for _, r := range text {
 		if b.Len() >= maxFailureText {
 			b.WriteString("…")
 			break

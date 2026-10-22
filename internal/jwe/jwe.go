@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"io"
@@ -71,7 +72,7 @@ func encKeyLen(enc Enc) (int, error) {
 	case A256GCM:
 		return 32, nil
 	default:
-		return 0, fmt.Errorf("jwe: unsupported enc %q", enc)
+		return 0, errors.New("jwe: unsupported enc")
 	}
 }
 
@@ -197,7 +198,7 @@ func DecryptLimits(priv *ecdsa.PrivateKey, compact string, maxBytes, maxInflated
 	}
 
 	if algStr, _ := header["alg"].(string); algStr != string(ECDHES) {
-		return nil, fmt.Errorf("jwe: unsupported alg %q", header["alg"])
+		return nil, errors.New("jwe: unsupported alg")
 	}
 	encStr, _ := header["enc"].(string)
 	keyLen, err := encKeyLen(Enc(encStr))
@@ -263,7 +264,7 @@ func DecryptLimits(priv *ecdsa.PrivateKey, compact string, maxBytes, maxInflated
 
 	if zipStr, _ := header["zip"].(string); zipStr != "" {
 		if zipStr != string(DEF) {
-			return nil, fmt.Errorf("jwe: unsupported zip %q", zipStr)
+			return nil, errors.New("jwe: unsupported zip")
 		}
 		plaintext, err = inflate(plaintext, maxInflated)
 		if err != nil {
@@ -316,7 +317,7 @@ func splitCompact(compact string) (header map[string]any, encHeader, iv, ciphert
 	// doesn't understand.
 	if crit, ok := header["crit"]; ok {
 		if arr, ok := crit.([]any); !ok || len(arr) > 0 {
-			return nil, "", "", "", "", fmt.Errorf("jwe: JWE names a critical header extension this package does not understand: %v", crit)
+			return nil, "", "", "", "", errors.New("jwe: JWE names a critical header extension this package does not understand")
 		}
 	}
 	return header, parts[0], parts[2], parts[3], parts[4], nil
@@ -360,7 +361,7 @@ func decodeEPK(header map[string]any) (*ecdh.PublicKey, error) {
 		return nil, fmt.Errorf("jwe: unmarshal epk: %w", err)
 	}
 	if epk.Kty != "EC" || epk.Crv != "P-256" {
-		return nil, fmt.Errorf("jwe: epk has unsupported kty/crv (%q/%q); only EC P-256 is supported", epk.Kty, epk.Crv)
+		return nil, errors.New("jwe: epk has an unsupported kty/crv; only EC P-256 is supported")
 	}
 	x, err := b64.DecodeString(epk.X)
 	if err != nil {
