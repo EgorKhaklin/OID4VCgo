@@ -1,6 +1,7 @@
 package oid4vpmdoc_test
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -53,5 +54,24 @@ func TestUnmarshalDeviceResponseRejectsOversizedResponse(t *testing.T) {
 	// same input UnmarshalDeviceResponse rejects.
 	if _, err := oid4vpmdoc.UnmarshalDeviceResponseMax(raw, len(raw)); err != nil {
 		t.Errorf("UnmarshalDeviceResponseMax with a raised ceiling: %v", err)
+	}
+}
+
+// {"x": [[{} × 4096] × 255]} keeps every container within
+// mdoc.MaxCBORContainerItems and nests three deep, yet holds a million
+// maps in 1 MB: it's refused for its item count before it's decoded.
+func TestUnmarshalDeviceResponseRefusesItemFlood(t *testing.T) {
+	inner := append([]byte{0x99, 0x10, 0x00}, bytes.Repeat([]byte{0xa0}, 4096)...)
+	k := (oid4vpmdoc.MaxBytes - 16) / len(inner)
+	raw := []byte{0xa1, 0x61, 'x', 0x99, byte(k >> 8), byte(k)}
+	for range k {
+		raw = append(raw, inner...)
+	}
+	if _, err := oid4vpmdoc.UnmarshalDeviceResponse(raw); err == nil {
+		t.Fatal("UnmarshalDeviceResponse = nil error")
+	}
+	allocs := testing.AllocsPerRun(1, func() { _, _ = oid4vpmdoc.UnmarshalDeviceResponse(raw) })
+	if allocs > 100 {
+		t.Errorf("UnmarshalDeviceResponse made %v allocations, want it refused before decoding", allocs)
 	}
 }
