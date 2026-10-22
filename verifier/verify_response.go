@@ -745,6 +745,19 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	if err != nil {
 		return nil, nil, nil, nil, newError(ReasonMalformed, "decode issuer auth", err)
 	}
+	// The x5chain is normally in the unprotected header (ISO/IEC 18013-5
+	// §12.3.4), so the holder chooses it: any chain to a trusted anchor
+	// whose leaf certifies the key that signed the MSO. Every decision
+	// made on the chain — the anchors for the doctype, the document
+	// signer checks, issuer authorization, trusted_authorities, the
+	// status list's signer — is made on the one path CheckMdocIssuer
+	// verified, so the holder can only pick among CAs that each certified
+	// this same key, each of which vouches for it under the trust
+	// configuration. The doctype, claims and status reference are in the
+	// signed MSO, and a status list fetched from it is signed under the
+	// issuer's own CA: one bound to another chain fails closed.
+	// Accepting a chain only from the protected header would refuse
+	// conforming mdocs.
 	issuerPub, issuerAlg, err := req.MdocIssuerKeys.ResolveMdocIssuerKey(ctx, cose.X5ChainOf(protected, unprotected), doc.DocType)
 	if err != nil {
 		return nil, nil, nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
