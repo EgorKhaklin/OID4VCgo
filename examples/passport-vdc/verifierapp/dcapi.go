@@ -1,6 +1,7 @@
 package verifierapp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -216,22 +217,27 @@ func (a *App) verifyDCAPI(r *http.Request, s *session, pending mdocdcapi.Pending
 	if a.answered(r, s) {
 		return nil, errors.New("this request has already been answered")
 	}
-	verified, err := mdocdcapi.VerifyResponse(r.Context(), mdocdcapi.VerifyParams{
+	info, _ := s.scenario.Info()
+	var people []Person
+	_, err := mdocdcapi.VerifyResponse(r.Context(), mdocdcapi.VerifyParams{
 		Pending: pending, Response: response,
 		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots},
 		Now:        a.now, MaxClockSkew: time.Minute,
+		Assurance: verifier.AssuranceDevelopment,
+		// The demo's one issuer issues every document it asks for.
+		AnyIssuerForAnyType: true,
+		// The scenario's checks, revocation among them (checkStatus,
+		// with the status list bound to the document's issuer chain).
+		Accept: func(ctx context.Context, _ string, result verifier.VerifyResponseResult) error {
+			vcs := result.Credentials
+			for i := range vcs {
+				vcs[i].CredentialQueryID = mdocQueryID
+			}
+			var err error
+			people, err = a.people(ctx, info, vcs)
+			return err
+		},
 	})
-	if err != nil {
-		return nil, err
-	}
-	claims := make(map[string]any, len(verified.NameSpaces))
-	for ns, elements := range verified.NameSpaces {
-		claims[ns] = elements
-	}
-	info, _ := s.scenario.Info()
-	people, err := a.people(r.Context(), info, []verifier.VerifiedCredential{{
-		CredentialQueryID: mdocQueryID, Claims: claims, MdocStatus: verified.Status,
-	}})
 	if err != nil {
 		return nil, err
 	}

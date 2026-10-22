@@ -60,7 +60,12 @@ const maxResponseBodyBytes = 2*jwe.MaxCompactBytes + 4096
 // with JSON — {"redirect_uri": …} for a same-device answer, {} for a
 // cross-device one, or a 400 error whose description says only that
 // the answer was refused: why is recorded as the request's LastError,
-// for the Verifier's own display, not told to whoever sent it. A
+// for the Verifier's own display, not told to whoever sent it. That
+// 400 is the same whether the request is unknown, already answered,
+// closed or expired, or the answer failed verification, so it doesn't
+// tell anyone holding the request's QR code whether the holder has
+// presented; a Wallet resending an answer that already completed the
+// request gets it too. A
 // failure of the Verifier's own, such as its TransactionStore's, is a
 // 500 server_error instead, so the Wallet isn't told its answer was
 // refused. A
@@ -96,9 +101,6 @@ func (t *Transactions) ResponseHandler() http.Handler {
 		switch {
 		case errors.As(err, &walletErr):
 			// A same-device request's Answered carries its redirect_uri.
-		case errors.Is(err, ErrTransactionAnswered):
-			writeResponseError(w, "this request has already been answered")
-			return
 		case errors.As(err, new(*serverFault)):
 			// The Verifier's own failure, not the answer's.
 			w.Header().Set(headerContentType, mediaTypeJSON)
@@ -107,6 +109,11 @@ func (t *Transactions) ResponseHandler() http.Handler {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "server_error"})
 			return
 		case err != nil:
+			// The same reply whether the request is unknown, answered,
+			// closed or expired, or the answer failed: anyone holding the
+			// request's QR code can post to its key, and mustn't learn
+			// whether the holder has presented. A Wallet that resends an
+			// answer that was delivered gets this too.
 			writeResponseError(w, "the response was not accepted")
 			return
 		}

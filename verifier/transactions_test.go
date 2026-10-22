@@ -193,8 +193,11 @@ func TestTransactions_CrossDevice(t *testing.T) {
 	if _, err := f.txs.HandleResponse(ctx, jwe); !errors.Is(err, verifier.ErrTransactionAnswered) {
 		t.Errorf("replayed answer: %v, want ErrTransactionAnswered", err)
 	}
-	if _, err := f.txs.RequestObject(ctx, begun.ID); err == nil {
-		t.Error("the request object is still served after the request completed")
+	// Still served, as for a pending request: a request_uri that stopped
+	// answering would tell anyone holding the QR code that the holder
+	// had presented.
+	if _, err := f.txs.RequestObject(ctx, begun.ID); err != nil {
+		t.Errorf("the request object after the request completed: %v", err)
 	}
 }
 
@@ -493,7 +496,7 @@ func TestTransactions_HandlerEdges(t *testing.T) {
 		if r.StatusCode != want {
 			t.Errorf("answer %d: status %d, want %d", i+1, r.StatusCode, want)
 		}
-		if i == 1 && !strings.Contains(body["error_description"], "already been answered") {
+		if i == 1 && body["error_description"] != "the response was not accepted" {
 			t.Errorf("replayed answer: %v", body)
 		}
 	}

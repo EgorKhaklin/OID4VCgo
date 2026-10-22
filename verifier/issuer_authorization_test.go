@@ -47,7 +47,7 @@ func TestIssuerAuthorized_SDJWTVC(t *testing.T) {
 	if !errors.As(err, &verr) || verr.Reason() != verifier.ReasonUntrustedIssuer {
 		t.Fatalf("refused: HandleResponse = %v, want untrusted_issuer", err)
 	}
-	if view, err := f.txs.Lookup(ctx, begun.ID, "browser-binding-A"); err != nil || view.Result != nil || !strings.Contains(view.LastError, "issuer authorization") {
+	if view, err := f.txs.Lookup(ctx, begun.ID, "browser-binding-A"); err != nil || view.Result != nil || !strings.Contains(view.LastError, "(untrusted_issuer)") {
 		t.Fatalf("refused: Lookup = %+v, %v; want the answer refused", view, err)
 	}
 }

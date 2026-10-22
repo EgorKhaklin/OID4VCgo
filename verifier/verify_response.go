@@ -5,12 +5,14 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -238,6 +240,14 @@ type VerifiedCredential struct {
 
 // VerifyResponseResult is returned by a successful VerifyResponse.
 type VerifyResponseResult struct {
+	// Credentials are the presentations that verified. Under a Credential
+	// Query's multiple, each is a different issued credential:
+	// VerifyResponse refuses a response that presents one twice (the
+	// same Issuer-signed JWT, or mdoc Mobile Security Object, whatever
+	// the holder varied around it). Different credentials can still be
+	// the same holder's — batch-issued copies of one credential each
+	// have their own key — so a Verifier counting people decides from
+	// their claims who is who.
 	Credentials []VerifiedCredential
 
 	// Discarded are the presentations that failed verification while
@@ -327,8 +337,10 @@ type DiscardedPresentation struct {
 // satisfying the query as soon as one option is fully present. A
 // Credential Query's own Multiple (§6.1) is honored: when true,
 // req.Response.VPToken may carry more than one Presentation for that
-// id, and every one of them is verified and returned; when false (the
-// default), more than one is a hard error.
+// id, and every one of them is verified and returned, but one
+// credential presented more than once refuses the response (see
+// VerifyResponseResult.Credentials); when false (the default), more
+// than one is a hard error.
 func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest) (VerifyResponseResult, error) {
 	if req.Now != nil {
 		// Certificates are valid, or not, at the verification's instant.
@@ -518,16 +530,19 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 	var firstErr error
 
 	vcs := make([]VerifiedCredential, 0, len(presentations))
+	seen := make(map[[sha256.Size]byte]bool, len(presentations))
 	for _, presented := range presentations {
 		var claims map[string]any
 		var status *mdoc.Status
 		var chain [][]byte
+		var signed []byte
 		var err error
 		switch cq.Format {
 		case sdjwtvc.CredentialFormat:
 			claims, chain, err = v.verifySDJWTVCPresentation(ctx, cq, presented, req)
+			signed = sdjwtvcSignedPart(presented)
 		case mdoc.CredentialFormat:
-			claims, status, chain, err = v.verifyMdocPresentation(ctx, cq, presented, req)
+			claims, status, chain, signed, err = v.verifyMdocPresentation(ctx, cq, presented, req)
 		default:
 			return nil, nil, fmt.Errorf("format %q is not yet supported", cq.Format)
 		}
@@ -554,6 +569,14 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 		if err != nil {
 			return nil, nil, err
 		}
+		// One credential presented twice isn't two credentials: under
+		// multiple, a Verifier counting them (one per person, say) would
+		// be misled. A Wallet never does it, so the response is refused.
+		identity := sha256.Sum256(signed)
+		if seen[identity] {
+			return nil, nil, newError(ReasonMalformed, "the same credential was presented more than once", nil)
+		}
+		seen[identity] = true
 		vcs = append(vcs, VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain})
 	}
 	if len(vcs) == 0 && firstErr != nil {
@@ -562,6 +585,20 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 		return nil, discarded, &discardedError{firstErr}
 	}
 	return vcs, discarded, nil
+}
+
+// sdjwtvcSignedPart is what identifies the credential an SD-JWT
+// presentation carries: its Issuer-signed JWT's signing input (header
+// and payload), which the holder can't change. Not the whole JWT: an
+// ECDSA signature has another encoding that verifies too, so the same
+// credential can be sent with different signature bytes. Disclosures
+// and the KB-JWT are the holder's to vary.
+func sdjwtvcSignedPart(compact string) []byte {
+	issuerJWT, _, _ := strings.Cut(compact, "~")
+	if i := strings.LastIndexByte(issuerJWT, '.'); i >= 0 {
+		issuerJWT = issuerJWT[:i]
+	}
+	return []byte(issuerJWT)
 }
 
 // discardedError is a Credential Query all of whose presentations
@@ -682,83 +719,101 @@ func (v *Verifier) expectedAudience(origin string) string {
 // (Appendix B.2.6.1) always sets EReaderKeyBytes to null — there is no
 // in-band reader ephemeral key to agree a MAC key from, so only
 // DeviceAuthSignature (§12.4.6, ECDSA/EdDSA) is meaningful here.
-func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (map[string]any, *mdoc.Status, [][]byte, error) {
+//
+// msoBytes is the IssuerAuth payload, the issuer-signed Mobile Security
+// Object: what identifies the credential, which the holder can't change
+// (unlike IssuerAuth's unprotected header, or its signature's
+// encoding).
+func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (claims map[string]any, status *mdoc.Status, chain [][]byte, msoBytes []byte, err error) {
 	if req.MdocIssuerKeys == nil {
-		return nil, nil, nil, fmt.Errorf("dependencies.mdoc_issuer_keys is required for a %q credential query — see X5ChainIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", mdoc.CredentialFormat)
+		return nil, nil, nil, nil, fmt.Errorf("dependencies.mdoc_issuer_keys is required for a %q credential query — see X5ChainIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", mdoc.CredentialFormat)
 	}
 	if req.ResponseEncryptionKey == nil {
-		return nil, nil, nil, fmt.Errorf("response_encryption_key is required for a %q credential query", mdoc.CredentialFormat)
+		return nil, nil, nil, nil, fmt.Errorf("response_encryption_key is required for a %q credential query", mdoc.CredentialFormat)
 	}
 
 	raw, err := base64.RawURLEncoding.DecodeString(presented)
 	if err != nil {
-		return nil, nil, nil, newError(ReasonMalformed, "decode device response", err)
+		return nil, nil, nil, nil, newError(ReasonMalformed, "decode device response", err)
 	}
 	doc, err := oid4vpmdoc.UnmarshalDeviceResponse(raw)
 	if err != nil {
-		return nil, nil, nil, newError(ReasonMalformed, "unmarshal device response", err)
+		return nil, nil, nil, nil, newError(ReasonMalformed, "unmarshal device response", err)
 	}
 
-	protected, unprotected, _, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
+	protected, unprotected, payload, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
 	if err != nil {
-		return nil, nil, nil, newError(ReasonMalformed, "decode issuer auth", err)
+		return nil, nil, nil, nil, newError(ReasonMalformed, "decode issuer auth", err)
 	}
+	// The x5chain is normally in the unprotected header (ISO/IEC 18013-5
+	// §12.3.4), so the holder chooses it: any chain to a trusted anchor
+	// whose leaf certifies the key that signed the MSO. Every decision
+	// made on the chain — the anchors for the doctype, the document
+	// signer checks, issuer authorization, trusted_authorities, the
+	// status list's signer — is made on the one path CheckMdocIssuer
+	// verified, so the holder can only pick among CAs that each certified
+	// this same key, each of which vouches for it under the trust
+	// configuration. The doctype, claims and status reference are in the
+	// signed MSO, and a status list fetched from it is signed under the
+	// issuer's own CA: one bound to another chain fails closed.
+	// Accepting a chain only from the protected header would refuse
+	// conforming mdocs.
 	issuerPub, issuerAlg, err := req.MdocIssuerKeys.ResolveMdocIssuerKey(ctx, cose.X5ChainOf(protected, unprotected), doc.DocType)
 	if err != nil {
-		return nil, nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
+		return nil, nil, nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
 	}
 
 	verified, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuerPub, issuerAlg, mdoc.VerifyOptions{Now: req.Now, MaxClockSkew: req.MaxClockSkew})
 	if err != nil {
-		return nil, nil, nil, newError(ReasonInvalidCredential, "verify issuer signed", err)
+		return nil, nil, nil, nil, newError(ReasonInvalidCredential, "verify issuer signed", err)
 	}
-	chain, err := CheckMdocIssuer(ctx, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType, issuerPub, verified)
+	chain, err = CheckMdocIssuer(ctx, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType, issuerPub, verified)
 	if err != nil {
-		return nil, nil, nil, newError(ReasonUntrustedIssuer, "check document signer", err)
+		return nil, nil, nil, nil, newError(ReasonUntrustedIssuer, "check document signer", err)
 	}
 
 	thumbprintBytes, err := jwk.Thumbprint(&req.ResponseEncryptionKey.PublicKey)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("response encryption key: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("response encryption key: %w", err)
 	}
 	sessionTranscriptBytes, err := v.buildMdocSessionTranscriptBytes(req, thumbprintBytes)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("build session transcript: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("build session transcript: %w", err)
 	}
 
 	if doc.DeviceSigned.AuthType != mdoc.DeviceAuthSignature {
-		return nil, nil, nil, newError(ReasonHolderBinding, fmt.Sprintf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType), nil)
+		return nil, nil, nil, nil, newError(ReasonHolderBinding, fmt.Sprintf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType), nil)
 	}
 	deviceAlg, err := mdocAlgForKey(verified.DeviceKey)
 	if err != nil {
-		return nil, nil, nil, newError(ReasonHolderBinding, "device key", err)
+		return nil, nil, nil, nil, newError(ReasonHolderBinding, "device key", err)
 	}
 	if err := mdoc.VerifyDeviceSignature(doc.DeviceSigned, verified.DeviceKey, deviceAlg, sessionTranscriptBytes, doc.DocType); err != nil {
 		// The device signature is over a SessionTranscript carrying this
 		// request's nonce and client_id (or origin): one that doesn't
 		// verify was made for another request, or was tampered with.
-		return nil, nil, nil, newError(ReasonHolderBinding, "verify device signature", fmt.Errorf("%w: %w", errNotThisRequest, err))
+		return nil, nil, nil, nil, newError(ReasonHolderBinding, "verify device signature", fmt.Errorf("%w: %w", errNotThisRequest, err))
 	}
 
 	if err := mdoc.CheckKeyAuthorizations(doc.DeviceSigned.NameSpaces, verified.KeyAuthorizations); err != nil {
-		return nil, nil, nil, newError(ReasonHolderBinding, "check key authorizations", err)
+		return nil, nil, nil, nil, newError(ReasonHolderBinding, "check key authorizations", err)
 	}
 
 	if err := cq.SatisfiedByMdocClaims(verified.DocType, verified.NameSpaces); err != nil {
-		return nil, nil, nil, newError(ReasonNotAnswered, "satisfied by mdoc claims", err)
+		return nil, nil, nil, nil, newError(ReasonNotAnswered, "satisfied by mdoc claims", err)
 	}
 
 	if len(cq.TrustedAuthorities) > 0 {
 		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, chain); err != nil {
-			return nil, nil, nil, newError(ReasonUntrustedIssuer, errCategoryTrustedAuthorities, err)
+			return nil, nil, nil, nil, newError(ReasonUntrustedIssuer, errCategoryTrustedAuthorities, err)
 		}
 	}
 
-	claims := make(map[string]any, len(verified.NameSpaces))
+	claims = make(map[string]any, len(verified.NameSpaces))
 	for namespace, elements := range verified.NameSpaces {
 		claims[namespace] = elements
 	}
-	return claims, verified.Status, chain, nil
+	return claims, verified.Status, chain, payload, nil
 }
 
 // buildMdocSessionTranscriptBytes rebuilds SessionTranscriptBytes

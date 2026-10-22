@@ -86,9 +86,17 @@ type Transaction struct {
 	// request (its QR code or link is enough) can send an answer that
 	// fails, or an error response such as access_denied, which
 	// OpenID4VP doesn't authenticate — so don't show it as the holder
-	// declining. It may carry text derived from such an answer: it's
-	// kept short and printable, and an error response is reduced to its
-	// error code, but it must still be escaped when displayed.
+	// declining.
+	//
+	// It never carries text the answer's sender chose: a refused answer
+	// is recorded as a fixed description of its Reason, and an error
+	// response as its error code alone. Only a TransactionsConfig.Accept
+	// refusal keeps its own text — Accept runs only on an answer that
+	// verified, holder binding included — kept short and printable. It
+	// must still be escaped when displayed. The full error, for the
+	// Verifier's logs, is the one HandleResponse (or
+	// HandleDCAPIResponse) returns, which TransactionsConfig.OnRefused
+	// also sees.
 	LastError string
 }
 
@@ -180,7 +188,19 @@ type TransactionsConfig struct {
 	// answers to one request arrive together, both can be accepted and
 	// only one completes it. Keep it free of side effects, or tie what
 	// it records to the result that completed (TransactionView.Result).
+	//
+	// Its error's text is LastError (see Transaction.LastError): keep it
+	// to what the Verifier's own display may show.
 	Accept func(ctx context.Context, id string, result VerifyResponseResult) error
+
+	// OnRefused, if set, is called with each refused answer to request
+	// id and its full error, for the Verifier's logs: LastError keeps
+	// only a fixed description of why (Transaction.LastError), and
+	// ResponseHandler tells the sender nothing. The error's text may
+	// carry values the sender chose — anyone with the request's QR code
+	// or link can send an answer — so log it as data, quoted, and never
+	// render it as markup.
+	OnRefused func(ctx context.Context, id string, err error)
 
 	// RedirectURI is where a same-device answer sends the browser back
 	// to, with response_code added to its query (OpenID4VP §8.2).
@@ -363,8 +383,11 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 }
 
 // RequestObject returns the signed Request Object to serve at the
-// request_uri of the request id, while it's still waiting for an
-// answer.
+// request_uri of the request id, until the request expires. It's served
+// alike whether the request is pending, answered or closed: anyone
+// holding the request's QR code can fetch it, and a request_uri that
+// stopped answering would tell them the holder had presented. An answer
+// a Wallet sends to a request that's no longer pending is refused.
 func (t *Transactions) RequestObject(ctx context.Context, id string) (string, error) {
 	tx, err := t.store.Get(ctx, id)
 	if err != nil {
@@ -374,8 +397,8 @@ func (t *Transactions) RequestObject(ctx context.Context, id string) (string, er
 		// A Digital Credentials API request goes to the page, not to a request_uri.
 		return "", ErrTransactionUnknown
 	}
-	if err := t.checkPending(tx); err != nil {
-		return "", err
+	if !t.now().Before(tx.ExpiresAt) {
+		return "", ErrTransactionExpired
 	}
 	return tx.RequestObject, nil
 }
@@ -409,6 +432,15 @@ type Answered struct {
 // request's public Request Object and anyone could send one — which is
 // also why LastError mustn't be shown as the holder declining. One whose
 // state doesn't match is refused like any other answer.
+//
+// An error response carrying the state of a request that's no longer
+// pending — answered, closed or expired — is answered as a pending
+// request's is: returned as a *ResponseError (which also matches the
+// request's ErrTransactionAnswered, ErrTransactionClosed or
+// ErrTransactionExpired), with a same-device request's redirect_uri,
+// though not recorded. Anyone holding the request's QR code or link can
+// send one, and a reply that differed would tell them whether the
+// holder had presented.
 func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (Answered, error) {
 	kid, err := ResponseKeyID(responseJWE)
 	if err != nil {
@@ -428,7 +460,7 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 		return Answered{}, ErrTransactionUnknown
 	}
 	if err := t.checkPending(tx); err != nil {
-		return Answered{}, err
+		return t.answerNotPending(tx, responseJWE, err)
 	}
 	result, err := t.verify(ctx, tx, responseJWE)
 	if err != nil {
@@ -471,6 +503,27 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 	return answered, nil
 }
 
+// answerNotPending answers responseJWE, sent to tx when it's no longer
+// pending (notPending says why), as it would have been answered while
+// pending, so the reply doesn't tell whoever holds the request's public
+// key whether the holder has presented: an error response carrying the
+// request's state is acknowledged — returned as a *ResponseError, with
+// a same-device request's redirect_uri — though not recorded, and
+// anything else is refused with notPending. It's decrypted either way,
+// as a pending request's answer is.
+func (t *Transactions) answerNotPending(tx Transaction, responseJWE string, notPending error) (Answered, error) {
+	_, err := t.v.ParseDirectPostJWTResponse(responseJWE, tx.ResponseDecryptionKey)
+	var walletErr *ResponseError
+	if !errors.As(err, &walletErr) || subtle.ConstantTimeCompare([]byte(walletErr.State), []byte(tx.State)) != 1 {
+		return Answered{}, notPending
+	}
+	var answered Answered
+	if tx.SameDevice {
+		answered = Answered{ID: tx.ID, RedirectURI: withQuery(t.cfg.RedirectURI, "error", errorCodeOf(walletErr.Code))}
+	}
+	return answered, fmt.Errorf("%w: %w", notPending, walletErr)
+}
+
 // verify decrypts, checks state, verifies and accepts one answer.
 func (t *Transactions) verify(ctx context.Context, tx Transaction, responseJWE string) (VerifyResponseResult, error) {
 	parsed, err := t.v.ParseDirectPostJWTResponse(responseJWE, tx.ResponseDecryptionKey)
@@ -506,11 +559,18 @@ func (t *Transactions) verifyParsed(ctx context.Context, tx Transaction, parsed 
 	}
 	if t.cfg.Accept != nil {
 		if err := t.cfg.Accept(ctx, tx.ID, result); err != nil {
-			return VerifyResponseResult{}, err
+			return VerifyResponseResult{}, &acceptError{err}
 		}
 	}
 	return result, nil
 }
+
+// acceptError is TransactionsConfig.Accept's refusal of an answer that
+// verified: its text is the Verifier's own, so LastError keeps it.
+type acceptError struct{ err error }
+
+func (e *acceptError) Error() string { return e.err.Error() }
+func (e *acceptError) Unwrap() error { return e.err }
 
 // recordFailure notes why an answer was refused, if the request is
 // still pending. Best effort: a store error here doesn't change the
@@ -525,18 +585,23 @@ const stateSeparator = "."
 // pending, and a same-device request is answered with its redirect_uri
 // (HAIP 1.0 §5.1). It's unauthenticated, so it never closes the
 // request: anyone who saw the Request Object could send one. A state
-// that names no pending request is acknowledged with nothing.
+// that names no request is acknowledged with nothing. One naming a
+// request that's no longer pending is answered as if it were, though
+// not recorded, so the reply doesn't tell whoever sent it whether the
+// holder has presented.
 func (t *Transactions) HandleUnencryptedError(ctx context.Context, code, state string) Answered {
 	id, _, ok := strings.Cut(state, stateSeparator)
 	if !ok || id == "" {
 		return Answered{}
 	}
 	tx, err := t.store.Get(ctx, id)
-	if err != nil || tx.Origin != "" || subtle.ConstantTimeCompare([]byte(state), []byte(tx.State)) != 1 || t.checkPending(tx) != nil {
+	if err != nil || tx.Origin != "" || subtle.ConstantTimeCompare([]byte(state), []byte(tx.State)) != 1 {
 		return Answered{}
 	}
 	walletErr := &ResponseError{Code: errorCodeOf(code)}
-	t.recordFailure(ctx, id, walletErr)
+	if t.checkPending(tx) == nil {
+		t.recordFailure(ctx, id, walletErr)
+	}
 	if !tx.SameDevice {
 		return Answered{ID: id}
 	}
@@ -544,6 +609,9 @@ func (t *Transactions) HandleUnencryptedError(ctx context.Context, code, state s
 }
 
 func (t *Transactions) recordFailure(ctx context.Context, id string, cause error) {
+	if t.cfg.OnRefused != nil {
+		t.cfg.OnRefused(ctx, id, cause)
+	}
 	_ = t.store.Update(ctx, id, func(cur *Transaction) error {
 		if cur.Status != TransactionPending {
 			return ErrTransactionAnswered
@@ -556,20 +624,43 @@ func (t *Transactions) recordFailure(ctx context.Context, id string, cause error
 // maxFailureText bounds LastError.
 const maxFailureText = 256
 
-// failureText is what LastError records for cause. A Wallet's error
-// response — which anyone holding the request's public key can send —
-// is reduced to its error code when that's a plain token; otherwise
-// the text is cut to maxFailureText and anything unprintable replaced.
+// failureText is what LastError records for cause. Anyone holding the
+// request's public key can send an answer, and an error's text can
+// carry values from it — a JWE header, a claim, an error description
+// — so only fixed text is recorded for one: a Wallet's error response
+// is reduced to its error code when that's a plain token, and a failed
+// verification to a description of its Reason. An Accept refusal,
+// which only an answer that verified can reach, keeps its own text,
+// cut to maxFailureText with anything unprintable replaced.
+//
+// Every refusal is recorded, whether or not the answer decrypted:
+// decrypting proves nothing about its sender, since anyone can encrypt
+// to the request's public key, and a genuine Wallet's answer can fail
+// before it decrypts too.
 func failureText(cause error) string {
 	var walletErr *ResponseError
-	if errors.As(cause, &walletErr) {
+	var accepted *acceptError
+	var verr *Error
+	switch {
+	case errors.As(cause, &walletErr):
 		if isErrorCode(walletErr.Code) {
 			return "an error response arrived: " + walletErr.Code
 		}
 		return "an error response arrived"
+	case errors.As(cause, &accepted):
+		return printableText(accepted.err.Error())
+	case errors.As(cause, &verr):
+		return "the answer was refused: " + verr.Reason().description()
 	}
+	// A plain error: a mistake in the Verifier's own configuration.
+	return "the answer couldn't be verified: the Verifier's configuration is incomplete (see the returned error)"
+}
+
+// printableText is text cut to maxFailureText, with anything
+// unprintable replaced.
+func printableText(text string) string {
 	var b strings.Builder
-	for _, r := range cause.Error() {
+	for _, r := range text {
 		if b.Len() >= maxFailureText {
 			b.WriteString("…")
 			break

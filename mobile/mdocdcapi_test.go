@@ -173,6 +173,7 @@ func TestSessions_MdocPresentation(t *testing.T) {
 	got, err := mdocdcapi.VerifyResponse(t.Context(), mdocdcapi.VerifyParams{
 		Pending: pending, Response: base64.RawURLEncoding.EncodeToString(encrypted),
 		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: roots},
+		Assurance:  verifier.AssuranceDevelopment,
 	})
 	if err != nil {
 		t.Fatal(err)
