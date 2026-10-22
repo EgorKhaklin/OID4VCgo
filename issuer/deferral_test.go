@@ -377,3 +377,61 @@ func TestDeferral_ResolveAfterValidation(t *testing.T) {
 		t.Errorf("malformed poll = %d %s, Resolve called %d times; want 400 and no Resolve", w.Code, w.Body, resolved)
 	}
 }
+
+// TestDeferral_ResolveNeedsGrant: a poll from the transaction's own
+// client and subject, but with a token that doesn't grant its
+// credential configuration, is refused without reaching Resolve, so it
+// can't make the deployment issue for a delivery it then refuses (§9).
+func TestDeferral_ResolveNeedsGrant(t *testing.T) {
+	f := newDeferralFixture(t)
+	txID, _ := f.deferOne(t)
+	resolved := 0
+	narrower := deferralAuth
+	narrower.Scopes = []string{"another_scope"}
+	dh, err := f.iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
+		ProtectedEndpointConfig: protectedEndpoint(t, &fakeTokens{grant: issuer.Grant{Subject: narrower.Subject, Authorized: narrower}}),
+		Resolve: func(ctx context.Context, _ issuer.Grant, txID string, _ issuer.DeferredTransactionRecord) error {
+			resolved++
+			return f.iss.IssueDeferredCredential(ctx, txID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()})
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := postCredentialRequest(t, dh, `{"transaction_id":"`+txID+`"}`)
+	if w.Code != http.StatusBadRequest || resolved != 0 {
+		t.Fatalf("poll without the grant = %d %s, Resolve called %d times; want 400 and no Resolve", w.Code, w.Body, resolved)
+	}
+	if res, err := f.iss.RequestDeferredCredential(context.Background(), deferralAuth, issuer.DeferredCredentialRequest{TransactionID: txID}); err != nil || res.TransactionID != txID {
+		t.Errorf("the granted poll afterwards = %+v, %v; want still pending", res, err)
+	}
+}
+
+// TestDeferral_ResolveOnceAtATime: a poll arriving while another's
+// Resolve for the same transaction runs skips Resolve and is answered
+// from the store.
+func TestDeferral_ResolveOnceAtATime(t *testing.T) {
+	f := newDeferralFixture(t)
+	txID, _ := f.deferOne(t)
+	body := `{"transaction_id":"` + txID + `"}`
+	resolved, inner := 0, 0
+	var dh http.Handler
+	dh, err := f.iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
+		ProtectedEndpointConfig: protectedEndpoint(t, &fakeTokens{grant: issuer.Grant{Subject: deferralAuth.Subject, Authorized: deferralAuth}}),
+		Resolve: func(ctx context.Context, _ issuer.Grant, txID string, _ issuer.DeferredTransactionRecord) error {
+			resolved++
+			if resolved == 1 {
+				// The poll that arrives meanwhile.
+				inner = postCredentialRequest(t, dh, body).Code
+			}
+			return f.iss.IssueDeferredCredential(ctx, txID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()})
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := postCredentialRequest(t, dh, body)
+	if w.Code != http.StatusOK || inner != http.StatusAccepted || resolved != 1 {
+		t.Errorf("outer poll = %d, inner poll = %d, Resolve called %d times; want 200, 202 and once", w.Code, inner, resolved)
+	}
+}

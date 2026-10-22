@@ -223,6 +223,18 @@ func deferredOwner(record DeferredTransactionRecord, auth AuthorizedRequest) boo
 	return record.Subject == "" || auth.Subject == record.Subject
 }
 
+// deferredAuthorized reports whether auth may poll record: it's
+// record's owner (deferredOwner), and, §9, the access token is still
+// "valid for the issuance of the Credential(s) previously requested":
+// it grants the transaction's credential configuration.
+func (iss *Issuer) deferredAuthorized(record DeferredTransactionRecord, auth AuthorizedRequest) bool {
+	if !deferredOwner(record, auth) {
+		return false
+	}
+	return record.CredentialConfigurationID == "" ||
+		iss.grantsConfiguration(auth, record.CredentialConfigurationID, iss.cfg.CredentialConfigurationsSupported[record.CredentialConfigurationID])
+}
+
 // pollIntervalSeconds is d as §9.2's "interval": whole seconds, rounded
 // up.
 func pollIntervalSeconds(d time.Duration) int64 {

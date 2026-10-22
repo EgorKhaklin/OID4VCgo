@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
 
 	"github.com/idfoundry/oid4vcgo"
 )
@@ -221,10 +222,22 @@ type DeferredCredentialHandlerConfig struct {
 	// It may call IssueDeferredCredential or DenyDeferredCredential for
 	// tx, or do nothing to leave it pending. It's called only when the
 	// polling grant's client and Subject are the ones the transaction
-	// was created for, so grant.Subject is the transaction's own. Its
-	// error is a 500 whose detail the Wallet never sees, except
-	// ErrDeferredTransactionResolved: a concurrent poll resolved tx
-	// first, and this poll is answered from the store.
+	// was created for, so grant.Subject is the transaction's own, and
+	// the grant still covers the transaction's credential configuration
+	// (§9), so a poll the endpoint will refuse never makes the
+	// deployment issue. Its error is a 500 whose detail the Wallet
+	// never sees, except ErrDeferredTransactionResolved: a concurrent
+	// poll resolved tx first, and this poll is answered from the store.
+	//
+	// The handler runs Resolve once at a time per transaction: a poll
+	// arriving while another's Resolve for the same transaction is
+	// running skips it and is answered from the store (still pending,
+	// usually). That holds within one handler only: behind several
+	// handlers or instances, polls can still run Resolve concurrently,
+	// and only the first IssueDeferredCredential or
+	// DenyDeferredCredential to finish takes effect (see
+	// IssueDeferredCredential), so Resolve must release whatever a
+	// losing call reserved.
 	Resolve func(ctx context.Context, grant Grant, transactionID string, tx DeferredTransactionRecord) error
 }
 
@@ -241,6 +254,7 @@ func (iss *Issuer) DeferredCredentialHandler(cfg DeferredCredentialHandlerConfig
 	if err := cfg.validate("deferred credential handler", iss.cfg.Endpoints.DeferredCredential); err != nil {
 		return nil, err
 	}
+	var resolving sync.Map // transaction_ids whose Resolve is running
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		grant, body, ok := authorizePost(w, r, cfg.URL, cfg.Tokens, MaxCredentialRequestBytes, ErrorInvalidCredentialRequest)
 		if !ok {
@@ -257,7 +271,7 @@ func (iss *Issuer) DeferredCredentialHandler(cfg DeferredCredentialHandlerConfig
 			return
 		}
 		if cfg.Resolve != nil {
-			if err := iss.resolvePending(r.Context(), grant, req.TransactionID, cfg.Resolve); err != nil {
+			if err := iss.resolvePending(r.Context(), &resolving, grant, req.TransactionID, cfg.Resolve); err != nil {
 				writePrepareError(w, err)
 				return
 			}
@@ -352,20 +366,26 @@ func writePrepareError(w http.ResponseWriter, err error) {
 	http.Error(w, "server_error", http.StatusInternalServerError)
 }
 
-// resolvePending calls resolve for transactionID when it's pending and
-// belongs to grant's client and subject. Anything else — unknown,
-// resolved, expired, someone else's — is left for
+// resolvePending calls resolve for transactionID when it's pending,
+// belongs to grant's client and subject, and grant covers its
+// credential configuration. Anything else — unknown, resolved,
+// expired, someone else's, not granted — is left for
 // RequestDeferredCredential to answer, as is a transaction a concurrent
-// poll resolved first.
-func (iss *Issuer) resolvePending(ctx context.Context, grant Grant, transactionID string,
+// poll resolved first, or is resolving: resolving holds the
+// transaction_ids whose resolve is running.
+func (iss *Issuer) resolvePending(ctx context.Context, resolving *sync.Map, grant Grant, transactionID string,
 	resolve func(context.Context, Grant, string, DeferredTransactionRecord) error) error {
 	if transactionID == "" || iss.deps.DeferredTransactions == nil {
 		return nil
 	}
 	record, err := iss.pendingDeferredTransaction(ctx, transactionID)
-	if err != nil || !deferredOwner(record, grant.Authorized) {
+	if err != nil || !iss.deferredAuthorized(record, grant.Authorized) {
 		return nil
 	}
+	if _, running := resolving.LoadOrStore(transactionID, struct{}{}); running {
+		return nil
+	}
+	defer resolving.Delete(transactionID)
 	if err := resolve(ctx, grant, transactionID, record); err != nil && !errors.Is(err, ErrDeferredTransactionResolved) {
 		return err
 	}

@@ -77,7 +77,9 @@ type AuthorizedRequest struct {
 	// CredentialConfigurationID request, an entry naming that
 	// configuration grants it — unless the entry carries
 	// CredentialIdentifiers, in which case the Wallet MUST use one of
-	// those instead (§8.2) and the request is refused.
+	// those instead (§8.2) and the request is refused. An entry whose
+	// Locations is present and doesn't include Config.Issuer is for
+	// another resource server and grants nothing here (§5.1.1).
 	// RequestCredential resolves CredentialRequest.CredentialIdentifier
 	// against this to find which CredentialConfiguration applies,
 	// entirely bypassing the CredentialConfigurationID/Scopes check —
@@ -424,7 +426,7 @@ func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 			"credential_identifier and credential_configuration_id must not both be present", nil)
 
 	case req.CredentialIdentifier != "":
-		configID, err := resolveCredentialIdentifier(auth.AuthorizationDetails, req.CredentialIdentifier)
+		configID, err := iss.resolveCredentialIdentifier(auth.AuthorizationDetails, req.CredentialIdentifier)
 		if err != nil {
 			return "", CredentialConfiguration{}, err
 		}
@@ -440,7 +442,7 @@ func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 		if !ok {
 			return "", CredentialConfiguration{}, newError(ErrorUnknownCredentialConfig, 400, "unknown credential_configuration_id", nil)
 		}
-		if err := authorizeCredentialConfigurationID(auth, req.CredentialConfigurationID, cc); err != nil {
+		if err := iss.authorizeCredentialConfigurationID(auth, req.CredentialConfigurationID, cc); err != nil {
 			return "", CredentialConfiguration{}, err
 		}
 		return req.CredentialConfigurationID, cc, nil
@@ -451,29 +453,38 @@ func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 	}
 }
 
-// authorizeCredentialConfigurationID checks the access token grants
-// credential_configuration_id id: either an "openid_credential"
-// authorization detail names it, or the token carries cc's scope. A
-// configuration without a scope is therefore only ever granted through
-// authorization_details — never by default. When the token's
-// authorization detail for id carries credential_identifiers, the
-// Wallet MUST use one of those instead (§8.2: credential_configuration_id
-// "MUST NOT be used otherwise").
+// credentialDetail reports whether d is an "openid_credential"
+// authorization detail for this Credential Issuer: one whose locations,
+// when present, include its identifier (§5.1.1, RFC 9396 §2.2). A
+// detail meant for another location grants nothing here.
+func (iss *Issuer) credentialDetail(d oid4vci.AuthorizationDetail) bool {
+	return d.Type == oid4vci.AuthorizationDetailsTypeOpenIDCredential &&
+		(len(d.Locations) == 0 || slices.Contains(d.Locations, iss.cfg.Issuer.String()))
+}
+
 // grantsConfiguration reports whether auth grants configuration id at
-// all: through an authorization detail naming it, with or without
-// credential_identifiers, or cc's scope.
-func grantsConfiguration(auth AuthorizedRequest, id string, cc CredentialConfiguration) bool {
+// all: through an authorization detail for this issuer naming it, with
+// or without credential_identifiers, or cc's scope.
+func (iss *Issuer) grantsConfiguration(auth AuthorizedRequest, id string, cc CredentialConfiguration) bool {
 	for _, d := range auth.AuthorizationDetails {
-		if d.Type == oid4vci.AuthorizationDetailsTypeOpenIDCredential && d.CredentialConfigurationID == id {
+		if iss.credentialDetail(d) && d.CredentialConfigurationID == id {
 			return true
 		}
 	}
 	return cc.Scope != "" && slices.Contains(auth.Scopes, cc.Scope)
 }
 
-func authorizeCredentialConfigurationID(auth AuthorizedRequest, id string, cc CredentialConfiguration) error {
+// authorizeCredentialConfigurationID checks the access token grants
+// credential_configuration_id id: either an "openid_credential"
+// authorization detail for this issuer names it, or the token carries
+// cc's scope. A configuration without a scope is therefore only ever
+// granted through authorization_details — never by default. When the
+// token's authorization detail for id carries credential_identifiers,
+// the Wallet MUST use one of those instead (§8.2:
+// credential_configuration_id "MUST NOT be used otherwise").
+func (iss *Issuer) authorizeCredentialConfigurationID(auth AuthorizedRequest, id string, cc CredentialConfiguration) error {
 	for _, d := range auth.AuthorizationDetails {
-		if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential || d.CredentialConfigurationID != id {
+		if !iss.credentialDetail(d) || d.CredentialConfigurationID != id {
 			continue
 		}
 		if len(d.CredentialIdentifiers) > 0 {
@@ -489,18 +500,18 @@ func authorizeCredentialConfigurationID(auth AuthorizedRequest, id string, cc Cr
 		"access token does not authorize this credential_configuration_id (by its scope or an authorization_details entry)", nil)
 }
 
-// resolveCredentialIdentifier finds identifier among every
-// "openid_credential"-typed entry's own CredentialIdentifiers in
-// details (RFC 9396 §5.1.1/§6.2), returning that entry's own
-// CredentialConfigurationID — entries of any other Type are ignored,
-// matching §5.1.1's own tolerance for coexisting authorization details
-// types. No match (including details being empty — a
-// credential_identifier presented against an access token that never
-// carried one) fails with ErrorUnknownCredentialIdentifier (§8.3.1.2's
-// own "Requested Credential identifier is unknown").
-func resolveCredentialIdentifier(details []oid4vci.AuthorizationDetail, identifier string) (string, error) {
+// resolveCredentialIdentifier finds identifier among the
+// CredentialIdentifiers of every "openid_credential" entry for this
+// issuer in details (RFC 9396 §5.1.1/§6.2; credentialDetail), returning
+// that entry's own CredentialConfigurationID — entries of any other
+// Type are ignored, matching §5.1.1's own tolerance for coexisting
+// authorization details types. No match (including details being
+// empty — a credential_identifier presented against an access token
+// that never carried one) fails with ErrorUnknownCredentialIdentifier
+// (§8.3.1.2's own "Requested Credential identifier is unknown").
+func (iss *Issuer) resolveCredentialIdentifier(details []oid4vci.AuthorizationDetail, identifier string) (string, error) {
 	for _, d := range details {
-		if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential {
+		if !iss.credentialDetail(d) {
 			continue
 		}
 		if slices.Contains(d.CredentialIdentifiers, identifier) {
