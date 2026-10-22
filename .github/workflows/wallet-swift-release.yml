@@ -91,7 +91,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prev=$(gh release view --repo "$REPO" --json body --jq .body | sed -n 's|.*IDFoundry/OID4VCgo/commit/\([0-9a-f]\{40\}\)).*|\1|p' | head -1)
+          # With no release yet there are no notes to read: no previous commit.
+          notes=$(gh release view --repo "$REPO" --json body --jq .body) || notes=""
+          prev=$(printf '%s\n' "$notes" | sed -n 's|.*IDFoundry/OID4VCgo/commit/\([0-9a-f]\{40\}\)).*|\1|p' | head -1)
           {
             echo "## What's new"
             echo
