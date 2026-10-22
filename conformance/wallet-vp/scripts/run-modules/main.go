@@ -250,7 +250,15 @@ type generatedConfig struct {
 	MdocDocType              string         `json:"mdoc_doc_type,omitempty"`
 	MdocNamespace            string         `json:"mdoc_namespace,omitempty"`
 	MdocClaims               map[string]any `json:"mdoc_claims,omitempty"`
+	MdocCRLPEM               string         `json:"mdoc_crl_pem,omitempty"`
+	MdocCRLListenAddr        string         `json:"mdoc_crl_listen_addr,omitempty"`
 }
+
+// mdocCRLListenAddr is cmd/conformance-wallet-vp's plain-HTTP listener
+// for its IACA's CRL, inside its container: the suite reaches it over
+// the suite network at -mdoc-crl-base, so nothing publishes it to the
+// host.
+const mdocCRLListenAddr = ":8080"
 
 // planConfig is the suite's own oid4vp-1final-wallet-haip-test-plan
 // test-configuration body — confirmed live against the real suite API
@@ -412,7 +420,7 @@ var mdocFixtureClaims = map[string]any{
 // AbstractVP1FinalWalletTest.java doc comment, see credential.go's own
 // issueFixtureMdocCredential) — split out of main purely to keep it
 // under the linter's own cognitive complexity ceiling.
-func generateWalletVPFixtures(credentialFormat string) (cfg generatedConfig, trustAnchorCertPEM string, err error) {
+func generateWalletVPFixtures(credentialFormat, mdocCRLBase string) (cfg generatedConfig, trustAnchorCertPEM string, err error) {
 	tlsCertPEM, tlsKeyPEM, err := conformancecert.SelfSignedPEM("conformance-wallet-vp", []string{"conformance-wallet-vp", "localhost"})
 	if err != nil {
 		return generatedConfig{}, "", fmt.Errorf("generate tls cert: %w", err)
@@ -434,15 +442,26 @@ func generateWalletVPFixtures(credentialFormat string) (cfg generatedConfig, tru
 		if iacaErr != nil {
 			return generatedConfig{}, "", fmt.Errorf("generate mdoc iaca: %w", iacaErr)
 		}
+		// The suite fetches the CRL the Document Signer certificate's
+		// distribution point names and checks it (ISO/IEC 18013-5
+		// 12.8.3, B.2, Table B.10) for every mdoc presented to it; under
+		// HAIP a CRL it can't fetch fails the module. So the IACA issues
+		// one and cmd/conformance-wallet-vp serves it at that URI.
 		_, dsKeyPEM, dsCertPEM, dsErr := conformancecert.GenerateMdocDocumentSigner(
 			"conformance-wallet-vp-mdoc-ds", "FR", "https://example.com/conformance-wallet-vp-mdoc-contact",
-			"https://example.com/conformance-wallet-vp-mdoc.crl", iacaCert, iacaKey)
+			mdocCRLBase+conformancecert.MdocCRLPath, iacaCert, iacaKey)
 		if dsErr != nil {
 			return generatedConfig{}, "", fmt.Errorf("generate mdoc document signer: %w", dsErr)
+		}
+		crlPEM, crlErr := conformancecert.MdocCRLPEM(iacaCert, iacaKey)
+		if crlErr != nil {
+			return generatedConfig{}, "", fmt.Errorf("generate mdoc iaca crl: %w", crlErr)
 		}
 		cfg.CredentialFormat = "mso_mdoc"
 		cfg.MdocIssuerPrivateKeyPEM = dsKeyPEM
 		cfg.MdocIssuerCertificatePEM = dsCertPEM
+		cfg.MdocCRLPEM = crlPEM
+		cfg.MdocCRLListenAddr = mdocCRLListenAddr
 		cfg.MdocDocType = mdlDocType
 		cfg.MdocNamespace = mdlNamespace
 		cfg.MdocClaims = mdocFixtureClaims
@@ -543,6 +562,7 @@ func main() {
 	apiBase := flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL")
 	walletVPBase := flag.String("walletvp-base", "https://localhost:19447", "cmd/conformance-wallet-vp's own host-published base URL")
 	walletVPInternalBase := flag.String("walletvp-internal-base", "https://conformance-wallet-vp:8443", "cmd/conformance-wallet-vp's own suite-network-internal base URL")
+	mdocCRLBase := flag.String("mdoc-crl-base", "http://conformance-wallet-vp:8080", "where the suite reaches cmd/conformance-wallet-vp's plain-HTTP IACA CRL listener (suite-network-internal), for the -credential-format iso_mdl Document Signer certificate's CRL distribution point")
 	alias := flag.String("alias", "oid4vcgo-wallet-vp", "suite plan alias")
 	skipDockerRestart := flag.Bool("skip-docker-restart", false, "skip restarting the conformance-wallet-vp container after writing the new config (only safe when the container is already running with matching key material from a prior run of this exact binary)")
 	responseMode := flag.String("response-mode", directPostJWT, "response_mode variant to drive: \"direct_post.jwt\" (default) or \"dc_api.jwt\", whose three module lists — unsigned, signed and multi-signed requests over the Digital Credentials API — this script drives standing in for the browser (see dcapi.go)")
@@ -568,7 +588,7 @@ func main() {
 		return
 	}
 
-	cfg, trustAnchorCertPEM, err := generateWalletVPFixtures(*credentialFormat)
+	cfg, trustAnchorCertPEM, err := generateWalletVPFixtures(*credentialFormat, *mdocCRLBase)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
