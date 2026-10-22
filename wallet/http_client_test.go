@@ -81,11 +81,11 @@ func TestWalletHTTPClient_FollowsNoRedirect(t *testing.T) {
 // §8.3.1): "application/jwt; charset=utf-8" is an encrypted response.
 func TestDecryptResponseBody_MediaTypeParameters(t *testing.T) {
 	for _, contentType := range []string{"application/jwt", "application/jwt; charset=utf-8", "Application/JWT"} {
-		if _, err := decryptResponseBody([]byte("x"), contentType, nil, ""); err == nil || !strings.Contains(err.Error(), "no response_encryption was requested") {
+		if _, err := decryptResponseBody([]byte("x"), contentType, nil, nil); err == nil || !strings.Contains(err.Error(), "no response_encryption was requested") {
 			t.Errorf("%q: %v; want it read as an encrypted response", contentType, err)
 		}
 	}
-	if body, err := decryptResponseBody([]byte(`{}`), "application/json; charset=utf-8", nil, ""); err != nil || string(body) != `{}` {
+	if body, err := decryptResponseBody([]byte(`{}`), "application/json; charset=utf-8", nil, nil); err != nil || string(body) != `{}` {
 		t.Errorf("plaintext JSON: %s, %v", body, err)
 	}
 }
@@ -104,10 +104,10 @@ func TestDecryptResponseBody_InflateBound(t *testing.T) {
 		}
 		return []byte(compact)
 	}
-	if _, err := decryptResponseBody(encrypt(1<<20), "application/jwt", key, jwe.DEF); err != nil {
+	if _, err := decryptResponseBody(encrypt(1<<20), "application/jwt", key, &ResponseEncryption{Enc: jwe.A128GCM, Zip: jwe.DEF}); err != nil {
 		t.Errorf("a 1 MiB response: %v", err)
 	}
-	if _, err := decryptResponseBody(encrypt(maxInflatedCredentialResponse+1), "application/jwt", key, jwe.DEF); err == nil {
+	if _, err := decryptResponseBody(encrypt(maxInflatedCredentialResponse+1), "application/jwt", key, &ResponseEncryption{Enc: jwe.A128GCM, Zip: jwe.DEF}); err == nil {
 		t.Error("inflated a response past the bound")
 	}
 }

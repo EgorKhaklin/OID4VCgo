@@ -59,6 +59,14 @@ func simulateIssuerEncryptedExchange(t *testing.T, resource *fakeProtectedResour
 // with the response compressed with zip, whatever the Wallet asked for.
 func simulateIssuerEncryptedExchangeZip(t *testing.T, resource *fakeProtectedResourceClient, reqPriv *ecdsa.PrivateKey, responseBody []byte, zip jwe.Zip) func(context.Context, *http.Request) (*http.Response, error) {
 	t.Helper()
+	return simulateIssuerEncryptedExchangeWith(t, resource, reqPriv, responseBody, zip, "")
+}
+
+// simulateIssuerEncryptedExchangeWith is simulateIssuerEncryptedExchangeZip
+// with the response encrypted with enc, whatever the Wallet asked for,
+// unless enc is empty.
+func simulateIssuerEncryptedExchangeWith(t *testing.T, resource *fakeProtectedResourceClient, reqPriv *ecdsa.PrivateKey, responseBody []byte, zip jwe.Zip, enc jwe.Enc) func(context.Context, *http.Request) (*http.Response, error) {
+	t.Helper()
 	return func(_ context.Context, req *http.Request) (*http.Response, error) {
 		if req.Header.Get("Content-Type") != "application/jwt" {
 			t.Fatalf("Content-Type = %q, want application/jwt", req.Header.Get("Content-Type"))
@@ -87,7 +95,10 @@ func simulateIssuerEncryptedExchangeZip(t *testing.T, resource *fakeProtectedRes
 		if !ok {
 			t.Fatalf("response encryption jwk is not EC")
 		}
-		compact, err := jwe.Encrypt(ecRespPub, jwe.Enc(parsed.ResponseEncryption.Enc), responseBody, jwe.EncryptOptions{Zip: zip})
+		if enc == "" {
+			enc = jwe.Enc(parsed.ResponseEncryption.Enc)
+		}
+		compact, err := jwe.Encrypt(ecRespPub, enc, responseBody, jwe.EncryptOptions{Zip: zip})
 		if err != nil {
 			t.Fatalf("jwe.Encrypt response: %v", err)
 		}
@@ -194,6 +205,31 @@ func TestResponseEncryption_RefusesUnrequestedZip(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestResponseEncryption_RefusesOtherEnc: a response encrypted with
+// another content encryption than the one requested is refused, even
+// one the Wallet could decrypt.
+func TestResponseEncryption_RefusesOtherEnc(t *testing.T) {
+	for name, call := range credentialCallers() {
+		t.Run(name, func(t *testing.T) {
+			w, err := wallet.New(validConfig(), validDependencies())
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			reqRecipientKey := testP256Key(t)
+			resource := &fakeProtectedResourceClient{}
+			resource.do = simulateIssuerEncryptedExchangeWith(t, resource, reqRecipientKey, []byte(`{"credentials":[{"credential":"c1"}]}`), "", jwe.A128GCM)
+
+			_, err = call(t, w, resource, &wallet.RequestEncryption{
+				RecipientJWK: testEncryptionRecipientJWK(t, "req-1", &reqRecipientKey.PublicKey),
+				Enc:          jwe.A128GCM,
+			}, &wallet.ResponseEncryption{Enc: jwe.A256GCM})
+			if err == nil || !strings.Contains(err.Error(), "enc") {
+				t.Errorf("a response encrypted with A128GCM when A256GCM was requested: %v, want refused", err)
+			}
+		})
 	}
 }
 

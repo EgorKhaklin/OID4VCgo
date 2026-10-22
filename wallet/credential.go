@@ -168,7 +168,7 @@ func (w *Wallet) RequestCredential(
 		return CredentialResult{}, fmt.Errorf("wallet: request credential: marshal request: %w", err)
 	}
 	return w.postCredentialResult(ctx, resource, endpoint, credentialPost{
-		body: body, reqEnc: req.RequestEncryption, respDecryptKey: respDecryptKey, respZip: responseZip(req.ResponseEncryption),
+		body: body, reqEnc: req.RequestEncryption, respDecryptKey: respDecryptKey, respEnc: req.ResponseEncryption,
 		errPrefix: "request credential",
 	})
 }

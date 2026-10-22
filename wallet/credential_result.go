@@ -112,7 +112,7 @@ type credentialPost struct {
 	body           []byte
 	reqEnc         *RequestEncryption
 	respDecryptKey *ecdsa.PrivateKey
-	respZip        jwe.Zip
+	respEnc        *ResponseEncryption
 	errPrefix      string
 }
 
@@ -160,7 +160,7 @@ func (w *Wallet) postCredentialResult(ctx context.Context, resource ProtectedRes
 	}
 
 	if res.StatusCode == http.StatusOK || res.StatusCode == http.StatusAccepted {
-		respBody, err = decryptResponseBody(respBody, res.Header.Get("Content-Type"), post.respDecryptKey, post.respZip)
+		respBody, err = decryptResponseBody(respBody, res.Header.Get("Content-Type"), post.respDecryptKey, post.respEnc)
 		if err != nil {
 			return CredentialResult{}, fmt.Errorf("wallet: %s: %w", errPrefix, err)
 		}
