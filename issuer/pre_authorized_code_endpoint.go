@@ -201,19 +201,39 @@ func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
 // itself. With fapigo/server, the Token Endpoint handler reads the
 // request once and does both checks first:
 //
-//	tr, _ := server.TokenEndpointRequestFromHTTP(r)
-//	params, _ := tr.Parameters()
+//	tr, err := server.TokenEndpointRequestFromHTTP(r)
+//	if err != nil {
+//		return err // answer with the token error
+//	}
+//	params, err := tr.Parameters()
+//	if err != nil {
+//		return err
+//	}
 //	// Also refuses a client_id parameter naming another client.
 //	c, err := srv.AuthenticateAttestedClient(ctx, tr.AttestedClientAuthentication())
+//	if err != nil {
+//		return err
+//	}
 //	b, err := srv.VerifyTokenRequestBinding(ctx, c.Client, tr)
-//	// require b.SenderConstrain to be storage.SenderConstrainDPoP
+//	if err != nil {
+//		return err
+//	}
+//	if b.SenderConstrain != storage.SenderConstrainDPoP {
+//		return errDPoPRequired // the token must be DPoP-bound
+//	}
 //	details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
+//	if err != nil {
+//		return err
+//	}
 //	res, err := iss.ExchangePreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
 //		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
 //		Verified: &issuer.VerifiedTokenRequest{
 //			ClientID: c.Client.ID().String(), DPoPThumbprint: b.Thumbprint, NextDPoPNonce: b.NextDPoPNonce,
 //		},
 //	})
+//	if err != nil {
+//		return err // an *issuer.Error writes itself (WriteJSON)
+//	}
 //
 // and lists the grant in fapigo/server's Config.AdditionalGrantTypes.
 type VerifiedPreAuthorizedCode struct{}
