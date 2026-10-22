@@ -301,14 +301,16 @@ func (d *Deferred) Abandon(ctx context.Context) error {
 // settle ends the Deferred: it leaves the DeferredStore, its holder key
 // goes unless the credential was stored, and its DPoP key goes once no
 // other pending one shares it. Unless the credential was stored, its
-// refresh grant goes too once nothing else uses it.
+// refresh grant goes too once nothing else uses it. A holder key or
+// grant a stored credential uses stays whatever deleteHolder says.
 func (d *Deferred) settle(ctx context.Context, deleteHolder bool) error {
 	d.done = true
+	// Settled before it leaves the store, so a Wallet.Deferred listing
+	// it meanwhile doesn't hand it out again.
+	d.w.markSettled(d.p.ID)
 	errs := []error{d.w.deps.Deferred.DeleteDeferred(ctx, d.p.ID)}
 	if deleteHolder {
-		for _, id := range d.p.HolderKeyIDs {
-			errs = append(errs, d.w.deps.Keys.DeleteKey(ctx, id))
-		}
+		errs = append(errs, d.w.deleteHolderKeys(ctx, d.p.HolderKeyIDs))
 	}
 	errs = append(errs, d.w.releaseDPoPKey(ctx, d.p.DPoPKeyID))
 	if deleteHolder {
@@ -362,6 +364,10 @@ func (w *Wallet) Deferred(ctx context.Context) ([]*Deferred, error) {
 	defer w.mu.Unlock()
 	out := make([]*Deferred, 0, len(pending))
 	for _, p := range pending {
+		if w.settled[p.ID] {
+			// Settled since it was listed.
+			continue
+		}
 		d, ok := w.deferred[p.ID]
 		if !ok {
 			d = &Deferred{w: w, p: p}
@@ -390,6 +396,40 @@ func (w *Wallet) forgetDeferred(id string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	delete(w.deferred, id)
+}
+
+// markSettled records that the deferred credential id names is
+// settled, for Wallet.Deferred.
+func (w *Wallet) markSettled(id string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.settled == nil {
+		w.settled = map[string]bool{}
+	}
+	w.settled[id] = true
+}
+
+// deleteHolderKeys deletes the holder keys ids names that no stored
+// credential's copy is bound to. When the credentials can't be listed
+// it deletes none: a key sweep (KeysInUse) removes them later.
+func (w *Wallet) deleteHolderKeys(ctx context.Context, ids []string) error {
+	creds, err := w.deps.Credentials.List(ctx)
+	if err != nil {
+		return err
+	}
+	used := keySet{}
+	for _, c := range creds {
+		for _, cp := range c.AllCopies() {
+			used.add(cp.HolderKeyID)
+		}
+	}
+	var errs []error
+	for _, id := range ids {
+		if !used[id] {
+			errs = append(errs, w.deps.Keys.DeleteKey(ctx, id))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // releaseDPoPKey deletes the DPoP key id names unless an open issuance

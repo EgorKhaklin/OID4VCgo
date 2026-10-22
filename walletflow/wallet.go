@@ -259,6 +259,10 @@ type Wallet struct {
 
 	mu       sync.Mutex
 	deferred map[string]*Deferred // the pending ones handed out, by ID
+	// settled are the IDs of the deferred credentials settled since the
+	// wallet was created: Wallet.Deferred skips one a listing that raced
+	// its settling still returned.
+	settled map[string]bool
 	// liveKeys are the instance and DPoP keys open issuances hold, by
 	// ID: how many hold each. Two issuances can hold one key (a resumed
 	// authorization and the issuance that began it, or two resumes of
@@ -358,7 +362,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		return nil, fmt.Errorf("walletflow: %w", err)
 	}
 	w := &Wallet{
-		cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, liveKeys: map[string]int{}, resuming: map[string]bool{},
+		cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, settled: map[string]bool{}, liveKeys: map[string]int{}, resuming: map[string]bool{},
 		openGrants: map[string]bool{}, grantLocks: map[string]*sync.Mutex{},
 	}
 	if err := w.checkReceivingAtNew(); err != nil {
