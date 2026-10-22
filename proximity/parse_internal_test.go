@@ -120,3 +120,25 @@ func TestModeUUIDs_RandomFails(t *testing.T) {
 		}
 	}
 }
+
+// A SessionData-shaped {"x": [[{} × inner] × outer]} under
+// MaxMessageBytes is refused before it's decoded: past the container
+// bound with 65 535 maps per array, past the message's item bound with
+// 4096.
+func TestDecodeSessionDataRefusesItemFlood(t *testing.T) {
+	for _, inner := range []int{65535, 4096} {
+		array := append([]byte{0x99, byte(inner >> 8), byte(inner)}, bytes.Repeat([]byte{0xa0}, inner)...)
+		outer := (MaxMessageBytes - 16) / len(array)
+		msg := []byte{0xa1, 0x61, 'x', 0x99, byte(outer >> 8), byte(outer)}
+		for range outer {
+			msg = append(msg, array...)
+		}
+		if _, err := decodeSessionData(msg); !errors.Is(err, ErrCBORDecoding) {
+			t.Fatalf("inner %d: decodeSessionData = %v, want ErrCBORDecoding", inner, err)
+		}
+		allocs := testing.AllocsPerRun(1, func() { _, _ = decodeSessionData(msg) })
+		if allocs > 100 {
+			t.Errorf("inner %d: decodeSessionData made %v allocations, want it refused before decoding", inner, allocs)
+		}
+	}
+}
