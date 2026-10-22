@@ -164,7 +164,10 @@ const (
 // an unauthenticated Nonce Endpoint: an issuer handed the attestation
 // proof type could fetch the c_nonce it signs from another issuer the
 // wallet trusts, and redeem the proof there for a credential bound to
-// the holder's keys.
+// the holder's keys. Receiving refuses an SD-JWT VC naming another
+// issuer (Config.AllowForeignIss), but an mdoc names none, so for an
+// mdoc from an issuer that takes only the attestation proof type
+// nothing stops that relay but the issuers the wallet trusts.
 func (w *Wallet) chooseProof(conf oid4vci.CredentialConfigurationMetadata) (proofPlan, error) {
 	if err := checkBindable(conf); err != nil {
 		return 0, err

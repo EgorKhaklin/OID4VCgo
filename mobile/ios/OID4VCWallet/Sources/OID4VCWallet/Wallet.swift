@@ -111,6 +111,12 @@ public struct WalletConfiguration: Codable, Sendable {
     /// Refuses signed metadata signed longer ago than this many seconds;
     /// 0 doesn't limit it.
     public var maxIssuerMetadataAgeSeconds: Int
+    /// Receives an SD-JWT VC whose `iss` isn't the `credential_issuer` it
+    /// was requested from, which is otherwise refused so an issuer can't
+    /// hand over another's credential as its own. Set it only for issuers
+    /// that name themselves differently, where `issuerRoots` certify them
+    /// alone.
+    public var allowForeignIss: Bool
     /// The profile issuance follows.
     public var issuanceProfile: IssuanceProfile
     /// How an in-person response authenticates the mdoc. `.macPreferred`
@@ -168,7 +174,7 @@ public struct WalletConfiguration: Codable, Sendable {
                 issuerRequireEKU: String = "", issuerMetadataRequireEKU: String = "",
                 statusIssuers: [String: [String]] = [:], requireIssuerName: Bool = false,
                 issuerMetadataRoots: String = "", requireSignedIssuerMetadata: Bool = false,
-                requireIssuerMetadataName: Bool = false, maxIssuerMetadataAgeSeconds: Int = 0) {
+                requireIssuerMetadataName: Bool = false, maxIssuerMetadataAgeSeconds: Int = 0, allowForeignIss: Bool = false) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -195,6 +201,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.requireSignedIssuerMetadata = requireSignedIssuerMetadata
         self.requireIssuerMetadataName = requireIssuerMetadataName
         self.maxIssuerMetadataAgeSeconds = maxIssuerMetadataAgeSeconds
+        self.allowForeignIss = allowForeignIss
     }
 
     enum CodingKeys: String, CodingKey {
@@ -209,6 +216,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case statusIssuers = "status_issuers", requireIssuerName = "require_issuer_name"
         case issuerMetadataRoots = "issuer_metadata_roots", requireSignedIssuerMetadata = "require_signed_issuer_metadata"
         case requireIssuerMetadataName = "require_issuer_metadata_name", maxIssuerMetadataAgeSeconds = "max_issuer_metadata_age_seconds"
+        case allowForeignIss = "allow_foreign_iss"
     }
 
     /// Decodes a configuration, refusing a key it doesn't know: a
@@ -245,7 +253,8 @@ public struct WalletConfiguration: Codable, Sendable {
                   issuerMetadataRoots: try c.decodeIfPresent(String.self, forKey: .issuerMetadataRoots) ?? "",
                   requireSignedIssuerMetadata: try c.decodeIfPresent(Bool.self, forKey: .requireSignedIssuerMetadata) ?? false,
                   requireIssuerMetadataName: try c.decodeIfPresent(Bool.self, forKey: .requireIssuerMetadataName) ?? false,
-                  maxIssuerMetadataAgeSeconds: try c.decodeIfPresent(Int.self, forKey: .maxIssuerMetadataAgeSeconds) ?? 0)
+                  maxIssuerMetadataAgeSeconds: try c.decodeIfPresent(Int.self, forKey: .maxIssuerMetadataAgeSeconds) ?? 0,
+                  allowForeignIss: try c.decodeIfPresent(Bool.self, forKey: .allowForeignIss) ?? false)
     }
 
     /// The scheme of `redirectURI`: the callback scheme an

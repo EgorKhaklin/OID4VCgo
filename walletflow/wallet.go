@@ -64,6 +64,18 @@ type Config struct {
 	// another's name.
 	RequireIssuerName bool
 
+	// AllowForeignIss receives an SD-JWT VC whose iss isn't the
+	// Credential Issuer Identifier it was requested from (the offer's
+	// credential_issuer). By default one is refused, received, deferred
+	// or refreshed (wallet.VerifyIssuedCredentialParams.CredentialIssuer):
+	// IssuerRoots may certify several issuers, and an issuer the holder
+	// was sent to could otherwise hand over another's credential, issued
+	// for the holder's keys, as its own. A credential with no iss names
+	// none to check. OpenID4VCI 1.0 §14.4 lets an issued credential name
+	// its issuer differently from the Credential Issuer Identifier: set
+	// it only for issuers that do, where IssuerRoots certify them alone.
+	AllowForeignIss bool
+
 	// IssuerMetadataRoots, IssuerMetadataLeafPolicy,
 	// RequireSignedIssuerMetadata, RequireIssuerMetadataName and
 	// MaxIssuerMetadataAge are the

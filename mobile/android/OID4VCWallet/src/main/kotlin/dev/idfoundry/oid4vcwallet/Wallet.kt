@@ -195,6 +195,14 @@ public data class WalletConfiguration(
      * may share a trust anchor with another role's roots.
      */
     @SerialName("issuer_metadata_require_eku") val issuerMetadataRequireEKU: String = "",
+    /**
+     * Receives an SD-JWT VC whose `iss` isn't the `credential_issuer` it
+     * was requested from, which is otherwise refused so an issuer can't
+     * hand over another's credential as its own. Set it only for issuers
+     * that name themselves differently, where [issuerRoots] certify them
+     * alone.
+     */
+    @SerialName("allow_foreign_iss") val allowForeignIss: Boolean = false,
 ) {
     /** How an in-person response authenticates the mdoc (ISO/IEC 18013-5 §9.1.3). */
     @Serializable

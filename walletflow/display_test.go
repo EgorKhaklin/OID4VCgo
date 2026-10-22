@@ -81,9 +81,11 @@ func TestCheckStatus(t *testing.T) {
 
 // A credential whose iss its certificate doesn't name, as the EU
 // reference PID's doesn't, is received, and its status list, signed
-// with the same key, is its issuer's: CheckStatus reads it.
+// with the same key, is its issuer's: CheckStatus reads it. Its iss
+// isn't the credential_issuer either, which the wallet allows.
 func TestCheckStatus_IssNotNamedByTheCertificate(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{SDJWTIss: "https://backend.issuer.example"})
+	f.w = foreignIssWallet(t, f)
 	held := receive(t, f, f.w, walletflowtest.SDJWTConfigurationID)
 	c := held[0]
 	if c.Claims["iss"] != "https://backend.issuer.example" {

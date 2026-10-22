@@ -203,7 +203,7 @@ library's an `IOException`.
  "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "proximity_device_auth": "signature",
  "status_issuers": {"https://issuer.example": ["https://status.example"]},
  "require_issuer_name": false, "issuer_metadata_roots": "<PEM>", "require_signed_issuer_metadata": false,
- "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0}
+ "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0, "allow_foreign_iss": false}
 ```
 
 `issuer_roots` is needed to receive credentials, and `verifier_roots` to
@@ -277,6 +277,13 @@ within ABI version 12.
 `require_issuer_name` refuses a received SD-JWT VC whose `iss` its
 signing certificate doesn't name; SD-JWT VC doesn't require them to
 correspond, so set it where `issuer_roots` certify several issuers.
+A received, deferred or refreshed SD-JWT VC whose `iss` isn't the
+`credential_issuer` it was requested from is refused, so an issuer
+can't hand over another's credential, issued for the holder's keys, as
+its own; one without `iss` names nothing to check. `allow_foreign_iss`
+receives it: OpenID4VCI §14.4 lets a credential name its issuer
+differently, so set it only for issuers that do, where `issuer_roots`
+certify them alone. Added within ABI version 12.
 `issuer_metadata_roots` are the trust anchors for signed Credential
 Issuer Metadata (OpenID4VCI §12.2.3, HAIP 1.0 §4.1): with them, signed
 metadata is asked for and verified. `require_signed_issuer_metadata`

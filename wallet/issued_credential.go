@@ -66,6 +66,18 @@ type VerifyIssuedCredentialParams struct {
 	// it where IssuerRoots certify several issuers.
 	RequireIssuerName bool
 
+	// CredentialIssuer, if set, is the Credential Issuer Identifier the
+	// Wallet requested the credential from: an SD-JWT VC that names an
+	// issuer (iss) must name exactly this one. IssuerRoots may certify
+	// several issuers, and the Credential Endpoint's issuer may have
+	// obtained another's credential for the Wallet's keys, so a
+	// credential trusted under them isn't the requested issuer's for
+	// that alone. OID4VCI 1.0 §14.4 leaves checking this binding to the
+	// Wallet, and lets a credential's issuer identifier take another
+	// form, so it's off by default. An mdoc names no issuer this could
+	// be checked against.
+	CredentialIssuer string
+
 	// Now is the time validity is checked at; zero means time.Now.
 	Now time.Time
 }
@@ -174,6 +186,11 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 		}
 		if err := certchain.CheckIssuerName(leaf, iss); err != nil {
 			return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
+		}
+	}
+	if iss, present := payload["iss"]; present && p.CredentialIssuer != "" {
+		if s, _ := iss.(string); s != p.CredentialIssuer {
+			return VerifiedIssuedCredential{}, fmt.Errorf("iss is %v, not the Credential Issuer %q", iss, p.CredentialIssuer)
 		}
 	}
 	if vct, _ := payload["vct"].(string); vct != p.Configuration.VCT {

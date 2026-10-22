@@ -1189,7 +1189,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 	copies := make([]CredentialCopy, 0, len(c.result.Credentials))
 	var first wallet.VerifiedIssuedCredential
 	for i, ic := range c.result.Credentials {
-		verified, key, err := w.verifyCopy(ctx, conf, ic.Credential, unbound, now)
+		verified, key, err := w.verifyCopy(ctx, c.issuer, conf, ic.Credential, unbound, now)
 		if err != nil {
 			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential failed the wallet's checks")
 			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: %w", c.configID, errInvalidCredential, err)
@@ -1250,13 +1250,18 @@ func (w *Wallet) store(ctx context.Context, stored StoredCredential, c issued) e
 	return w.replaceStored(ctx, stored, c.grantID)
 }
 
-// verifyCopy checks one copy, and finds which of keys it's bound to.
-func (w *Wallet) verifyCopy(ctx context.Context, conf oid4vci.CredentialConfigurationMetadata, credential string, keys []Key, now time.Time) (wallet.VerifiedIssuedCredential, Key, error) {
+// verifyCopy checks one copy, requested from issuer, and finds which of
+// keys it's bound to.
+func (w *Wallet) verifyCopy(ctx context.Context, issuer string, conf oid4vci.CredentialConfigurationMetadata, credential string, keys []Key, now time.Time) (wallet.VerifiedIssuedCredential, Key, error) {
+	if w.cfg.AllowForeignIss {
+		issuer = ""
+	}
 	var lastErr error
 	for _, k := range keys {
 		verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
 			Configuration: conf, Credential: credential, HolderKey: k.Public(),
 			IssuerRoots: w.cfg.IssuerRoots, IssuerLeafPolicy: w.cfg.IssuerLeafPolicy, Now: now, RequireIssuerName: w.cfg.RequireIssuerName,
+			CredentialIssuer: issuer,
 		})
 		if err == nil {
 			return verified, k, nil

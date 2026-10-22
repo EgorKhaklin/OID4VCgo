@@ -66,6 +66,10 @@ type config struct {
 	// RequireIssuerName refuses a received SD-JWT VC whose iss its
 	// signing certificate doesn't name (walletflow.Config.RequireIssuerName).
 	RequireIssuerName bool `json:"require_issuer_name,omitempty"`
+	// AllowForeignIss receives an SD-JWT VC whose iss isn't the
+	// credential_issuer it was requested from, which is refused by
+	// default (walletflow.Config.AllowForeignIss).
+	AllowForeignIss bool `json:"allow_foreign_iss,omitempty"`
 	// IssuerMetadataRoots are PEM certificates: the trust anchors for
 	// signed Credential Issuer Metadata. With them, signed metadata is
 	// asked for and verified; RequireSignedIssuerMetadata refuses an
@@ -252,7 +256,7 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 		return walletflow.Config{}, err
 	}
 	wcfg.StatusIssuers = cfg.StatusIssuers
-	wcfg.RequireIssuerName = cfg.RequireIssuerName
+	wcfg.RequireIssuerName, wcfg.AllowForeignIss = cfg.RequireIssuerName, cfg.AllowForeignIss
 	if wcfg.IssuerMetadataRoots, err = optionalCertPool("issuer_metadata_roots", cfg.IssuerMetadataRoots); err != nil {
 		return walletflow.Config{}, err
 	}
