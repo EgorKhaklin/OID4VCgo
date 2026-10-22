@@ -99,6 +99,9 @@ type DeferredTransactionStore interface {
 	// only if it succeeds — so it MUST be atomic and MUST fail if
 	// transactionID is unknown or already invalidated: of concurrent
 	// requests for one transaction_id, exactly one gets the Credentials.
+	// RequestDeferredCredential already holds them from Get by then, so
+	// Invalidate MUST drop the stored Credentials: the Wallet has them,
+	// and nothing reads them from the store again.
 	Invalidate(ctx context.Context, transactionID string) error
 
 	// Create saves a new transaction; transactionID must be unused.

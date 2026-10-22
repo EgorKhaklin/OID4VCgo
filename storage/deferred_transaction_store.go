@@ -100,13 +100,18 @@ func cloneDeferredRecord(r issuer.DeferredTransactionRecord) issuer.DeferredTran
 	return r
 }
 
-// Invalidate implements issuer.DeferredTransactionStore.
+// Invalidate implements issuer.DeferredTransactionStore. It drops the
+// record's Credentials, which the Wallet now holds; the rest is kept
+// so the transaction_id stays used.
 func (s *DeferredTransactionStore) Invalidate(_ context.Context, transactionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.records[transactionID]; !ok || s.invalidated[transactionID] {
+	record, ok := s.records[transactionID]
+	if !ok || s.invalidated[transactionID] {
 		return fmt.Errorf("storage: unknown or already-invalidated transaction_id")
 	}
+	record.Credentials = nil
+	s.records[transactionID] = record
 	s.invalidated[transactionID] = true
 	return nil
 }
