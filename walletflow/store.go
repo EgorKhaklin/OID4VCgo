@@ -134,7 +134,7 @@ func (c StoredCredential) copyFor(policy CopyPolicy, verifierHash string, now ti
 			}
 		}
 	}
-	i, cp := c.nextCopy(now)
+	i, cp := c.nextCopy(verifierHash, now)
 	return i, cp, false
 }
 
@@ -167,14 +167,19 @@ func (c StoredCredential) CopiesLeft() int {
 	return n
 }
 
-// nextCopy is the copy to present next at now: the first not yet
-// presented, else (every copy has been) the one shown to the fewest
-// Verifiers, which Verifiers may link to earlier presentations: reusing
-// the least shown keeps each set of Verifiers that can link the holder
-// small. A copy still valid comes before an expired one, which a
-// Verifier would refuse after the holder disclosed its claims.
-func (c StoredCredential) nextCopy(now time.Time) (int, CredentialCopy) {
+// nextCopy is the copy to present next, to the Verifier verifierHash
+// names, at now: the first not yet presented, else (every copy has
+// been) one only that Verifier has seen, which links it to nothing it
+// can't link already, else the one shown to the fewest Verifiers, which
+// Verifiers may link to earlier presentations: reusing the least shown
+// keeps each set of Verifiers that can link the holder small. A copy
+// still valid comes before an expired one, which a Verifier would refuse
+// after the holder disclosed its claims.
+func (c StoredCredential) nextCopy(verifierHash string, now time.Time) (int, CredentialCopy) {
 	copies := c.AllCopies()
+	onlyThis := func(cp CredentialCopy) bool {
+		return !slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifierHash })
+	}
 	better := func(i, j int) bool { // i before j
 		ei, ej := c.copyExpired(copies[i], now), c.copyExpired(copies[j], now)
 		if ei != ej {
@@ -182,6 +187,9 @@ func (c StoredCredential) nextCopy(now time.Time) (int, CredentialCopy) {
 		}
 		if copies[i].Presented != copies[j].Presented {
 			return !copies[i].Presented
+		}
+		if oi, oj := onlyThis(copies[i]), onlyThis(copies[j]); oi != oj {
+			return oi
 		}
 		return len(copies[i].ShownTo) < len(copies[j].ShownTo)
 	}

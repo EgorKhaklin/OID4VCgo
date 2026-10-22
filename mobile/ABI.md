@@ -332,8 +332,9 @@ Verifier is shown the copy it has seen before, and only a new Verifier
 an unused one: Verifiers can't link presentations to each other, but
 one can recognise a returning holder, and copies last longer. Each copy
 records the Verifiers it was shown to as hashes of their client_ids,
-never the client_ids. Once every copy has been presented, the one shown
-to the fewest Verifiers is reused.
+never the client_ids. Once every copy has been presented, a copy only
+the same Verifier has seen is reused, if there is one, else the one
+shown to the fewest Verifiers.
 
 `tls_pins` pins hosts' certificates for the wallet's HTTPS requests:
 host → base64 SHA-256 digests of a certificate's SubjectPublicKeyInfo
