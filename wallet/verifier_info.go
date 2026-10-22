@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // VerifierInfo is one attestation about the Verifier from its request's
@@ -60,7 +61,7 @@ func parseVerifierInfo(raw json.RawMessage, q dcql.Query) ([]VerifierInfo, error
 		return nil, nil
 	}
 	var wire []wireVerifierInfo
-	if err := json.Unmarshal(raw, &wire); err != nil {
+	if err := strictjson.Unmarshal(raw, &wire); err != nil {
 		return nil, errors.New("verifier_info must be an array of objects")
 	}
 	if len(wire) == 0 {

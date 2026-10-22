@@ -296,6 +296,54 @@ func TestParseDCAPIRequestData_AmbiguousJSON(t *testing.T) {
 	}
 }
 
+// The members a request carries as raw JSON, read once the request is
+// parsed — client_metadata, its keys, verifier_info — are held to the
+// same rule as the request itself.
+func TestParseDCAPIRequestData_AmbiguousNestedJSON(t *testing.T) {
+	f := newDCAPIForms(t)
+	withClientMetadata := func(mutate func(meta map[string]any)) func(map[string]any) {
+		return func(c map[string]any) {
+			meta := map[string]any{}
+			for k, v := range c["client_metadata"].(map[string]any) {
+				meta[k] = v
+			}
+			mutate(meta)
+			c["client_metadata"] = meta
+		}
+	}
+	for name, mutate := range map[string]func(map[string]any){
+		"case-variant jwks": withClientMetadata(func(meta map[string]any) { meta["JWKS"] = meta["jwks"] }),
+		"case-variant enc values": withClientMetadata(func(meta map[string]any) {
+			meta["Encrypted_Response_Enc_Values_Supported"] = []string{"A128GCM"}
+		}),
+		"case-variant vp_formats_supported": withClientMetadata(func(meta map[string]any) {
+			meta["VP_FORMATS_SUPPORTED"] = meta["vp_formats_supported"]
+		}),
+		"case-variant key alg": withClientMetadata(func(meta map[string]any) {
+			jwks := meta["jwks"].(map[string]any)
+			key := map[string]any{}
+			for k, v := range jwks["keys"].([]any)[0].(map[string]any) {
+				key[k] = v
+			}
+			key["ALG"] = "ECDH-ES"
+			meta["jwks"] = map[string]any{"keys": []any{key}}
+		}),
+		"case-variant credential_ids": func(c map[string]any) {
+			id := c["dcql_query"].(map[string]any)["credentials"].([]any)[0].(map[string]any)["id"]
+			c["verifier_info"] = []map[string]any{{"format": "jwt", "data": "x", "Credential_IDs": []any{id}}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := wallet.ParseDCAPIRequestData(wallet.ParseDCAPIRequestDataParams{
+				Protocol: wallet.DCAPIProtocolUnsigned, Origin: testDCAPIOrigin, Data: f.unsigned(t, mutate),
+			})
+			if err == nil {
+				t.Error("ParseDCAPIRequestData accepted ambiguous JSON")
+			}
+		})
+	}
+}
+
 func mustJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(v)

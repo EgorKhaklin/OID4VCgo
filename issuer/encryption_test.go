@@ -428,6 +428,25 @@ func TestEncryptResponseBody_RejectsMalformedJWK(t *testing.T) {
 	}
 }
 
+// A Wallet's jwk naming its alg only in another case has no alg to a
+// reader matching names exactly, as JOSE requires (RFC 7515 §5.2).
+func TestEncryptResponseBody_RejectsCaseVariantJWKMembers(t *testing.T) {
+	iss, _ := newEncryptionIssuer(t, nil)
+	var fields map[string]any
+	if err := json.Unmarshal(testWalletJWK(t), &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["ALG"] = fields["alg"]
+	delete(fields, "alg")
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := iss.EncryptResponseBody([]byte(`{}`), &issuer.ResponseEncryptionRequest{Enc: jwe.A128GCM, JWK: raw}); err == nil {
+		t.Fatal("EncryptResponseBody = nil error, want error")
+	}
+}
+
 func TestEncryptResponseBody_RejectsNonECJWK(t *testing.T) {
 	iss, _ := newEncryptionIssuer(t, nil)
 	pub, _, err := ed25519.GenerateKey(rand.Reader)

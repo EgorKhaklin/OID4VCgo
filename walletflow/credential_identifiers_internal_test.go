@@ -29,6 +29,9 @@ func TestCredentialIdentifiers(t *testing.T) {
 	if _, err := credentialIdentifiers([]byte(`{"type":"openid_credential"}`)); err == nil {
 		t.Error("authorization_details that isn't an array accepted")
 	}
+	if _, err := credentialIdentifiers([]byte(`[{"type":"openid_credential","credential_configuration_id":"pid","Credential_Identifiers":["pid-1"]}]`)); err == nil {
+		t.Error("a case-variant credential_identifiers accepted")
+	}
 }
 
 // Each credential_identifier granted for a configuration is its own

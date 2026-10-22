@@ -30,6 +30,12 @@ func TestValidateStrictShapes(t *testing.T) {
 		"mdoc path of one":        {query: mdoc + `"claims":[{"path":["org.iso.18013.5.1"]}]}`, refused: "two strings"},
 		"mdoc path with index":    {query: mdoc + `"claims":[{"path":["org.iso.18013.5.1",0]}]}`, refused: "two strings"},
 		"intent_to_retain sd-jwt": {query: sdjwt + `"claims":[{"path":["a"],"intent_to_retain":true}]}`, refused: "intent_to_retain"},
+		// meta is read as the format's type, and another parser reads
+		// vct_values or doctype_value exactly: neither may hide behind a
+		// member that differs only in case, or appear twice.
+		"case-variant vct_values": {query: `{"id":"q","format":"dc+sd-jwt","meta":{"vct_values":["urn:x"],"VCT_VALUES":["urn:y"]}}`, refused: "VCT_VALUES"},
+		"vct_values twice":        {query: `{"id":"q","format":"dc+sd-jwt","meta":{"vct_values":["urn:x"],"vct_values":["urn:y"]}}`, refused: "twice"},
+		"case-variant doctype":    {query: `{"id":"q","format":"mso_mdoc","meta":{"Doctype_Value":"org.iso.18013.5.1.mDL"}}`, refused: "Doctype_Value"},
 	} {
 		var q dcql.Query
 		if err := json.Unmarshal([]byte(`{"credentials":[`+tc.query+`]}`), &q); err != nil {

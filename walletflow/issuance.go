@@ -9,6 +9,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"maps"
 	"net/url"
 	"reflect"
@@ -734,7 +735,7 @@ func credentialIdentifiers(raw json.RawMessage) (map[string][]string, error) {
 		return nil, nil
 	}
 	var details []oid4vci.AuthorizationDetail
-	if err := json.Unmarshal(raw, &details); err != nil {
+	if err := strictjson.Unmarshal(raw, &details); err != nil {
 		return nil, fmt.Errorf("authorization_details: %w", err)
 	}
 	return identifiersByConfiguration(details), nil

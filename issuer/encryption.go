@@ -11,6 +11,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // jweContentType is the media type §10 requires for an encrypted
@@ -312,13 +313,15 @@ func (iss *Issuer) responseEncryptionKey(req *ResponseEncryptionRequest) (*ecdsa
 	// The Wallet's own jwk may optionally carry its own "kid" — if so,
 	// §10-3's "If the selected public key contains a kid parameter, the
 	// JWE MUST include the same value in the kid JWE Header Parameter"
-	// applies to this direction too. Best-effort: jwk.ParsePublicKey
-	// above already validated req.JWK is well-formed JSON.
+	// applies to this direction too. A member named like kid or alg in
+	// another case is refused, not read as it.
 	var jwkFields struct {
 		KeyID string  `json:"kid"`
 		Alg   jwe.Alg `json:"alg"`
 	}
-	_ = json.Unmarshal(req.JWK, &jwkFields)
+	if err := strictjson.Unmarshal(req.JWK, &jwkFields); err != nil {
+		return nil, "", newError(ErrorInvalidEncryptionParameters, 400, "malformed credential_response_encryption.jwk", err)
+	}
 	// §10: "The alg parameter MUST be present. The JWE alg algorithm
 	// used MUST be equal to the alg value of the chosen JWK." This
 	// issuer only encrypts with ECDH-ES (internal/jwe's sole
