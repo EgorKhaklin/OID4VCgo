@@ -59,10 +59,15 @@ func NewMdocMeta(meta MdocMeta) (json.RawMessage, error) {
 }
 
 // validate checks m names at least one vct, none of them empty: without
-// one, the query would accept a Credential of any type.
+// one, the query would accept a Credential of any type. It names at most
+// MaxVCTValues, a bound on a query's size like those Query.Validate
+// enforces.
 func (m SDJWTVCMeta) validate() error {
-	if len(m.VCTValues) == 0 {
+	switch {
+	case len(m.VCTValues) == 0:
 		return fmt.Errorf("dcql: sd-jwt vc meta: vct_values must be a non-empty array")
+	case len(m.VCTValues) > MaxVCTValues:
+		return fmt.Errorf("dcql: sd-jwt vc meta: %d vct_values, more than %d", len(m.VCTValues), MaxVCTValues)
 	}
 	for _, v := range m.VCTValues {
 		if v == "" {
@@ -220,9 +225,19 @@ func (c CredentialQuery) selectedClaimPaths(present func(Path) ([]any, error)) (
 	for _, cl := range c.Claims {
 		byID[cl.ID] = cl
 	}
+	// Each claim is looked up once, however many options name it.
+	checked := make(map[string]error, len(c.Claims))
+	presentOnce := func(cl ClaimsQuery) error {
+		err, ok := checked[cl.ID]
+		if !ok {
+			err = presentAt(cl, present)
+			checked[cl.ID] = err
+		}
+		return err
+	}
 	var lastErr error
 	for _, option := range c.ClaimSets {
-		paths, err := claimSetOptionPaths(option, byID, present)
+		paths, err := claimSetOptionPaths(option, byID, presentOnce)
 		if err != nil {
 			lastErr = err
 			continue
@@ -233,16 +248,16 @@ func (c CredentialQuery) selectedClaimPaths(present func(Path) ([]any, error)) (
 }
 
 // claimSetOptionPaths checks one claim_sets option (a list of
-// claims[].id values) against present, using byID to resolve each id
+// claims[].id values) with check, using byID to resolve each id
 // to its own Path, returning those Paths on success.
-func claimSetOptionPaths(option []string, byID map[string]ClaimsQuery, present func(Path) ([]any, error)) ([]Path, error) {
+func claimSetOptionPaths(option []string, byID map[string]ClaimsQuery, check func(ClaimsQuery) error) ([]Path, error) {
 	paths := make([]Path, 0, len(option))
 	for _, id := range option {
 		cl, ok := byID[id]
 		if !ok {
 			return nil, fmt.Errorf("references unknown claim id %q", id)
 		}
-		if err := presentAt(cl, present); err != nil {
+		if err := check(cl); err != nil {
 			return nil, fmt.Errorf("claim %q: %w", id, err)
 		}
 		paths = append(paths, cl.Path)

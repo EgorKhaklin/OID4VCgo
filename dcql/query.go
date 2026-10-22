@@ -61,15 +61,20 @@ func (q Query) Validate() error {
 // option, each claim set and each value is tried), and a query can come
 // from any web page over the Digital Credentials API: without bounds, a
 // 1 MB query kept a wallet busy for minutes. Each is far above what any
-// real query needs.
+// real query needs. A claim_sets entry is bounded by
+// MaxClaimsPerCredential too: it names each of its query's claims at
+// most once (Validate refuses a repeat, which asks for nothing more).
 const (
-	MaxCredentialQueries    = 64  // credentials
-	MaxCredentialSets       = 64  // credential_sets
-	MaxCredentialSetOptions = 64  // options in one credential set
-	MaxClaimsPerCredential  = 256 // claims in one credential query
-	MaxClaimSets            = 64  // claim_sets in one credential query
-	MaxValuesPerClaim       = 64  // values in one claims query
-	MaxPathLength           = 32  // components in one claims path
+	MaxCredentialQueries      = 64  // credentials
+	MaxCredentialSets         = 64  // credential_sets
+	MaxCredentialSetOptions   = 64  // options in one credential set
+	MaxClaimsPerCredential    = 256 // claims in one credential query
+	MaxClaimSets              = 64  // claim_sets in one credential query
+	MaxValuesPerClaim         = 64  // values in one claims query
+	MaxPathLength             = 32  // components in one claims path
+	MaxTrustedAuthorities     = 16  // trusted_authorities in one credential query
+	MaxTrustedAuthorityValues = 64  // values in one trusted_authorities entry
+	MaxVCTValues              = 64  // vct_values in one "dc+sd-jwt" credential query's meta
 )
 
 // checkSize enforces the size bounds above.
@@ -91,14 +96,36 @@ func (q Query) checkSize() error {
 			return fmt.Errorf("dcql: query: credentials[%d]: %d claims, more than %d", i, len(cq.Claims), MaxClaimsPerCredential)
 		case len(cq.ClaimSets) > MaxClaimSets:
 			return fmt.Errorf("dcql: query: credentials[%d]: %d claim sets, more than %d", i, len(cq.ClaimSets), MaxClaimSets)
+		case len(cq.TrustedAuthorities) > MaxTrustedAuthorities:
+			return fmt.Errorf("dcql: query: credentials[%d]: %d trusted authorities, more than %d", i, len(cq.TrustedAuthorities), MaxTrustedAuthorities)
 		}
-		for j, c := range cq.Claims {
-			switch {
-			case len(c.Values) > MaxValuesPerClaim:
-				return fmt.Errorf("dcql: query: credentials[%d].claims[%d]: %d values, more than %d", i, j, len(c.Values), MaxValuesPerClaim)
-			case len(c.Path) > MaxPathLength:
-				return fmt.Errorf("dcql: query: credentials[%d].claims[%d]: a path of %d components, more than %d", i, j, len(c.Path), MaxPathLength)
-			}
+		if err := cq.checkNestedSize(); err != nil {
+			return fmt.Errorf("dcql: query: credentials[%d]%w", i, err)
+		}
+	}
+	return nil
+}
+
+// checkNestedSize enforces the bounds on what one credential query's
+// own entries hold, its error starting with the offending field's
+// path within the credential query.
+func (cq CredentialQuery) checkNestedSize() error {
+	for j, set := range cq.ClaimSets {
+		if len(set) > MaxClaimsPerCredential {
+			return fmt.Errorf(".claim_sets[%d]: %d claims, more than %d", j, len(set), MaxClaimsPerCredential)
+		}
+	}
+	for j, ta := range cq.TrustedAuthorities {
+		if len(ta.Values) > MaxTrustedAuthorityValues {
+			return fmt.Errorf(".trusted_authorities[%d]: %d values, more than %d", j, len(ta.Values), MaxTrustedAuthorityValues)
+		}
+	}
+	for j, c := range cq.Claims {
+		switch {
+		case len(c.Values) > MaxValuesPerClaim:
+			return fmt.Errorf(".claims[%d]: %d values, more than %d", j, len(c.Values), MaxValuesPerClaim)
+		case len(c.Path) > MaxPathLength:
+			return fmt.Errorf(".claims[%d]: a path of %d components, more than %d", j, len(c.Path), MaxPathLength)
 		}
 	}
 	return nil
@@ -278,9 +305,12 @@ func (c CredentialQuery) validateClaimSets(claimIDs map[string]bool) error {
 		if len(set) == 0 {
 			return fmt.Errorf("dcql: credential query %q: claim_sets[%d] must be non-empty", c.ID, i)
 		}
-		for _, ref := range set {
+		for j, ref := range set {
 			if !claimIDs[ref] {
 				return fmt.Errorf("dcql: credential query %q: claim_sets[%d] references unknown claim id %q", c.ID, i, ref)
+			}
+			if slices.Contains(set[:j], ref) {
+				return fmt.Errorf("dcql: credential query %q: claim_sets[%d] lists claim id %q twice", c.ID, i, ref)
 			}
 		}
 	}
