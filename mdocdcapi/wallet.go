@@ -20,6 +20,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/readerauth"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 )
 
@@ -96,7 +97,10 @@ func ParseRequest(data []byte, origin string) (Incoming, error) {
 		return Incoming{}, err
 	}
 	var wire RequestData
-	if err := json.Unmarshal(data, &wire); err != nil || wire.DeviceRequest == "" || wire.EncryptionInfo == "" {
+	if err := strictjson.Unmarshal(data, &wire); err != nil {
+		return Incoming{}, fmt.Errorf("mdocdcapi: request data must be {\"deviceRequest\", \"encryptionInfo\"}: %w", err)
+	}
+	if wire.DeviceRequest == "" || wire.EncryptionInfo == "" {
 		return Incoming{}, errors.New("mdocdcapi: request data must be {\"deviceRequest\", \"encryptionInfo\"}")
 	}
 	recipient, err := parseEncryptionInfo(wire.EncryptionInfo)

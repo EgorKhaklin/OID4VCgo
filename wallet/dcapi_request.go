@@ -252,7 +252,10 @@ func ParseDCAPIRequestData(params ParseDCAPIRequestDataParams) (AuthorizationReq
 		var data struct {
 			Request string `json:"request"`
 		}
-		if err := json.Unmarshal(params.Data, &data); err != nil || data.Request == "" {
+		if err := strictjson.Unmarshal(params.Data, &data); err != nil {
+			return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: data.request must be a signed Request Object: %w", err)
+		}
+		if data.Request == "" {
 			return AuthorizationRequest{}, errors.New("wallet: parse dc api request: data.request must be a signed Request Object")
 		}
 		return ParseDCAPIRequest(ParseDCAPIRequestParams{Request: data.Request, Origin: params.Origin, VerifierTrust: params.VerifierTrust, Now: params.Now})
@@ -260,7 +263,7 @@ func ParseDCAPIRequestData(params ParseDCAPIRequestDataParams) (AuthorizationReq
 		return parseMultiSignedDCAPIRequest(params)
 	case DCAPIProtocolUnsigned:
 		var wire wireRequestObjectPayload
-		if err := json.Unmarshal(params.Data, &wire); err != nil {
+		if err := strictjson.Unmarshal(params.Data, &wire); err != nil {
 			return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: parse data: %w", err)
 		}
 		return finishDCAPIRequest(wire, params.Origin, nil, "", false)
@@ -285,7 +288,10 @@ func parseMultiSignedDCAPIRequest(params ParseDCAPIRequestDataParams) (Authoriza
 	var data struct {
 		Request wireJWSJSON `json:"request"`
 	}
-	if err := json.Unmarshal(params.Data, &data); err != nil || data.Request.Payload == "" || len(data.Request.Signatures) == 0 {
+	if err := strictjson.Unmarshal(params.Data, &data); err != nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: data.request must be a Request Object in JWS JSON Serialization: %w", err)
+	}
+	if data.Request.Payload == "" || len(data.Request.Signatures) == 0 {
 		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: data.request must be a Request Object in JWS JSON Serialization")
 	}
 	if len(data.Request.Signatures) > MaxDCAPISignatures {
@@ -305,7 +311,7 @@ func parseMultiSignedDCAPIRequest(params ParseDCAPIRequestDataParams) (Authoriza
 			VerifierInfo json.RawMessage `json:"verifier_info"`
 		}
 		raw, err := base64.RawURLEncoding.DecodeString(sig.Protected)
-		if err != nil || json.Unmarshal(raw, &header) != nil {
+		if err != nil || strictjson.Unmarshal(raw, &header) != nil {
 			errs = append(errs, fmt.Errorf("signature %d: malformed protected header", i))
 			continue
 		}
