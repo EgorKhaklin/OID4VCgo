@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
@@ -116,6 +117,10 @@ type run struct {
 	mdocSignerKeyPEM  string
 	mdocSignerCertPEM string
 	mdocIACACertPEM   string
+
+	// mdocCRLPEM is the IACA's CRL, served at the CRL distribution
+	// point mdocSignerCertPEM names (see mdocCRLURI).
+	mdocCRLPEM string
 }
 
 // attesterIssuer is the suite's Client Attestation "iss", and the URI
@@ -175,11 +180,24 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generate mdoc iaca: %w", err)
 	}
+	// The suite fetches the CRL the Document Signer certificate's
+	// distribution point names and checks it (ISO/IEC 18013-5 12.8.3,
+	// B.2, Table B.10) for every mdoc it's issued, failing the module
+	// when it can't: the IACA issues one and cmd/conformance-issuer
+	// serves it there.
+	crlURI, err := mdocCRLURI(issuerBaseURL)
+	if err != nil {
+		return nil, err
+	}
 	_, mdocSignerKeyPEM, mdocSignerCertPEM, err := conformancecert.GenerateMdocDocumentSigner(
 		"run-fapi2sp-battery-mdoc-ds", "FR", "https://example.com/run-fapi2sp-battery-mdoc-contact",
-		"https://example.com/run-fapi2sp-battery-mdoc.crl", mdocIACACert, mdocIACAKey)
+		crlURI, mdocIACACert, mdocIACAKey)
 	if err != nil {
 		return nil, fmt.Errorf("generate mdoc document signer: %w", err)
+	}
+	mdocCRLPEM, err := conformancecert.MdocCRLPEM(mdocIACACert, mdocIACAKey)
+	if err != nil {
+		return nil, fmt.Errorf("generate mdoc iaca crl: %w", err)
 	}
 
 	callback := "https://localhost.emobix.co.uk:8443/test/a/" + alias + "/callback"
@@ -252,7 +270,27 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 		mdocSignerKeyPEM:  mdocSignerKeyPEM,
 		mdocSignerCertPEM: mdocSignerCertPEM,
 		mdocIACACertPEM:   mdocIACACertPEM,
+		mdocCRLPEM:        mdocCRLPEM,
 	}, nil
+}
+
+// mdocCRLListenAddr is cmd/conformance-issuer's plain-HTTP listener
+// for its IACA's CRL, inside its container; the suite reaches it over
+// the suite network at the same host as issuerBaseURL (see mdocCRLURI),
+// so nothing publishes it to the host.
+const (
+	mdocCRLListenAddr = ":8080"
+	mdocCRLPort       = "8080"
+)
+
+// mdocCRLURI is the Document Signer certificate's CRL distribution
+// point: plain HTTP on mdocCRLPort of issuerBaseURL's host.
+func mdocCRLURI(issuerBaseURL string) (string, error) {
+	u, err := url.Parse(issuerBaseURL)
+	if err != nil || u.Hostname() == "" {
+		return "", fmt.Errorf("issuer base url %q has no host for the mdoc crl distribution point", issuerBaseURL)
+	}
+	return (&url.URL{Scheme: "http", Host: net.JoinHostPort(u.Hostname(), mdocCRLPort), Path: conformancecert.MdocCRLPath}).String(), nil
 }
 
 func generateECKey() (*ecdsa.PrivateKey, error) {
@@ -337,6 +375,8 @@ func buildServerConfig(r *run) ([]byte, error) {
 			SignerKeyPEM:              r.mdocSignerKeyPEM,
 			CertificatePEM:            r.mdocSignerCertPEM,
 			TrustAnchorCertificatePEM: r.mdocIACACertPEM,
+			CRLPEM:                    r.mdocCRLPEM,
+			CRLListenAddr:             mdocCRLListenAddr,
 		},
 		KeyAttestation: &conformanceconfig.KeyAttestationConfig{
 			TrustedJWK: json.RawMessage(keyAttestationTrustedJWK),

@@ -450,3 +450,29 @@ the full mdoc cryptographic chain end to end: `mdoc.Issue` →
 construction → the suite's own independent mdoc verification, including
 its own IACA-chain validation of this binary's freshly generated
 Document Signer certificate.
+
+### The Document Signer's CRL
+
+Since suite commit `a84ae855` (merged 2026-10-20), the suite's shared
+`ValidateMdocCredential` sequence fetches the CRL named by the
+Document Signer certificate's CRL distribution point
+(`FetchMdocDsCertificateCrl`) and checks it: content type
+`application/pkix-crl` (`EnsureContentTypeMdocDsCertificateCrl`, RFC
+2585 §4.2), the ISO/IEC 18013-5 Table B.10 profile and a signature by
+the issuing IACA (`ValidateMdocDsCertificateCrl`), nextUpdate within
+90 days of thisUpdate (`EnsureMdocDsCertificateCrlNextUpdateWithin90Days`,
+Annex B.2), and that the Document Signer isn't revoked
+(`EnsureMdocDsCertificateNotRevokedByCrl`, 12.8.3). Under HAIP a CRL
+the suite can't fetch fails the module, so every `iso_mdl` module
+failed while the distribution point was a placeholder
+`https://example.com/...` URI.
+
+`run-modules` now has the IACA issue an empty CRL
+(`conformancecert.MdocCRLPEM`) and names
+`http://conformance-wallet-vp:8080/mdoc-iaca.crl` (`-mdoc-crl-base`)
+as the Document Signer's distribution point; `cmd/conformance-wallet-vp`
+serves it (`mdoc_crl_pem`, on the plain-HTTP `mdoc_crl_listen_addr`)
+inside the suite's Docker network, so the port isn't published to the
+host. When pointing a hosted suite at this binary with
+`-dump-plan-config`, set `-mdoc-crl-base` to a URL that suite can
+reach.

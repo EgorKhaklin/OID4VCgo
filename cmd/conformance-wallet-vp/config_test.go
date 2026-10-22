@@ -95,6 +95,55 @@ func TestLoadConfig_RejectsMissingRequiredFields(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_MdocCRL(t *testing.T) {
+	iacaCert, iacaKey, _, _, err := conformancecert.GenerateMdocIACA("test-mdoc-iaca", "FR", "https://example.com/contact")
+	if err != nil {
+		t.Fatalf("GenerateMdocIACA: %v", err)
+	}
+	crlPEM, err := conformancecert.MdocCRLPEM(iacaCert, iacaKey)
+	if err != nil {
+		t.Fatalf("MdocCRLPEM: %v", err)
+	}
+	mdocConfig := func(t *testing.T) Config {
+		t.Helper()
+		cfg := mdocFixtureIssuerConfig(t)
+		cfg.ListenAddr = ":8444"
+		cfg.HolderPrivateKeyPEM = testECKeyPEM(t)
+		cfg.CredentialFormat = "mso_mdoc"
+		cfg.MdocClaims = map[string]any{"given_name": "Jean"}
+		return cfg
+	}
+
+	cfg := mdocConfig(t)
+	cfg.MdocCRLPEM, cfg.MdocCRLListenAddr = crlPEM, ":8080"
+	got, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if der, err := got.mdocCRL(); err != nil || len(der) == 0 {
+		t.Fatalf("mdocCRL() = %d bytes, %v; want the CRL", len(der), err)
+	}
+
+	for name, mutate := range map[string]func(*Config){
+		"pem only":         func(c *Config) { c.MdocCRLPEM = crlPEM },
+		"listen addr only": func(c *Config) { c.MdocCRLListenAddr = ":8080" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := mdocConfig(t)
+			mutate(&cfg)
+			if _, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg)); err == nil {
+				t.Fatal("loadConfig = nil error, want error")
+			}
+		})
+	}
+
+	cfg = mdocConfig(t)
+	cfg.MdocCRLPEM = "not a crl"
+	if _, err := cfg.mdocCRL(); err == nil {
+		t.Error("mdocCRL() accepted a malformed CRL")
+	}
+}
+
 func TestConfig_CredentialIssuerKeyAndHolderPrivateKey(t *testing.T) {
 	cfg := baseTestConfig(t)
 	issuerKey, err := cfg.credentialIssuerKey()

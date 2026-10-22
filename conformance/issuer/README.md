@@ -847,3 +847,22 @@ and the base (non-HAIP) plan (`-base-plan`) all re-run clean — every
 one of those paths still uses the original shared issuer identity
 unchanged (the new dedicated identity is only ever selected for the
 mdoc `CredentialConfiguration`).
+
+## Status: the Document Signer's CRL is served
+
+Since suite commit `a84ae855` (merged 2026-10-20) the suite fetches
+the CRL named by every issued mdoc's Document Signer certificate's
+CRL distribution point and checks it (`FetchMdocDsCertificateCrl`,
+`EnsureContentTypeMdocDsCertificateCrl`, `ValidateMdocDsCertificateCrl`,
+`EnsureMdocDsCertificateCrlNextUpdateWithin90Days`,
+`EnsureMdocDsCertificateNotRevokedByCrl`; ISO/IEC 18013-5 12.8.3,
+Annex B.2, Table B.10). For issuance a CRL it can't fetch is a
+`FAILURE`, so both mdoc sanity modules failed while the distribution
+point was a placeholder `https://example.com/...` URI.
+
+`run-fapi2sp-battery`'s `generateRun` now has the IACA issue an empty
+CRL (`conformancecert.MdocCRLPEM`) and names
+`http://<issuer host>:8080/mdoc-iaca.crl` — the host of `-issuer`,
+`conformance-issuer` by default — as the distribution point;
+`cmd/conformance-issuer` serves it (`mdoc.crl_pem`, on the plain-HTTP
+`mdoc.crl_listen_addr`) inside the suite's Docker network.
