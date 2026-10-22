@@ -206,3 +206,41 @@ func TestConfig_IssuerURL(t *testing.T) {
 		t.Fatalf("issuerURL: %v", err)
 	}
 }
+
+func TestLoadConfig_MdocCRL(t *testing.T) {
+	iacaCert, iacaKey, _, _, err := conformancecert.GenerateMdocIACA("test-mdoc-iaca", "FR", "https://example.com/contact")
+	if err != nil {
+		t.Fatalf("GenerateMdocIACA: %v", err)
+	}
+	crlPEM, err := conformancecert.MdocCRLPEM(iacaCert, iacaKey)
+	if err != nil {
+		t.Fatalf("MdocCRLPEM: %v", err)
+	}
+
+	cfg := mdocTestConfig(t)
+	cfg.Mdoc.CRLPEM, cfg.Mdoc.CRLListenAddr = crlPEM, ":8080"
+	got, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg))
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if der, err := got.mdocCRL(); err != nil || len(der) == 0 {
+		t.Fatalf("mdocCRL() = %d bytes, %v; want the CRL", len(der), err)
+	}
+
+	for name, mutate := range map[string]func(*Config){
+		"pem only":         func(c *Config) { c.Mdoc.CRLPEM = crlPEM },
+		"listen addr only": func(c *Config) { c.Mdoc.CRLListenAddr = ":8080" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := mdocTestConfig(t)
+			mutate(&cfg)
+			if _, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg)); err == nil {
+				t.Fatal("loadConfig = nil error, want error")
+			}
+		})
+	}
+
+	if der, err := mdocTestConfig(t).mdocCRL(); err != nil || der != nil {
+		t.Errorf("mdocCRL() without a CRL = %x, %v; want nil, nil", der, err)
+	}
+}

@@ -88,6 +88,15 @@ type MdocConfig struct {
 	SignerKeyPEM              string `json:"signer_key_pem,omitempty"`
 	CertificatePEM            string `json:"certificate_pem,omitempty"`
 	TrustAnchorCertificatePEM string `json:"trust_anchor_certificate_pem,omitempty"`
+
+	// CRLPEM/CRLListenAddr, when both set, serve the IACA's CRL
+	// (internal/conformancecert.MdocCRLPEM) over plain HTTP on
+	// CRLListenAddr at conformancecert.MdocCRLPath — the CRL
+	// distribution point CertificatePEM names (ISO/IEC 18013-5 Table
+	// B.3 makes it mandatory), which the OIDF suite fetches and checks
+	// for every mdoc it's issued.
+	CRLPEM        string `json:"crl_pem,omitempty"`
+	CRLListenAddr string `json:"crl_listen_addr,omitempty"`
 }
 
 // mdocFullDateTag is credential/mdoc's own documented convention for a

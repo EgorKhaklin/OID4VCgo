@@ -177,7 +177,22 @@ func validateMdoc(cfg Config) error {
 	if m.CredentialConfigurationID == cfg.CredentialConfigurationID {
 		return fmt.Errorf("config: mdoc.credential_configuration_id must differ from the top-level credential_configuration_id")
 	}
+	if (m.CRLPEM == "") != (m.CRLListenAddr == "") {
+		return fmt.Errorf("config: mdoc.crl_pem and mdoc.crl_listen_addr must be set together")
+	}
 	return nil
+}
+
+// mdocCRL is Mdoc's CRL in DER, or nil when none is configured.
+func (c Config) mdocCRL() ([]byte, error) {
+	if c.Mdoc == nil || c.Mdoc.CRLPEM == "" {
+		return nil, nil
+	}
+	der, err := conformancecert.ParseCRLPEM(c.Mdoc.CRLPEM)
+	if err != nil {
+		return nil, fmt.Errorf("mdoc.crl_pem: %w", err)
+	}
+	return der, nil
 }
 
 func loadConfig(path string) (Config, error) {
