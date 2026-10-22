@@ -6,7 +6,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 )
 
@@ -109,7 +109,7 @@ func resolveHeldSDJWTVC(credential string) (sdjwtvc.Presentation, sdjwtvc.HashAl
 		return sdjwtvc.Presentation{}, "", nil, fmt.Errorf("decode issuer jwt: %w", err)
 	}
 	var payload map[string]any
-	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+	if err := strictjson.Unmarshal(rawPayload, &payload); err != nil {
 		return sdjwtvc.Presentation{}, "", nil, fmt.Errorf("unmarshal issuer jwt payload: %w", err)
 	}
 	hashAlg, err := sdjwtvc.PayloadHashAlg(payload, sdjwtvc.DefaultHashAlg)
@@ -459,7 +459,7 @@ func rawSDJWTVCPayload(pres sdjwtvc.Presentation) (map[string]any, error) {
 		return nil, fmt.Errorf("decode issuer jwt: %w", err)
 	}
 	var payload map[string]any
-	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+	if err := strictjson.Unmarshal(rawPayload, &payload); err != nil {
 		return nil, fmt.Errorf("unmarshal issuer jwt payload: %w", err)
 	}
 	return payload, nil
@@ -500,7 +500,7 @@ func sdjwtvcBound(credential string) bool {
 		return true
 	}
 	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	if err := strictjson.Unmarshal(raw, &payload); err != nil {
 		return true
 	}
 	_, bound := payload["cnf"]

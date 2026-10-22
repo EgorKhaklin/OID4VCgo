@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/idfoundry/fapigo/server"
+
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 )
 
 func main() {
@@ -32,6 +34,20 @@ func main() {
 	mux, err := newServerMux(cfg)
 	if err != nil {
 		log.Fatalf("build server: %v", err)
+	}
+
+	// The CRL distribution point of the mdoc Document Signer
+	// certificate, which the OIDF suite fetches and checks for every
+	// mdoc it's issued.
+	crl, err := cfg.mdocCRL()
+	if err != nil {
+		log.Fatalf("mdoc crl: %v", err)
+	}
+	if crl != nil {
+		go func() {
+			log.Fatal(conformancecert.ServeMdocCRL(cfg.Mdoc.CRLListenAddr, crl))
+		}()
+		log.Printf("serving the mdoc IACA CRL on http://%s%s", cfg.Mdoc.CRLListenAddr, conformancecert.MdocCRLPath)
 	}
 
 	tlsCert, err := cfg.tlsCertificate()

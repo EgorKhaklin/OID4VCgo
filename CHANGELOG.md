@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.50.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.49.0...v0.50.0) (2026-10-21)
+
+
+### Features
+
+* **proximity:** add Android NFC engagement ([36b1e4c](https://github.com/IDFoundry/OID4VCgo/commit/36b1e4c37e9b755442942accfbe21500362bdc58))
+* **proximity:** add nfcapdu, NFC's APDU protocols without I/O ([a818b26](https://github.com/IDFoundry/OID4VCgo/commit/a818b267a4ea62753db0dd03193e4c60bbff36aa))
+* **proximity:** arbitrate independent QR and NFC offers ([36b1e4c](https://github.com/IDFoundry/OID4VCgo/commit/36b1e4c37e9b755442942accfbe21500362bdc58))
+* **verifier:** run Digital Credentials API requests through Transactions ([3c3d1c4](https://github.com/IDFoundry/OID4VCgo/commit/3c3d1c4503d1d78e4869e781856c2a46c6b7617d))
+
+
+### Bug Fixes
+
+* **proximity:** accept TNEP requests without collision records ([36b1e4c](https://github.com/IDFoundry/OID4VCgo/commit/36b1e4c37e9b755442942accfbe21500362bdc58))
+* **proximity:** commit NFC after completed handover ([36b1e4c](https://github.com/IDFoundry/OID4VCgo/commit/36b1e4c37e9b755442942accfbe21500362bdc58))
+
 ## [0.49.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.48.0...v0.49.0) (2026-10-20)
 
 

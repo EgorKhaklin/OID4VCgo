@@ -40,11 +40,35 @@ type VerifyParams struct {
 	// MaxClockSkew is how far Now may be from the issuer's clock (see
 	// mdoc.VerifyOptions.MaxClockSkew).
 	MaxClockSkew time.Duration
+	// Assurance is as verifier.Config.Assurance. REQUIRED. Under
+	// verifier.AssuranceProduction, VerifyResponse requires the
+	// decisions verifier.VerifyResponse does: IssuerKeys must declare
+	// verifier.KeySourceAssurance with LiveFetchHardened and verify
+	// issuer chains (a verifier.MdocIssuerChainResolver, as
+	// verifier.X5ChainIssuerKeyResolver is); IssuerAuthorized or
+	// AnyIssuerForAnyType must decide which issuers may issue the
+	// doctype; and Accept or NoStatusCheck must decide revocation.
+	Assurance verifier.AssuranceLevel
 	// IssuerAuthorized, if set, decides whether the verified document's
 	// issuer may issue its doctype, as
 	// verifier.VerifyResponseRequest.IssuerAuthorized does; an error
 	// refuses the response.
 	IssuerAuthorized func(ctx context.Context, a verifier.IssuerAuthorization) error
+	// AnyIssuerForAnyType declares that every issuer IssuerKeys trusts
+	// may issue the requested doctype, so IssuerAuthorized is
+	// deliberately unset (verifier.VerifyResponseRequest.AnyIssuerForAnyType).
+	AnyIssuerForAnyType bool
+	// Accept, if set, runs on the verified document before
+	// VerifyResponse returns it, as verifier.VerifyResponseRequest.Accept
+	// does, and its error refuses the response: result holds the one
+	// credential, Verified.Credential, and id is "".
+	// verifier.RequireValidStatus checks revocation, with the Status
+	// List Token's signer bound to the document's issuer through
+	// Verified.IssuerChain. Nothing else checks revocation.
+	Accept func(ctx context.Context, id string, result verifier.VerifyResponseResult) error
+	// NoStatusCheck declares that this Verifier deliberately checks no
+	// revocation status, so Accept is unset.
+	NoStatusCheck bool
 }
 
 // Verified is a verified document.
@@ -68,8 +92,20 @@ type Verified struct {
 	// (verifier.CheckMdocIssuer).
 	IssuerChain [][]byte
 	// Status is the MSO's revocation reference, nil if it has none;
-	// checking it is the caller's (package statuslist).
+	// VerifyParams.Accept checks it (verifier.RequireValidStatus).
 	Status *mdoc.Status
+}
+
+// Credential is v as a verifier.VerifiedCredential — its NameSpaces as
+// Claims, its Status and IssuerChain — for what takes one, such as
+// verifier.RequireValidStatus. Its CredentialQueryID is "": an Annex C
+// request has no DCQL query.
+func (v Verified) Credential() verifier.VerifiedCredential {
+	claims := make(map[string]any, len(v.NameSpaces))
+	for ns, elements := range v.NameSpaces {
+		claims[ns] = elements
+	}
+	return verifier.VerifiedCredential{Claims: claims, MdocStatus: v.Status, IssuerChain: v.IssuerChain}
 }
 
 // encryptedResponseData is Annex C.3's EncryptedResponseData.
@@ -85,6 +121,9 @@ type encryptedResponseData struct {
 func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 	if p.IssuerKeys == nil {
 		return Verified{}, errors.New("mdocdcapi: IssuerKeys is required")
+	}
+	if err := checkAssurance(p); err != nil {
+		return Verified{}, err
 	}
 	if p.MaxClockSkew < 0 || p.MaxClockSkew > verifier.MaxAllowedClockSkew {
 		return Verified{}, fmt.Errorf("mdocdcapi: MaxClockSkew %s is outside 0..%s", p.MaxClockSkew, verifier.MaxAllowedClockSkew)
@@ -107,7 +146,61 @@ func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 	if doc.DocType != p.Pending.DocType {
 		return Verified{}, fmt.Errorf("mdocdcapi: the document is a %q, not the requested %q", doc.DocType, p.Pending.DocType)
 	}
-	return verifyDocument(ctx, p, doc, transcript)
+	verified, err := verifyDocument(ctx, p, doc, transcript)
+	if err != nil {
+		return Verified{}, err
+	}
+	if p.Accept != nil {
+		if err := p.Accept(ctx, "", verifier.VerifyResponseResult{Credentials: []verifier.VerifiedCredential{verified.Credential()}}); err != nil {
+			return Verified{}, err
+		}
+	}
+	return verified, nil
+}
+
+// checkAssurance refuses an Assurance that isn't a level, and under
+// verifier.AssuranceProduction, the undecided configurations
+// verifier.VerifyResponse refuses there: left undecided, each silently
+// accepts what it shouldn't.
+func checkAssurance(p VerifyParams) error {
+	switch p.Assurance {
+	case verifier.AssuranceDevelopment:
+		return nil
+	case verifier.AssuranceProduction:
+	default:
+		return errors.New("mdocdcapi: Assurance is required: verifier.AssuranceDevelopment or verifier.AssuranceProduction")
+	}
+	if asserter, ok := p.IssuerKeys.(verifier.KeySourceAssurance); !ok || !asserter.Capabilities().LiveFetchHardened {
+		return errors.New("mdocdcapi: under AssuranceProduction, IssuerKeys must implement verifier.KeySourceAssurance and declare LiveFetchHardened")
+	}
+	if !verifiesChains(p.IssuerKeys) {
+		// Without the chain, ISO/IEC 18013-5's document signer checks
+		// don't run, and status can't be bound to the document's issuer.
+		return errors.New("mdocdcapi: under AssuranceProduction, IssuerKeys must verify issuer chains (verifier.MdocIssuerChainResolver, or Unwrap to one)")
+	}
+	if p.IssuerAuthorized == nil && !p.AnyIssuerForAnyType {
+		return errors.New("mdocdcapi: under AssuranceProduction, set IssuerAuthorized (which issuers may issue which doctypes) or AnyIssuerForAnyType: without either, any trusted issuer is accepted for any doctype")
+	}
+	if p.Accept == nil && !p.NoStatusCheck {
+		return errors.New("mdocdcapi: under AssuranceProduction, set Accept (verifier.RequireValidStatus checks revocation) or NoStatusCheck: without either, a revoked document is accepted")
+	}
+	return nil
+}
+
+// verifiesChains reports whether resolver is a
+// verifier.MdocIssuerChainResolver, or wraps one.
+func verifiesChains(resolver verifier.MdocIssuerKeyResolver) bool {
+	for range 16 {
+		if _, ok := resolver.(verifier.MdocIssuerChainResolver); ok {
+			return true
+		}
+		wrapper, ok := resolver.(verifier.MdocIssuerKeyResolverWrapper)
+		if !ok {
+			return false
+		}
+		resolver = wrapper.Unwrap()
+	}
+	return false
 }
 
 // decrypt opens response's EncryptedResponse (Annex C.4) with key,

@@ -770,17 +770,17 @@ func TestSessions_Refresh(t *testing.T) {
 	}
 }
 
-// A pending deferred credential's refresh grant and the credential it
-// replaces survive the record.
+// A pending deferred credential's refresh grant, the credential it
+// replaces and its credential_identifier survive the record.
 func TestDeferredStore_KeepsGrantAndReplaces(t *testing.T) {
 	ctx := context.Background()
 	s := deferredStore{newGoCredentialStore()}
-	p := walletflow.PendingDeferred{ID: "d", ConfigurationID: "c", AccessToken: fapi.NewSecret("at"), GrantID: "g", Replaces: "old"}
+	p := walletflow.PendingDeferred{ID: "d", ConfigurationID: "c", CredentialIdentifier: "c-1", AccessToken: fapi.NewSecret("at"), GrantID: "g", Replaces: "old"}
 	if err := s.PutDeferred(ctx, p); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.ListDeferred(ctx)
-	if err != nil || len(got) != 1 || got[0].GrantID != "g" || got[0].Replaces != "old" {
+	if err != nil || len(got) != 1 || got[0].GrantID != "g" || got[0].Replaces != "old" || got[0].CredentialIdentifier != "c-1" {
 		t.Errorf("ListDeferred = %+v, %v", got, err)
 	}
 }

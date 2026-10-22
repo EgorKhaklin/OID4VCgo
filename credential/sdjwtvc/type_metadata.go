@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // TypeMetadata is an SD-JWT VC Type Metadata document (draft-13 §6.2):
@@ -193,7 +195,7 @@ func validateRendering(rendering map[string]json.RawMessage) error {
 			Logo            *renderingURI `json:"logo"`
 			BackgroundImage *renderingURI `json:"background_image"`
 		}
-		if err := json.Unmarshal(raw, &simple); err != nil {
+		if err := strictjson.Unmarshal(raw, &simple); err != nil {
 			return fmt.Errorf("simple: %w", err)
 		}
 		if simple.Logo != nil {
@@ -209,7 +211,7 @@ func validateRendering(rendering map[string]json.RawMessage) error {
 	}
 	if raw, ok := rendering["svg_templates"]; ok {
 		var templates []renderingURI
-		if err := json.Unmarshal(raw, &templates); err != nil {
+		if err := strictjson.Unmarshal(raw, &templates); err != nil {
 			return fmt.Errorf("svg_templates: %w", err)
 		}
 		for i, tmpl := range templates {

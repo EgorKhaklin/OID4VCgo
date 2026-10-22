@@ -8,7 +8,9 @@ import (
 	"hash"
 )
 
-var b64 = base64.RawURLEncoding
+// b64 decodes strictly: an encoding whose unused trailing bits aren't zero
+// (RFC 4648 §3.5) is refused, as every encoder emits zero bits.
+var b64 = base64.RawURLEncoding.Strict()
 
 // HashAlg identifies the hash algorithm used for Disclosure digests
 // (RFC 9901 §4.1.1). Values are the "Hash Name String" from the IANA

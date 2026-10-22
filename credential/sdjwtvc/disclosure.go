@@ -121,7 +121,7 @@ func ParseDisclosure(s string) (Disclosure, error) {
 			return Disclosure{}, fmt.Errorf("sdjwtvc: disclosure salt: %w", err)
 		}
 		var v any
-		if err := json.Unmarshal(arr[1], &v); err != nil {
+		if err := strictjson.Unmarshal(arr[1], &v); err != nil {
 			return Disclosure{}, fmt.Errorf("sdjwtvc: disclosure value: %w", err)
 		}
 		d.Value = v
@@ -137,7 +137,7 @@ func ParseDisclosure(s string) (Disclosure, error) {
 			return Disclosure{}, fmt.Errorf("sdjwtvc: disclosure claim name %q is reserved", d.Name)
 		}
 		var v any
-		if err := json.Unmarshal(arr[2], &v); err != nil {
+		if err := strictjson.Unmarshal(arr[2], &v); err != nil {
 			return Disclosure{}, fmt.Errorf("sdjwtvc: disclosure value: %w", err)
 		}
 		d.Value = v
@@ -164,5 +164,5 @@ func jsonString(raw json.RawMessage, s *string) error {
 	if !bytes.HasPrefix(bytes.TrimSpace(raw), []byte(`"`)) {
 		return fmt.Errorf("not a string")
 	}
-	return json.Unmarshal(raw, s)
+	return strictjson.Unmarshal(raw, s)
 }

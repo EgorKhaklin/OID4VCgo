@@ -45,6 +45,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // Format is the verifier_info format a registration is carried as.
@@ -247,7 +248,7 @@ func VerifyWithPolicy(token string, roots *x509.CertPool, clientID string, now t
 		return Registration{}, fmt.Errorf("registration: signature: %w", err)
 	}
 	var c wireClaims
-	if err := json.Unmarshal(payload, &c); err != nil {
+	if err := strictjson.Unmarshal(payload, &c); err != nil {
 		return Registration{}, fmt.Errorf("registration: claims: %w", err)
 	}
 	issuedAt, iatErr := jwtdate.FromUnix(c.Iat)

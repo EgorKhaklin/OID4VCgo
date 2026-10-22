@@ -133,6 +133,15 @@ func (f Fetcher) Fetch(ctx context.Context, uri, mediaType string) ([]byte, erro
 // verifies it with CheckX5C or CheckCWTX5Chain — its signer's
 // certificate chain to Roots, its sub against the reference, and the
 // status at the reference's index.
+//
+// It doesn't know whose Referenced Token it's checking, so by itself it
+// binds the Status List Token's signer to nothing but Roots: under
+// roots shared by several issuers, any of them could sign a list that
+// decides another's credential's status. Bind the signer to the
+// credential's issuer with Options.Issuer, IssuerKey or LeafPolicy —
+// verifier.RequireValidStatus sets them from a verified credential,
+// for an SD-JWT VC and for an mdoc (ISO/IEC 18013-5 §12.3.6), and is
+// what a Verifier normally uses instead of calling Check directly.
 type Checker struct {
 	Fetcher Fetcher
 

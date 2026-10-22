@@ -22,6 +22,12 @@ type StoredCredential struct {
 	// ConfigurationID is the issuer's credential configuration it was
 	// issued under.
 	ConfigurationID string
+	// CredentialIdentifier is the credential_identifier it was requested
+	// by: the Credential Dataset it holds, of those its grant covers
+	// (OpenID4VCI 1.0 §6.2); "" when it was requested by its
+	// configuration, or stored before this was kept. A refresh asks for
+	// the same dataset.
+	CredentialIdentifier string
 	// Format is "dc+sd-jwt" or "mso_mdoc".
 	Format string
 	// VCT is an SD-JWT VC's type; DocType an mdoc's.

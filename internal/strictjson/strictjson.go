@@ -24,6 +24,12 @@ import (
 //     case-insensitively, in v and in every struct reached through its
 //     fields, slices, arrays and maps. A type with its own UnmarshalJSON
 //     isn't looked into.
+//
+// That includes json.RawMessage: duplicates inside one are refused
+// with the rest of the document, but its member names can only be
+// checked against the type it is later decoded into, so decode it
+// with Unmarshal too, never with encoding/json. A custom UnmarshalJSON
+// on protocol data should likewise decode with Unmarshal.
 func Unmarshal(data []byte, v any) error {
 	// json.Valid bounds the nesting depth before checkDuplicates
 	// recurses, and its error is encoding/json's own.

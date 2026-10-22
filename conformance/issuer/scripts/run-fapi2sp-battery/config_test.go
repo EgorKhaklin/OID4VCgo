@@ -66,3 +66,52 @@ func parsePEMCert(t *testing.T, s string) *x509.Certificate {
 	}
 	return cert
 }
+
+// TestBuildServerConfig_ServesMdocCRL checks the mdoc Document
+// Signer's CRL distribution point is where cmd/conformance-issuer is
+// told to serve its IACA's CRL, on the issuer's suite-network host,
+// and that the CRL is the IACA's, signed by it.
+func TestBuildServerConfig_ServesMdocCRL(t *testing.T) {
+	r, err := generateRun("test", "https://conformance-issuer:8443")
+	if err != nil {
+		t.Fatalf("generateRun: %v", err)
+	}
+	raw, err := buildServerConfig(r)
+	if err != nil {
+		t.Fatalf("buildServerConfig: %v", err)
+	}
+	var cfg struct {
+		Mdoc struct {
+			CertificatePEM            string `json:"certificate_pem"`
+			TrustAnchorCertificatePEM string `json:"trust_anchor_certificate_pem"`
+			CRLPEM                    string `json:"crl_pem"`
+			CRLListenAddr             string `json:"crl_listen_addr"`
+		}
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	ds := parsePEMCert(t, cfg.Mdoc.CertificatePEM)
+	iaca := parsePEMCert(t, cfg.Mdoc.TrustAnchorCertificatePEM)
+	const want = "http://conformance-issuer:8080/mdoc-iaca.crl"
+	if len(ds.CRLDistributionPoints) != 1 || ds.CRLDistributionPoints[0] != want {
+		t.Errorf("CRLDistributionPoints = %v, want [%s]", ds.CRLDistributionPoints, want)
+	}
+	if cfg.Mdoc.CRLListenAddr != ":8080" {
+		t.Errorf("crl_listen_addr = %q, want :8080", cfg.Mdoc.CRLListenAddr)
+	}
+	block, _ := pem.Decode([]byte(cfg.Mdoc.CRLPEM))
+	if block == nil || block.Type != "X509 CRL" {
+		t.Fatal("crl_pem holds no X509 CRL block")
+	}
+	crl, err := x509.ParseRevocationList(block.Bytes)
+	if err != nil {
+		t.Fatalf("ParseRevocationList: %v", err)
+	}
+	if !bytes.Equal(crl.RawIssuer, ds.RawIssuer) {
+		t.Error("CRL issuer is not the Document Signer certificate's issuer")
+	}
+	if err := crl.CheckSignatureFrom(iaca); err != nil {
+		t.Errorf("CRL signature: %v", err)
+	}
+}

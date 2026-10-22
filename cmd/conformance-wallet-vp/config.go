@@ -87,6 +87,16 @@ type Config struct {
 	MdocIssuerPrivateKeyPEM  string `json:"mdoc_issuer_private_key_pem,omitempty"`
 	MdocIssuerCertificatePEM string `json:"mdoc_issuer_certificate_pem,omitempty"`
 
+	// MdocCRLPEM/MdocCRLListenAddr, when both set, serve the IACA's
+	// CRL (internal/conformancecert.MdocCRLPEM) over plain HTTP on
+	// MdocCRLListenAddr at conformancecert.MdocCRLPath — the CRL
+	// distribution point MdocIssuerCertificatePEM names (ISO/IEC
+	// 18013-5 Table B.3 makes it mandatory), which the OIDF suite
+	// fetches and checks for every mdoc it's presented. Only used when
+	// CredentialFormat is "mso_mdoc".
+	MdocCRLPEM        string `json:"mdoc_crl_pem,omitempty"`
+	MdocCRLListenAddr string `json:"mdoc_crl_listen_addr,omitempty"`
+
 	// MdocDocType/MdocNamespace/MdocClaims describe the fixture mdoc
 	// this binary presents — the mdoc-format analog of VCT/Claims
 	// above. Only required when CredentialFormat is "mso_mdoc".
@@ -126,20 +136,8 @@ func loadConfig(path string) (Config, error) {
 		return Config{}, fmt.Errorf("config: holder_private_key_pem is required")
 	}
 	if cfg.isMdoc() {
-		if cfg.MdocIssuerPrivateKeyPEM == "" {
-			return Config{}, fmt.Errorf("config: mdoc_issuer_private_key_pem is required")
-		}
-		if err := conformancecert.RequireNonEmpty("mdoc_issuer_certificate_pem", cfg.MdocIssuerCertificatePEM); err != nil {
+		if err := cfg.checkMdoc(); err != nil {
 			return Config{}, err
-		}
-		if cfg.MdocDocType == "" {
-			return Config{}, fmt.Errorf("config: mdoc_doc_type is required")
-		}
-		if cfg.MdocNamespace == "" {
-			return Config{}, fmt.Errorf("config: mdoc_namespace is required")
-		}
-		if len(cfg.MdocClaims) == 0 {
-			return Config{}, fmt.Errorf("config: mdoc_claims must be non-empty")
 		}
 		return cfg, nil
 	}
@@ -202,6 +200,19 @@ func (c Config) mdocIssuerCertificate() (*x509.Certificate, error) {
 	return cert, nil
 }
 
+// mdocCRL is MdocCRLPEM's DER encoding, or nil when no CRL is
+// configured.
+func (c Config) mdocCRL() ([]byte, error) {
+	if c.MdocCRLPEM == "" {
+		return nil, nil
+	}
+	der, err := conformancecert.ParseCRLPEM(c.MdocCRLPEM)
+	if err != nil {
+		return nil, fmt.Errorf("mdoc_crl_pem: %w", err)
+	}
+	return der, nil
+}
+
 // verifierTrust is how Request Object certificate chains are trusted:
 // against VerifierTrustAnchorsPEM, or not at all when it's unset.
 func (c Config) verifierTrust() (wallet.VerifierTrust, error) {
@@ -213,4 +224,28 @@ func (c Config) verifierTrust() (wallet.VerifierTrust, error) {
 		return nil, fmt.Errorf("verifier_trust_anchors_pem holds no certificate")
 	}
 	return wallet.X5CVerifierRoots{Roots: roots}, nil
+}
+
+// checkMdoc checks the settings the "mso_mdoc" fixture credential
+// needs.
+func (c Config) checkMdoc() error {
+	if c.MdocIssuerPrivateKeyPEM == "" {
+		return fmt.Errorf("config: mdoc_issuer_private_key_pem is required")
+	}
+	if err := conformancecert.RequireNonEmpty("mdoc_issuer_certificate_pem", c.MdocIssuerCertificatePEM); err != nil {
+		return err
+	}
+	if c.MdocDocType == "" {
+		return fmt.Errorf("config: mdoc_doc_type is required")
+	}
+	if c.MdocNamespace == "" {
+		return fmt.Errorf("config: mdoc_namespace is required")
+	}
+	if len(c.MdocClaims) == 0 {
+		return fmt.Errorf("config: mdoc_claims must be non-empty")
+	}
+	if (c.MdocCRLPEM == "") != (c.MdocCRLListenAddr == "") {
+		return fmt.Errorf("config: mdoc_crl_pem and mdoc_crl_listen_addr must be set together")
+	}
+	return nil
 }

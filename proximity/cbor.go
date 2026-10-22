@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 )
 
 // tag24 is RFC 8949 §3.4.5.1's "encoded CBOR data item" tag, which
@@ -48,7 +49,7 @@ func mustSortedEncMode() cbor.EncMode {
 	return mode
 }
 
-func mustDecMode() cbor.DecMode {
+func mustDecMode() strictcbor.DecMode {
 	mode, err := cbor.DecOptions{
 		MaxArrayElements: 1 << 16,
 		MaxMapPairs:      1 << 16,
@@ -60,7 +61,7 @@ func mustDecMode() cbor.DecMode {
 	if err != nil {
 		panic(fmt.Sprintf("proximity: build CBOR decoder: %v", err))
 	}
-	return mode
+	return strictcbor.Wrap(mode)
 }
 
 // wrapTag24 encodes b, already-encoded CBOR, as #6.24(bstr .cbor X).

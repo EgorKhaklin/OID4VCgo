@@ -30,6 +30,15 @@ func TestParseDisclosure_RFC9901_ObjectProperty(t *testing.T) {
 	}
 }
 
+// The RFC's Disclosure with a nonzero unused bit in its last character
+// decodes to the same bytes under a lenient decoder: it's refused.
+func TestParseDisclosure_RefusesNonCanonicalBase64(t *testing.T) {
+	const encoded = "WyJfMjZiYzRMVC1hYzZxMktJNmNCVzVlcyIsICJmYW1pbHlfbmFtZSIsICJNw7ZiaXVzIl1"
+	if _, err := ParseDisclosure(encoded); err == nil {
+		t.Error("ParseDisclosure accepted a non-canonical encoding")
+	}
+}
+
 func TestDisclosureDigest_RFC9901_ObjectProperty(t *testing.T) {
 	const encoded = "WyJfMjZiYzRMVC1hYzZxMktJNmNCVzVlcyIsICJmYW1pbHlfbmFtZSIsICJNw7ZiaXVzIl0"
 	const wantDigest = "X9yH0Ajrdm1Oij4tWso9UzzKJvPoDxwmuEcO3XAdRC0"

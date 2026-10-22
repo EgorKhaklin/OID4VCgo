@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -51,6 +52,7 @@ func main() {
 			log.Fatalf("issue fixture mdoc credential: %v", err)
 		}
 		log.Printf("issued fixture %s credential (doctype=%s)", cred.Format, cfg.MdocDocType)
+		serveMdocCRL(cfg)
 	} else {
 		issuerKey, keyErr := cfg.credentialIssuerKey()
 		if keyErr != nil {
@@ -94,4 +96,23 @@ func main() {
 	}
 	log.Printf("listening on %s", cfg.ListenAddr)
 	log.Fatal(httpServer.ListenAndServeTLS("", ""))
+}
+
+// serveMdocCRL starts the plain-HTTP listener for the IACA's CRL when
+// the config has one — the CRL distribution point of the fixture
+// mdoc's Document Signer certificate, which the OIDF suite fetches
+// and checks for every mdoc presented to it.
+func serveMdocCRL(cfg Config) {
+	crl, err := cfg.mdocCRL()
+	if err != nil {
+		log.Fatalf("mdoc crl: %v", err)
+	}
+	if crl == nil {
+		log.Printf("WARNING: mdoc_crl_pem is unset: nothing serves the Document Signer certificate's CRL distribution point")
+		return
+	}
+	go func() {
+		log.Fatal(conformancecert.ServeMdocCRL(cfg.MdocCRLListenAddr, crl))
+	}()
+	log.Printf("serving the mdoc IACA CRL on http://%s%s", cfg.MdocCRLListenAddr, conformancecert.MdocCRLPath)
 }

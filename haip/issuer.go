@@ -29,7 +29,13 @@ func RecommendedJWTProofType() oid4vci.ProofTypeConfiguration {
 // Wallets to support the format specified in Appendix D ... in
 // combination with ... attestation proof type."
 //
-// RecommendedJWTKeyAttestationProofType is §4.5.1's other combination.
+// RecommendedJWTKeyAttestationProofType is §4.5.1's other combination,
+// and the one to prefer where the issuer chooses its proof types: an
+// attestation proof names no audience, so its only binding to this
+// issuer is a c_nonce from the unauthenticated Nonce Endpoint, and a
+// key attestation can be relayed between issuers (see
+// oid4vci.ProofTypeAttestation), whereas a jwt proof is signed by an
+// attested key and names the issuer in aud.
 func RecommendedAttestationProofType() oid4vci.ProofTypeConfiguration {
 	return oid4vci.ProofTypeConfiguration{
 		ProofSigningAlgValuesSupported: []string{string(RecommendedJOSEAlgorithm)},

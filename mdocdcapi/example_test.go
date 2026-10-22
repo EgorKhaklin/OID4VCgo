@@ -84,6 +84,9 @@ func ExampleBuildRequest() {
 		Pending:    req.Pending,
 		Response:   base64.RawURLEncoding.EncodeToString(encrypted),
 		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: iacaRoots},
+		// Every issuer under the IACA may issue the doctype, and the
+		// example document carries no status reference.
+		Assurance: verifier.AssuranceProduction, AnyIssuerForAnyType: true, NoStatusCheck: true,
 	}))
 	fmt.Println("docType:", verified.DocType)
 	fmt.Println("age_over_18:", verified.NameSpaces[ns]["age_over_18"])

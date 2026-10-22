@@ -39,11 +39,17 @@ func keyAttestationForJWT(t *testing.T, signer *ecdsa.PrivateKey, nonce string, 
 // keyAttestation in its header (Appendix F.1).
 func jwtProofWithKeyAttestation(t *testing.T, key *ecdsa.PrivateKey, nonce, keyAttestation string) string {
 	t.Helper()
+	return jwtProofWithKeyAttestationFor(t, key, testIssuer, nonce, keyAttestation)
+}
+
+// jwtProofWithKeyAttestationFor is jwtProofWithKeyAttestation with aud.
+func jwtProofWithKeyAttestationFor(t *testing.T, key *ecdsa.PrivateKey, aud, nonce, keyAttestation string) string {
+	t.Helper()
 	var jwkObj map[string]any
 	if err := json.Unmarshal(jwkJSON(t, &key.PublicKey), &jwkObj); err != nil {
 		t.Fatal(err)
 	}
-	payload, _ := json.Marshal(map[string]any{"aud": testIssuer, "iat": time.Now().Unix(), "nonce": nonce})
+	payload, _ := json.Marshal(map[string]any{"aud": aud, "iat": time.Now().Unix(), "nonce": nonce})
 	raw, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "openid4vci-proof+jwt", "jwk": jwkObj, "key_attestation": keyAttestation}, payload)
 	if err != nil {
 		t.Fatal(err)
@@ -109,4 +115,39 @@ func TestRequestCredential_JWTProofKeyAttestation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// An issuer offering the jwt proof type without key_attestations_required
+// beside the attestation proof type, as a HAIP wallet finds it, takes a
+// jwt proof carrying a key_attestation: it's verified as one required
+// would be, and a Credential is issued for each key it attests. A proof
+// whose aud is another issuer's is refused with it, which is what binds
+// the key attestation to this issuer.
+func TestRequestCredential_JWTProofKeyAttestationNotRequired(t *testing.T) {
+	a, b := testP256Key(t), testP256Key(t)
+	request := func(f credentialEndpointFixture, proofs []string) (oid4vci.CredentialResponse, error) {
+		return f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+			CredentialConfigurationID: testSDJWTConfigID,
+			Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: proofs},
+			SDJWTClaims:               testSDJWTClaims(),
+		})
+	}
+	f := newCredentialEndpointFixture(t)
+	conf := f.iss.Metadata().CredentialConfigurationsSupported[testSDJWTConfigID]
+	if conf.ProofTypesSupported[oid4vci.ProofTypeJWT].KeyAttestationsRequired != nil {
+		t.Fatal("the fixture's jwt proof type requires key attestations")
+	}
+	if _, ok := conf.ProofTypesSupported[oid4vci.ProofTypeAttestation]; !ok {
+		t.Fatal("the fixture offers no attestation proof type")
+	}
+	n := f.issueNonce(t)
+	resp, err := request(f, []string{jwtProofWithKeyAttestation(t, a, n, keyAttestationForJWT(t, f.attestationSigner, n, false, &a.PublicKey, &b.PublicKey))})
+	if err != nil || len(resp.Credentials) != 2 {
+		t.Fatalf("issued %d credentials, %v; want 2", len(resp.Credentials), err)
+	}
+
+	f = newCredentialEndpointFixture(t)
+	n = f.issueNonce(t)
+	_, err = request(f, []string{jwtProofWithKeyAttestationFor(t, a, "https://other-issuer.example.com", n, keyAttestationForJWT(t, f.attestationSigner, n, false, &a.PublicKey))})
+	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }

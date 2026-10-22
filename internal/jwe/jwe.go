@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"io"
@@ -43,7 +44,9 @@ type Zip string
 // only registered "zip" value.
 const DEF Zip = "DEF"
 
-var b64 = base64.RawURLEncoding
+// b64 decodes strictly: an encoding whose unused trailing bits aren't zero
+// (RFC 4648 §3.5) is refused, as every encoder emits zero bits.
+var b64 = base64.RawURLEncoding.Strict()
 
 // MaxCompactBytes bounds how large a compact JWE Decrypt/DecodeHeader
 // will attempt to parse, to avoid doing unbounded base64url-decode and
@@ -71,7 +74,7 @@ func encKeyLen(enc Enc) (int, error) {
 	case A256GCM:
 		return 32, nil
 	default:
-		return 0, fmt.Errorf("jwe: unsupported enc %q", enc)
+		return 0, errors.New("jwe: unsupported enc")
 	}
 }
 
@@ -197,7 +200,7 @@ func DecryptLimits(priv *ecdsa.PrivateKey, compact string, maxBytes, maxInflated
 	}
 
 	if algStr, _ := header["alg"].(string); algStr != string(ECDHES) {
-		return nil, fmt.Errorf("jwe: unsupported alg %q", header["alg"])
+		return nil, errors.New("jwe: unsupported alg")
 	}
 	encStr, _ := header["enc"].(string)
 	keyLen, err := encKeyLen(Enc(encStr))
@@ -263,7 +266,7 @@ func DecryptLimits(priv *ecdsa.PrivateKey, compact string, maxBytes, maxInflated
 
 	if zipStr, _ := header["zip"].(string); zipStr != "" {
 		if zipStr != string(DEF) {
-			return nil, fmt.Errorf("jwe: unsupported zip %q", zipStr)
+			return nil, errors.New("jwe: unsupported zip")
 		}
 		plaintext, err = inflate(plaintext, maxInflated)
 		if err != nil {
@@ -304,7 +307,10 @@ func splitCompact(compact string) (header map[string]any, encHeader, iv, ciphert
 	if err != nil {
 		return nil, "", "", "", "", fmt.Errorf("jwe: decode header: %w", err)
 	}
-	if err := json.Unmarshal(raw, &header); err != nil {
+	// strictjson: a Header Parameter named twice is refused (RFC 7516
+	// §4), not read last-wins, which another parser of the same header
+	// may not do.
+	if err := strictjson.Unmarshal(raw, &header); err != nil {
 		return nil, "", "", "", "", fmt.Errorf("jwe: unmarshal header: %w", err)
 	}
 	// "crit" (RFC 7516 §4.1.13) names header parameters a recipient
@@ -313,11 +319,13 @@ func splitCompact(compact string) (header map[string]any, encHeader, iv, ciphert
 	// mandatory ECDH-ES+GCM profile never requires one, and no sender
 	// in this repo ever sets "crit" — so any non-empty "crit" on an
 	// incoming JWE is, by construction, naming something this package
-	// doesn't understand.
+	// doesn't understand. An empty one is refused too: producers "MUST
+	// NOT use the empty list" (RFC 7515 §4.1.11).
 	if crit, ok := header["crit"]; ok {
-		if arr, ok := crit.([]any); !ok || len(arr) > 0 {
-			return nil, "", "", "", "", fmt.Errorf("jwe: JWE names a critical header extension this package does not understand: %v", crit)
+		if arr, ok := crit.([]any); ok && len(arr) == 0 {
+			return nil, "", "", "", "", errors.New(`jwe: JWE has an empty "crit" header parameter`)
 		}
+		return nil, "", "", "", "", errors.New("jwe: JWE names a critical header extension this package does not understand")
 	}
 	return header, parts[0], parts[2], parts[3], parts[4], nil
 }
@@ -360,7 +368,7 @@ func decodeEPK(header map[string]any) (*ecdh.PublicKey, error) {
 		return nil, fmt.Errorf("jwe: unmarshal epk: %w", err)
 	}
 	if epk.Kty != "EC" || epk.Crv != "P-256" {
-		return nil, fmt.Errorf("jwe: epk has unsupported kty/crv (%q/%q); only EC P-256 is supported", epk.Kty, epk.Crv)
+		return nil, errors.New("jwe: epk has an unsupported kty/crv; only EC P-256 is supported")
 	}
 	x, err := b64.DecodeString(epk.X)
 	if err != nil {

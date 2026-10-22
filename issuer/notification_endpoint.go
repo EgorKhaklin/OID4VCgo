@@ -20,6 +20,18 @@ const notificationIDEntropyBytes = 32
 // to take subsequent actions after issuance"). Its return value is
 // only ever surfaced as a plain (non-Error) error — a handler failure
 // isn't itself evidence the Notification Request was malformed.
+//
+// It's called only for a notificationID this issuer issued, sent with
+// an access token of the client and Subject it was issued to
+// (NotificationRecord): RequestNotification checks that first. To
+// know which holder and issuance the event is about, look the
+// notificationID up in Dependencies.Notifications (whose
+// NotificationRecord names the client and Subject) or in the
+// deployment's own records of what it issued. The same request may
+// arrive any number of times — §11 requires each repeat to succeed,
+// so nothing limits them — and a later event may follow an earlier
+// one for the same notificationID: act on an event idempotently, and
+// don't count deliveries.
 type NotificationHandler interface {
 	HandleNotification(ctx context.Context, notificationID string, event oid4vci.NotificationEvent, description string) error
 }

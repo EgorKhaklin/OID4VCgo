@@ -15,13 +15,13 @@ func TestWalletflowConfig_IssuerTrustOptions(t *testing.T) {
 	ca, _ := testcert.CA(t, "metadata root")
 	roots := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}))
 	wcfg, err := walletConfig(config{
-		Development: true, RequireIssuerName: true, IssuerMetadataRoots: roots,
+		Development: true, RequireIssuerName: true, AllowForeignIss: true, IssuerMetadataRoots: roots,
 		RequireSignedIssuerMetadata: true, RequireIssuerMetadataName: true, MaxIssuerMetadataAgeSeconds: 3600,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !wcfg.RequireIssuerName || wcfg.IssuerMetadataRoots == nil || !wcfg.RequireSignedIssuerMetadata ||
+	if !wcfg.RequireIssuerName || !wcfg.AllowForeignIss || wcfg.IssuerMetadataRoots == nil || !wcfg.RequireSignedIssuerMetadata ||
 		!wcfg.RequireIssuerMetadataName || wcfg.MaxIssuerMetadataAge != time.Hour {
 		t.Errorf("walletflow.Config = %+v", wcfg)
 	}

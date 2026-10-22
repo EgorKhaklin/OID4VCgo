@@ -218,9 +218,12 @@ func (w *Wallet) lockGrant(id string) func() {
 // use a copy no Verifier has seen.
 //
 // It returns an error wrapping ErrReissueRequired when the credential
-// can't be refreshed: it came without a refresh token, or the
-// Authorization Server no longer accepts it (invalid_grant). Receive it
-// again from a new Credential Offer then.
+// can't be refreshed: it came without a refresh token, the
+// Authorization Server no longer accepts it (invalid_grant), or the
+// wallet can't ask for the same Credential Dataset again: its grant
+// covers several of its configuration, and the token no longer grants
+// its credential_identifier, or which one it holds wasn't kept. Receive
+// it again from a new Credential Offer then.
 //
 // If the issuer defers the new credential, the old one stays as it is
 // and the Deferred is returned to poll: once settled, its credential
@@ -279,7 +282,11 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	if err != nil {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: %w", err)
 	}
-	stored, deferred, err := s.request(ctx, old.ConfigurationID, s.firstIdentifier(old.ConfigurationID), requestEnc, responseEnc)
+	identifier, err := w.refreshIdentifier(ctx, old, s.identifiers[old.ConfigurationID])
+	if err != nil {
+		return StoredCredential{}, nil, err
+	}
+	stored, deferred, err := s.request(ctx, old.ConfigurationID, identifier, requestEnc, responseEnc)
 	if err != nil {
 		return StoredCredential{}, nil, err
 	}
@@ -287,6 +294,52 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 		return old, deferred, nil
 	}
 	return stored, nil, nil
+}
+
+// refreshIdentifier is the credential_identifier a refresh of old asks
+// for, of granted, those the refreshed token granted for its
+// configuration; "" to ask by the configuration, where the token granted
+// none (OpenID4VCI 1.0 §8.2). One grant may cover several Credential
+// Datasets of a configuration (§6.2), each stored as its own credential:
+// a refresh asks for the dataset old holds, and never guesses, as
+// asking for another would replace old with it. It's ErrReissueRequired
+// when the token no longer grants old's dataset, or when the wallet
+// can't tell which dataset old holds: it was stored before its
+// credential_identifier was kept, or the token names none, and the grant
+// issued more than one.
+func (w *Wallet) refreshIdentifier(ctx context.Context, old StoredCredential, granted []string) (string, error) {
+	if old.CredentialIdentifier != "" && len(granted) > 0 {
+		if !slices.Contains(granted, old.CredentialIdentifier) {
+			return "", fmt.Errorf("walletflow: refresh credential: the refreshed token no longer grants its credential_identifier: %w", ErrReissueRequired)
+		}
+		return old.CredentialIdentifier, nil
+	}
+	ambiguous := len(granted) > 1
+	if !ambiguous {
+		var err error
+		if ambiguous, err = w.sharesGrant(ctx, old); err != nil {
+			return "", fmt.Errorf("walletflow: refresh credential: %w", err)
+		}
+	}
+	switch {
+	case ambiguous:
+		return "", fmt.Errorf("walletflow: refresh credential: its grant covers several credentials of its configuration, and which it is wasn't kept: %w", ErrReissueRequired)
+	case len(granted) == 1:
+		return granted[0], nil
+	}
+	return "", nil
+}
+
+// sharesGrant reports whether another stored credential has c's grant
+// and configuration: another Credential Dataset its issuance obtained.
+func (w *Wallet) sharesGrant(ctx context.Context, c StoredCredential) (bool, error) {
+	all, err := w.deps.Credentials.List(ctx)
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(all, func(o StoredCredential) bool {
+		return o.ID != c.ID && o.GrantID == c.GrantID && o.ConfigurationID == c.ConfigurationID
+	}), nil
 }
 
 // loadGrant is the refresh grant of credential c, with the key its

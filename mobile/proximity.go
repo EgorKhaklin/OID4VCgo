@@ -10,9 +10,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
+	"github.com/idfoundry/oid4vcgo/internal/displaytext"
 	"github.com/idfoundry/oid4vcgo/proximity"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
@@ -355,21 +354,8 @@ func (p *ProximityPresentation) Terminate() string {
 	return text
 }
 
-// displayName is a certificate's name fit for the holder's screen:
-// control characters and Unicode bidirectional formatting characters
-// dropped, at most 200 runes.
-func displayName(s string) string {
-	var b strings.Builder
-	n := 0
-	for _, r := range s {
-		if n == 200 {
-			break
-		}
-		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) || r == utf8.RuneError {
-			continue
-		}
-		b.WriteRune(r)
-		n++
-	}
-	return strings.TrimSpace(b.String())
-}
+// displayName is a certificate's name fit for the holder's screen, as
+// walletflow fits an issuer's or Verifier's (displaytext.Clean): no
+// control, line separator or invisible format characters, at most 200
+// runes.
+func displayName(s string) string { return displaytext.Clean(s, 200) }

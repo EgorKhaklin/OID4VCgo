@@ -9,6 +9,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"maps"
 	"net/url"
 	"reflect"
@@ -734,7 +735,7 @@ func credentialIdentifiers(raw json.RawMessage) (map[string][]string, error) {
 		return nil, nil
 	}
 	var details []oid4vci.AuthorizationDetail
-	if err := json.Unmarshal(raw, &details); err != nil {
+	if err := strictjson.Unmarshal(raw, &details); err != nil {
 		return nil, fmt.Errorf("authorization_details: %w", err)
 	}
 	return identifiersByConfiguration(details), nil
@@ -874,16 +875,6 @@ func (s *Issuance) requestUnits() []requestUnit {
 	return out
 }
 
-// firstIdentifier is a credential_identifier granted for configID, ""
-// for none: a refresh can't tell which dataset the credential it
-// replaces came from, so it asks for the first.
-func (s *Issuance) firstIdentifier(configID string) string {
-	if ids := s.identifiers[configID]; len(ids) > 0 {
-		return ids[0]
-	}
-	return ""
-}
-
 // permanent reports whether err, requesting one credential, won't go
 // away by asking again: the credential failed the wallet's checks, or
 // the issuer refused the request itself (an HTTP 4xx) rather than the
@@ -923,7 +914,7 @@ func (s *Issuance) request(ctx context.Context, configID, identifier string, req
 		return StoredCredential{}, nil, err
 	}
 	if result.TransactionID != "" {
-		d, err := s.deferred(ctx, configID, holders, result, requestEnc, responseEnc)
+		d, err := s.deferred(ctx, configID, identifier, holders, result, requestEnc, responseEnc)
 		if err != nil {
 			return StoredCredential{}, nil, err
 		}
@@ -936,7 +927,7 @@ func (s *Issuance) request(ctx context.Context, configID, identifier string, req
 	}
 	stored, err := s.w.accept(ctx, issued{
 		issuer: s.offer.CredentialIssuer, metadata: s.metadata, resource: s.resource,
-		configID: configID, holders: holders, result: result, grantID: grantID, replace: s.replace,
+		configID: configID, identifier: identifier, holders: holders, result: result, grantID: grantID, replace: s.replace,
 	})
 	if err != nil {
 		return StoredCredential{}, nil, err
@@ -1086,8 +1077,9 @@ func (s *Issuance) jwtProofsWithKeyAttestation(ctx context.Context, nonce string
 	return holders, req, nil
 }
 
-// deferred keeps a credential the issuer deferred, with holders, to poll.
-func (s *Issuance) deferred(ctx context.Context, configID string, holders []Key, result wallet.CredentialResult,
+// deferred keeps a credential the issuer deferred, requested by
+// identifier ("" for none), with holders, to poll.
+func (s *Issuance) deferred(ctx context.Context, configID, identifier string, holders []Key, result wallet.CredentialResult,
 	requestEnc *wallet.RequestEncryption, responseEnc *wallet.ResponseEncryption) (*Deferred, error) {
 	if s.metadata.DeferredCredentialEndpoint == nil {
 		return nil, fmt.Errorf("walletflow: credential %q was deferred, but the issuer advertises no deferred credential endpoint", configID)
@@ -1103,8 +1095,8 @@ func (s *Issuance) deferred(ctx context.Context, configID string, holders []Key,
 		return nil, err
 	}
 	p := PendingDeferred{
-		ID: id, CredentialIssuer: s.offer.CredentialIssuer, ConfigurationID: configID, TransactionID: result.TransactionID,
-		AccessToken: s.accessToken, AccessTokenExpiresAt: s.accessExpiresAt,
+		ID: id, CredentialIssuer: s.offer.CredentialIssuer, ConfigurationID: configID, CredentialIdentifier: identifier,
+		TransactionID: result.TransactionID, AccessToken: s.accessToken, AccessTokenExpiresAt: s.accessExpiresAt,
 		HolderKeyIDs: keyIDs(holders), Interval: result.Interval, DeferredAt: s.w.deps.Clock().UTC(),
 		GrantID: grantID, Replaces: s.replace,
 	}
@@ -1156,15 +1148,16 @@ func keyIDs(keys []Key) []string {
 var errInvalidCredential = errors.New("is invalid")
 
 // issued is a credential result to accept: from issuer, under
-// metadata, polled with resource, for configID, its copies bound to
-// holders.
+// metadata, polled with resource, for configID by identifier ("" for
+// none), its copies bound to holders.
 type issued struct {
-	issuer   string
-	metadata oid4vci.Metadata
-	resource wallet.ProtectedResourceClient
-	configID string
-	holders  []Key
-	result   wallet.CredentialResult
+	issuer     string
+	metadata   oid4vci.Metadata
+	resource   wallet.ProtectedResourceClient
+	configID   string
+	identifier string
+	holders    []Key
+	result     wallet.CredentialResult
 	// grantID is the RefreshGrant that can refresh it, if any; replace,
 	// the stored credential it replaces, if any.
 	grantID, replace string
@@ -1188,7 +1181,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 	copies := make([]CredentialCopy, 0, len(c.result.Credentials))
 	var first wallet.VerifiedIssuedCredential
 	for i, ic := range c.result.Credentials {
-		verified, key, err := w.verifyCopy(ctx, conf, ic.Credential, unbound, now)
+		verified, key, err := w.verifyCopy(ctx, c.issuer, conf, ic.Credential, unbound, now)
 		if err != nil {
 			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential failed the wallet's checks")
 			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: %w", c.configID, errInvalidCredential, err)
@@ -1218,7 +1211,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		}
 	}
 	stored := StoredCredential{
-		ID: id, CredentialIssuer: c.issuer, ConfigurationID: c.configID,
+		ID: id, CredentialIssuer: c.issuer, ConfigurationID: c.configID, CredentialIdentifier: c.identifier,
 		Format: conf.Format, VCT: conf.VCT, DocType: conf.DocType,
 		Credential: copies[0].Credential, HolderKeyID: copies[0].HolderKeyID, Copies: copies,
 		ReceivedAt: now.UTC(), Claims: first.Claims,
@@ -1249,13 +1242,18 @@ func (w *Wallet) store(ctx context.Context, stored StoredCredential, c issued) e
 	return w.replaceStored(ctx, stored, c.grantID)
 }
 
-// verifyCopy checks one copy, and finds which of keys it's bound to.
-func (w *Wallet) verifyCopy(ctx context.Context, conf oid4vci.CredentialConfigurationMetadata, credential string, keys []Key, now time.Time) (wallet.VerifiedIssuedCredential, Key, error) {
+// verifyCopy checks one copy, requested from issuer, and finds which of
+// keys it's bound to.
+func (w *Wallet) verifyCopy(ctx context.Context, issuer string, conf oid4vci.CredentialConfigurationMetadata, credential string, keys []Key, now time.Time) (wallet.VerifiedIssuedCredential, Key, error) {
+	if w.cfg.AllowForeignIss {
+		issuer = ""
+	}
 	var lastErr error
 	for _, k := range keys {
 		verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
 			Configuration: conf, Credential: credential, HolderKey: k.Public(),
 			IssuerRoots: w.cfg.IssuerRoots, IssuerLeafPolicy: w.cfg.IssuerLeafPolicy, Now: now, RequireIssuerName: w.cfg.RequireIssuerName,
+			CredentialIssuer: issuer,
 		})
 		if err == nil {
 			return verified, k, nil

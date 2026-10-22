@@ -294,8 +294,16 @@ func (a *App) buildIssuer() error {
 		return fmt.Errorf("issuerapp: request decryption key: %w", err)
 	}
 	encValues := []oid4vci.JWEEnc{oid4vci.A256GCM, oid4vci.A128GCM}
-	// Key attestation is required: attestation is the only proof type.
-	proofTypes := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: haip.RecommendedAttestationProofType()}
+	// Key attestation is required, in either of HAIP 1.0 §4.5.1's
+	// combinations: jwt proofs carrying it in their key_attestation
+	// header, whose aud binds them to this issuer, or the attestation
+	// proof type, which names no audience. The wallets send jwt proofs,
+	// so another issuer can't redeem their attestation here; the
+	// attestation type stays for wallets that send only that.
+	proofTypes := map[string]oid4vci.ProofTypeConfiguration{
+		oid4vci.ProofTypeJWT:         haip.RecommendedJWTKeyAttestationProofType(),
+		oid4vci.ProofTypeAttestation: haip.RecommendedAttestationProofType(),
+	}
 	a.issuer, err = issuer.New(issuer.Config{
 		Assurance: issuer.AssuranceDevelopment,
 		Issuer:    a.issuerURL,

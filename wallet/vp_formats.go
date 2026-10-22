@@ -13,6 +13,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // VPFormats is a Verifier's vp_formats_supported (OpenID4VP 1.0 §11.1,
@@ -44,7 +45,7 @@ func parseVPFormats(clientMetadata json.RawMessage) (VPFormats, error) {
 	if len(clientMetadata) == 0 {
 		return nil, nil
 	}
-	if err := json.Unmarshal(clientMetadata, &meta); err != nil {
+	if err := strictjson.Unmarshal(clientMetadata, &meta); err != nil {
 		return nil, fmt.Errorf("client_metadata.vp_formats_supported: %w", err)
 	}
 	return meta.VPFormats, nil

@@ -29,10 +29,14 @@ const MetadataJWSTyp = "openidvci-issuer-metadata+jwt"
 // §12.2.4 defines), so this just adds the REQUIRED "sub" (the
 // Credential Issuer Identifier — read back out of the marshaled
 // metadata itself, since it's the same value as its own
-// "credential_issuer" member) and "iat" claims. "iss"/"exp" are both
-// OPTIONAL and left out: nothing about a signer's own identity is
-// distinguishable from credential_issuer, and metadata has no separate
-// validity window of its own. The "x5c" header entry is how a Wallet
+// "credential_issuer" member) and "iat" claims, and an "exp"
+// DefaultMetadataLifetime after iat. "iss" is OPTIONAL and left out:
+// nothing about a signer's own identity is distinguishable from
+// credential_issuer. "exp" is OPTIONAL too, but without it a captured
+// copy would verify for as long as its certificate, so a Wallet that
+// doesn't bound the age itself would accept metadata long since
+// replaced; the copy must therefore be signed again before it expires
+// (NewMetadataHandler does that). The "x5c" header entry is how a Wallet
 // resolves the signing key here (§12.2.3: "e.g., using JOSE header
 // parameters like x5c, kid or trust_chain") — this repo's own
 // established convention (see verifier/authorization_request.go's
@@ -42,11 +46,12 @@ const MetadataJWSTyp = "openidvci-issuer-metadata+jwt"
 // the CA certificates between it and the trust anchor, in order, the
 // anchor left out: x5c carries cert followed by them (HAIP 1.0 §4.1).
 func SignMetadataJWS(meta oid4vci.Metadata, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate, intermediates ...*x509.Certificate) (string, error) {
-	return signMetadataJWSAt(time.Now(), meta, signer, alg, cert, intermediates...)
+	return signMetadataJWSAt(time.Now(), DefaultMetadataLifetime, meta, signer, alg, cert, intermediates...)
 }
 
-// signMetadataJWSAt is SignMetadataJWS with iat now.
-func signMetadataJWSAt(now time.Time, meta oid4vci.Metadata, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate, intermediates ...*x509.Certificate) (string, error) {
+// signMetadataJWSAt is SignMetadataJWS with iat now and exp lifetime
+// later.
+func signMetadataJWSAt(now time.Time, lifetime time.Duration, meta oid4vci.Metadata, signer crypto.Signer, alg oid4vci.JOSEAlg, cert *x509.Certificate, intermediates ...*x509.Certificate) (string, error) {
 	if err := certchain.CheckPresentedChain(cert, intermediates); err != nil {
 		return "", fmt.Errorf("issuer: sign metadata: %w", err)
 	}
@@ -64,6 +69,7 @@ func signMetadataJWSAt(now time.Time, meta oid4vci.Metadata, signer crypto.Signe
 	}
 	claims["sub"] = sub
 	claims["iat"] = now.Unix()
+	claims["exp"] = now.Add(lifetime).Unix()
 
 	claimsJSON, err := json.Marshal(claims)
 	if err != nil {
@@ -100,10 +106,23 @@ type MetadataSigner struct {
 	// again, so its iat stays recent for a Wallet bounding its age.
 	// Zero means DefaultMetadataRefresh.
 	Refresh time.Duration
+
+	// Lifetime is how long each signed copy is valid: its exp is
+	// Lifetime after its iat, so a captured copy stops verifying once
+	// the metadata has been signed again for long enough. It must be
+	// longer than Refresh, so a Wallet is never served an expired copy,
+	// and is best well over it, so a Wallet that caches the copy can
+	// use it for a while. Zero means DefaultMetadataLifetime, or twice
+	// Refresh if that is longer.
+	Lifetime time.Duration
 }
 
 // DefaultMetadataRefresh is MetadataSigner.Refresh's default.
 const DefaultMetadataRefresh = time.Hour
+
+// DefaultMetadataLifetime is MetadataSigner.Lifetime's default, and
+// the lifetime SignMetadataJWS gives its JWS.
+const DefaultMetadataLifetime = 24 * time.Hour
 
 // NewMetadataHandler serves the Credential Issuer Metadata at
 // /.well-known/openid-credential-issuer (§12.2): signed (§12.2.3) to a
@@ -137,6 +156,12 @@ func NewMetadataHandler(iss *Issuer, signer *MetadataSigner) (http.Handler, erro
 	if s.Refresh <= 0 {
 		s.Refresh = DefaultMetadataRefresh
 	}
+	switch {
+	case s.Lifetime == 0:
+		s.Lifetime = max(DefaultMetadataLifetime, 2*s.Refresh)
+	case s.Lifetime <= s.Refresh:
+		return nil, fmt.Errorf("issuer: metadata handler: Lifetime %s must be longer than Refresh %s, or Wallets are served expired metadata", s.Lifetime, s.Refresh)
+	}
 	h.signer = &s
 	if _, err := h.signed(); err != nil {
 		return nil, fmt.Errorf("issuer: metadata handler: %w", err)
@@ -162,7 +187,7 @@ func (h *metadataHandler) signed() (string, error) {
 		return h.jws, nil
 	}
 	s := h.signer
-	jws, err := signMetadataJWSAt(now, h.iss.Metadata(), s.Signer, s.Alg, s.Certificate, s.Intermediates...)
+	jws, err := signMetadataJWSAt(now, s.Lifetime, h.iss.Metadata(), s.Signer, s.Alg, s.Certificate, s.Intermediates...)
 	if err != nil {
 		return "", err
 	}

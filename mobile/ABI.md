@@ -134,15 +134,16 @@ Opaque records kept by ID, under the platform's data protection.
 A record is JSON the app needn't read: `id`, `credential_issuer`,
 `configuration_id`, `format`, `vct`, `doctype`, `credential`,
 `holder_key_id`, `received_at`, `claims`, `display`, `valid_until`,
-`status_list`, `status_list_cwt`, `status` and `grant_id`, and `copies`
-(each copy's `credential`, `holder_key_id`, `presented`, `shown_to`,
-and its own `status_list` and `valid_until`). A record written before a
-field was kept lacks it.
+`status_list`, `status_list_cwt`, `status`, `grant_id` and
+`credential_identifier` (the dataset a refresh asks for again), and
+`copies` (each copy's `credential`, `holder_key_id`, `presented`,
+`shown_to`, and its own `status_list` and `valid_until`). A record
+written before a field was kept lacks it.
 
 The store also keeps each **pending deferred credential**, under the ID
 `deferred-<id>`, as a record with `"kind": "deferred"`. The record holds
-what polling it after a relaunch needs: the issuer, the configuration,
-the transaction ID, the access token and its expiry, the DPoP key ID
+what polling it after a relaunch needs: the issuer, the configuration
+and credential_identifier, the transaction ID, the access token and its expiry, the DPoP key ID
 and every copy's holder key ID, the interval, when it was deferred,
 and the grant it came from and the credential it replaces, if any. The access token is
 bound to the DPoP key, which never leaves the KeyStore — unless the
@@ -203,7 +204,7 @@ library's an `IOException`.
  "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "proximity_device_auth": "signature",
  "status_issuers": {"https://issuer.example": ["https://status.example"]},
  "require_issuer_name": false, "issuer_metadata_roots": "<PEM>", "require_signed_issuer_metadata": false,
- "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0}
+ "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0, "allow_foreign_iss": false}
 ```
 
 `issuer_roots` is needed to receive credentials, and `verifier_roots` to
@@ -277,6 +278,13 @@ within ABI version 12.
 `require_issuer_name` refuses a received SD-JWT VC whose `iss` its
 signing certificate doesn't name; SD-JWT VC doesn't require them to
 correspond, so set it where `issuer_roots` certify several issuers.
+A received, deferred or refreshed SD-JWT VC whose `iss` isn't the
+`credential_issuer` it was requested from is refused, so an issuer
+can't hand over another's credential, issued for the holder's keys, as
+its own; one without `iss` names nothing to check. `allow_foreign_iss`
+receives it: OpenID4VCI §14.4 lets a credential name its issuer
+differently, so set it only for issuers that do, where `issuer_roots`
+certify them alone. Added within ABI version 12.
 `issuer_metadata_roots` are the trust anchors for signed Credential
 Issuer Metadata (OpenID4VCI §12.2.3, HAIP 1.0 §4.1): with them, signed
 metadata is asked for and verified. `require_signed_issuer_metadata`
@@ -348,7 +356,7 @@ Provider, are the app's to pin.
 | `AbandonDeferred(deferredID)` | deletes a pending one and its keys, for example after its access token has expired, and its refresh grant once nothing else uses it, revoking the refresh token at the Authorization Server, best effort: a network request |
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder keys, and its refresh grant with the grant's instance key once no other credential uses it. The refresh token is first revoked at the Authorization Server (RFC 7009), best effort, when it has a revocation endpoint: a network request, so call it off the main thread |
-| `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new attested key, under the same ID, without the holder. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which settles as a new credential. One that can't be refreshed (no refresh token was kept, or the Authorization Server no longer accepts it) is `reissue_required`: receive it again from a new offer |
+| `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new attested key, under the same ID, without the holder. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which settles as a new credential. One that can't be refreshed (no refresh token was kept, the Authorization Server no longer accepts it, or its grant issued several datasets of its configuration and the wallet can't ask for the one it holds again) is `reissue_required`: receive it again from a new offer |
 | `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list and checks the list's signature against `issuer_roots`. The list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status list is returned as it is, as is an expired one: it isn't valid whatever its status, so its status list isn't fetched (draft-ietf-oauth-status-list §8.3) |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
@@ -606,7 +614,7 @@ request per session. Every method is safe to call from any thread.
 |---|---|
 | `Engagement()` | `{"qr_code", "service_uuid", "ble_mode", "ble_modes", "ident"}`: the QR code's text (`mdoc:` and the DeviceEngagement), and in `ble_modes` each mode offered, `{"mode", "service_uuid"}`, each with its own UUID. In `peripheral_server` mode, advertise `service_uuid` and be the GATT server. In `central_client` mode, scan for `service_uuid`, connect as GATT client, and disconnect from a reader whose Ident characteristic isn't `ident` (base64, present only with that mode). `service_uuid` and `ble_mode` are `ble_modes`' first: peripheral server mode's, when offered |
 | `HandleMessage(op, message)` | `{"event", "send", "reason", "error"}`. If `send` is present, it's the base64 message to send the reader. `event` is `request` (show `Request`), `ended` (send `send`, then disconnect) or `none`. `reason`, for `ended`, is `reader_ended` (the reader ended the session first) or `error`. `error` is then the failing call's text: `protocol` for a bad message, `untrusted_verifier` for a reader `require_trusted_mdoc_reader` refuses |
-| `Request()` | `{"reader": {"status", "name", "claimed_name", "chain", "error"}, "documents": [{"doctype", "elements": [{"namespace", "identifier", "retain"}], "credentials": [summary]}]}`, in the request's order. `reader.status` is `trusted` (its certificate chains to `mdoc_reader_roots` and passes `mdoc_reader_require_eku`), `untrusted` (signed by a certificate that doesn't), `unauthenticated` (not signed) or `invalid` (a signature that doesn't verify for this session). `name` is the reader's name, set only when `trusted`; for another signed request, `claimed_name` is the name its certificate gives itself, which anyone can claim, so never show it as the reader's. Both are the certificate's subject common name without control or bidirectional formatting characters. (Within ABI 12, `name` was the common name whatever the status, until this was found to let an untrusted reader pass for a trusted one in an app that didn't check `status`.) `chain` is the certificates, leaf first, as base64 DER, and `certificates` their fields, for an app that can't parse them (iOS): `{"subject", "issuer", "not_before", "not_after", "serial", "subject_alt_names", "extended_key_usages", "key_usages", "is_ca", "signature_algorithm", "extensions", "sha256"}`. `error` says why the reader isn't `trusted`. Each summary has `shown_to_verifier` (this reader, known by its certificate, was shown it before; never for an unsigned one) and `linkable_here` |
+| `Request()` | `{"reader": {"status", "name", "claimed_name", "chain", "error"}, "documents": [{"doctype", "elements": [{"namespace", "identifier", "retain"}], "credentials": [summary]}]}`, in the request's order. `reader.status` is `trusted` (its certificate chains to `mdoc_reader_roots` and passes `mdoc_reader_require_eku`), `untrusted` (signed by a certificate that doesn't), `unauthenticated` (not signed) or `invalid` (a signature that doesn't verify for this session). `name` is the reader's name, set only when `trusted`; for another signed request, `claimed_name` is the name its certificate gives itself, which anyone can claim, so never show it as the reader's. Both are the certificate's subject common name without control, line separator or invisible format characters (bidirectional ones among them). (Within ABI 12, `name` was the common name whatever the status, until this was found to let an untrusted reader pass for a trusted one in an app that didn't check `status`.) `chain` is the certificates, leaf first, as base64 DER, and `certificates` their fields, for an app that can't parse them (iOS): `{"subject", "issuer", "not_before", "not_after", "serial", "subject_alt_names", "extended_key_usages", "key_usages", "is_ca", "signature_algorithm", "extensions", "sha256"}`. `error` says why the reader isn't `trusted`. Each summary has `shown_to_verifier` (this reader, known by its certificate, was shown it before; never for an unsigned one) and `linkable_here` |
 | `Respond(op, document, credentialID, elementsJSON)` | `{"send", "linkable"}`: send `send`, the encrypted DeviceResponse, which ends the session, then disconnect. `linkable` is whether the copy presented had been seen by another Verifier. On an error, nothing is sent and the session goes on |
 | `Terminate()` | `{"send"}`: the holder declined, cancelled or timed out. Send `send` (status 20) if a reader is connected, then disconnect. Nothing is disclosed |
 

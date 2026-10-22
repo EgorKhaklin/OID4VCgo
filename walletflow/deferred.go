@@ -30,6 +30,9 @@ type PendingDeferred struct {
 	CredentialIssuer string
 	ConfigurationID  string
 	TransactionID    string
+	// CredentialIdentifier is the credential_identifier it was requested
+	// by, "" for none (StoredCredential.CredentialIdentifier).
+	CredentialIdentifier string
 	// AccessToken is the issuance's access token, which the Deferred
 	// Credential Endpoint takes.
 	AccessToken fapi.Secret
@@ -234,7 +237,7 @@ func (d *Deferred) Poll(ctx context.Context) (*StoredCredential, error) {
 	}
 	stored, err := d.w.accept(ctx, issued{
 		issuer: d.p.CredentialIssuer, metadata: *d.metadata, resource: d.resource,
-		configID: d.p.ConfigurationID, holders: holders, result: result,
+		configID: d.p.ConfigurationID, identifier: d.p.CredentialIdentifier, holders: holders, result: result,
 		grantID: d.p.GrantID, replace: d.p.Replaces,
 	})
 	if errors.Is(err, errInvalidCredential) || d.p.Replaces != "" && errors.Is(err, ErrNotFound) {

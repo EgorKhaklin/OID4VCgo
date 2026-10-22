@@ -11,6 +11,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // RequestEncryption configures how RequestCredential/RequestDeferredCredential
@@ -143,7 +144,9 @@ func encryptRequestBody(body []byte, reqEnc *RequestEncryption) (encoded []byte,
 	var withKid struct {
 		KeyID string `json:"kid"`
 	}
-	_ = json.Unmarshal(reqEnc.RecipientJWK, &withKid)
+	if err := strictjson.Unmarshal(reqEnc.RecipientJWK, &withKid); err != nil {
+		return nil, "", fmt.Errorf("request_encryption.recipient_jwk: %w", err)
+	}
 
 	compact, err := jwe.Encrypt(ecPub, reqEnc.Enc, body, jwe.EncryptOptions{Zip: reqEnc.Zip, KeyID: withKid.KeyID})
 	if err != nil {

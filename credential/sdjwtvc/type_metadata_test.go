@@ -94,6 +94,10 @@ func TestTypeMetadata_RenderingURIs(t *testing.T) {
 		`{"svg_templates":[{"uri":"https://issuer.example/a.svg"},{"uri":"javascript:alert(1)"}]}`: false,
 		`{"svg_templates":[{"properties":{"orientation":"portrait"}}]}`:                            false,
 		`{"svg_templates":{"uri":"https://issuer.example/card.svg"}}`:                              false,
+		// A consumer matching names exactly reads the first uri: the
+		// check must not read the second instead.
+		`{"simple":{"logo":{"uri":"javascript:alert(1)"},"LOGO":{"uri":"https://issuer.example/a.png"}}}`: false,
+		`{"svg_templates":[{"uri":"javascript:alert(1)","URI":"https://issuer.example/a.svg"}]}`:          false,
 	} {
 		m := validTypeMetadata()
 		if err := json.Unmarshal([]byte(rendering), &m.Display[0].Rendering); err != nil {
