@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/x509"
 	"encoding/asn1"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -182,5 +183,39 @@ func TestParseCRLPEM_RejectsNonCRL(t *testing.T) {
 	}
 	if _, err := conformancecert.ParseCRLPEM(certPEM); err == nil {
 		t.Error("ParseCRLPEM accepted a certificate")
+	}
+}
+
+func TestParseCRLPEM_RejectsMalformedCRL(t *testing.T) {
+	bad := string(pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: []byte("not a crl")}))
+	if _, err := conformancecert.ParseCRLPEM(bad); err == nil {
+		t.Error("ParseCRLPEM accepted a malformed CRL")
+	}
+}
+
+// TestMdocCRLPEM_RequiresCRLSigningIssuer checks a certificate that
+// can't sign CRLs — a Document Signer's — is refused as the issuer.
+func TestMdocCRLPEM_RequiresCRLSigningIssuer(t *testing.T) {
+	iacaCert, iacaKey, _, _, err := conformancecert.GenerateMdocIACA("test-mdoc-iaca", "FR", "https://example.com/contact")
+	if err != nil {
+		t.Fatalf("GenerateMdocIACA: %v", err)
+	}
+	dsKey, _, dsCertPEM, err := conformancecert.GenerateMdocDocumentSigner("test-mdoc-ds", "FR", "https://example.com/contact",
+		"http://conformance-test"+conformancecert.MdocCRLPath, iacaCert, iacaKey)
+	if err != nil {
+		t.Fatalf("GenerateMdocDocumentSigner: %v", err)
+	}
+	ds, err := conformancecert.ParseCertificatePEM(dsCertPEM)
+	if err != nil {
+		t.Fatalf("ParseCertificatePEM(ds): %v", err)
+	}
+	if _, err := conformancecert.MdocCRLPEM(ds, dsKey); err == nil {
+		t.Error("MdocCRLPEM accepted a Document Signer as the CRL issuer")
+	}
+}
+
+func TestServeMdocCRL_ReportsListenError(t *testing.T) {
+	if err := conformancecert.ServeMdocCRL("invalid address", nil); err == nil {
+		t.Error("ServeMdocCRL returned nil for an address it can't listen on")
 	}
 }

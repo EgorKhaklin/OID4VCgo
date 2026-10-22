@@ -136,23 +136,8 @@ func loadConfig(path string) (Config, error) {
 		return Config{}, fmt.Errorf("config: holder_private_key_pem is required")
 	}
 	if cfg.isMdoc() {
-		if cfg.MdocIssuerPrivateKeyPEM == "" {
-			return Config{}, fmt.Errorf("config: mdoc_issuer_private_key_pem is required")
-		}
-		if err := conformancecert.RequireNonEmpty("mdoc_issuer_certificate_pem", cfg.MdocIssuerCertificatePEM); err != nil {
+		if err := cfg.checkMdoc(); err != nil {
 			return Config{}, err
-		}
-		if cfg.MdocDocType == "" {
-			return Config{}, fmt.Errorf("config: mdoc_doc_type is required")
-		}
-		if cfg.MdocNamespace == "" {
-			return Config{}, fmt.Errorf("config: mdoc_namespace is required")
-		}
-		if len(cfg.MdocClaims) == 0 {
-			return Config{}, fmt.Errorf("config: mdoc_claims must be non-empty")
-		}
-		if (cfg.MdocCRLPEM == "") != (cfg.MdocCRLListenAddr == "") {
-			return Config{}, fmt.Errorf("config: mdoc_crl_pem and mdoc_crl_listen_addr must be set together")
 		}
 		return cfg, nil
 	}
@@ -239,4 +224,28 @@ func (c Config) verifierTrust() (wallet.VerifierTrust, error) {
 		return nil, fmt.Errorf("verifier_trust_anchors_pem holds no certificate")
 	}
 	return wallet.X5CVerifierRoots{Roots: roots}, nil
+}
+
+// checkMdoc checks the settings the "mso_mdoc" fixture credential
+// needs.
+func (c Config) checkMdoc() error {
+	if c.MdocIssuerPrivateKeyPEM == "" {
+		return fmt.Errorf("config: mdoc_issuer_private_key_pem is required")
+	}
+	if err := conformancecert.RequireNonEmpty("mdoc_issuer_certificate_pem", c.MdocIssuerCertificatePEM); err != nil {
+		return err
+	}
+	if c.MdocDocType == "" {
+		return fmt.Errorf("config: mdoc_doc_type is required")
+	}
+	if c.MdocNamespace == "" {
+		return fmt.Errorf("config: mdoc_namespace is required")
+	}
+	if len(c.MdocClaims) == 0 {
+		return fmt.Errorf("config: mdoc_claims must be non-empty")
+	}
+	if (c.MdocCRLPEM == "") != (c.MdocCRLListenAddr == "") {
+		return fmt.Errorf("config: mdoc_crl_pem and mdoc_crl_listen_addr must be set together")
+	}
+	return nil
 }
