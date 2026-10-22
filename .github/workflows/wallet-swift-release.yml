@@ -5,7 +5,8 @@
 # creates the release, tagged with the version and carrying the
 # framework, its SHA256SUMS and a build provenance attestation, in one
 # step. (SwiftPM itself checks the framework against the checksum in
-# Package.swift.) Last, it publishes the package's DocC documentation to
+# Package.swift.) Its notes say what's new since the previous release
+# (mobile/release-notes.sh). Last, it publishes the package's DocC documentation to
 # that repository's gh-pages branch, under the version and latest/,
 # keeping earlier versions: GitHub Pages serves it, from that branch.
 #
@@ -56,6 +57,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # the release notes list the commits since the previous release's
 
       - name: check the version is new
         env:
@@ -81,6 +83,27 @@ jobs:
 
       - name: build and lay out the package
         run: mobile/ios/package-swift-release.sh "$VERSION" wallet-swift "$RUNNER_TEMP/assets" | tee "$RUNNER_TEMP/summary.txt"
+
+      # What's new since the previous release, whose notes name the commit
+      # it was built from. Before anything is published, so a failure here
+      # publishes nothing.
+      - name: what's new
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # With no release yet there are no notes to read: no previous commit.
+          notes=$(gh release view --repo "$REPO" --json body --jq .body) || notes=""
+          prev=$(printf '%s\n' "$notes" | sed -n 's|.*IDFoundry/OID4VCgo/commit/\([0-9a-f]\{40\}\)).*|\1|p' | head -1)
+          {
+            echo "## What's new"
+            echo
+            if [ -n "$prev" ]; then
+              mobile/release-notes.sh "$prev" "$GITHUB_SHA" ios
+              echo "All the changes: [since the previous release](https://github.com/IDFoundry/OID4VCgo/compare/$prev...$GITHUB_SHA)."
+            else
+              echo "The first release."
+            fi
+          } | tee "$RUNNER_TEMP/whats-new.md"
 
       - name: build the documentation
         run: |
@@ -113,6 +136,8 @@ jobs:
             echo
             echo "SwiftPM checks the framework against Package.swift's checksum. Check its provenance with"
             echo "\`gh attestation verify Mobile.xcframework.zip --repo IDFoundry/OID4VCgo\`."
+            echo
+            cat "$RUNNER_TEMP/whats-new.md"
           } > "$RUNNER_TEMP/notes.md"
           gh release create "$VERSION" "$RUNNER_TEMP/assets/Mobile.xcframework.zip" "$RUNNER_TEMP/assets/SHA256SUMS" \
             --repo "$REPO" --target "$(git rev-parse HEAD)" --title "OID4VCWallet $VERSION" \

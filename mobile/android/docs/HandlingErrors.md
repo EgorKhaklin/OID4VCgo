@@ -19,6 +19,20 @@ In-person sessions add `ProximityException` for Bluetooth failures:
 Bluetooth off or unavailable, a missing permission, a timeout, or a
 lost connection.
 
+NFC adds three more:
+
+- Starting an NFC or combined presentation with NFC off or missing
+  throws `IllegalArgumentException`. Check
+  `NfcAdapter.getDefaultAdapter(context)?.isEnabled` first, and offer the
+  QR code or NFC settings.
+- `ProximityReader.startFromNfc` throws an `IOException` (Android's
+  `TagLostException` among them) when the phones part during the tap or
+  the tag isn't a holder, and `ProximityException` `TimedOut` when the
+  handover takes too long. Ask for another tap.
+- With NFC-only transfer, parting the phones before the response is read
+  ends the session as `Failed`. Start a new session, and keep the phones
+  together through consent.
+
 ```kotlin
 import dev.idfoundry.oid4vcwallet.ProximityException
 import dev.idfoundry.oid4vcwallet.WalletException

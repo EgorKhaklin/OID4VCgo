@@ -11,6 +11,12 @@ Bluetooth LE. The two devices then exchange encrypted messages over
 GATT. The package carries the Bluetooth side itself: your app shows or
 scans the QR code, follows the session's states, and asks the holder.
 
+Engagement is by QR code only. NFC engagement (a tap instead of the
+code) is in OID4VCgo's Kotlin library, not this package: an iOS holder
+can't answer a reader's tap, and an iOS reader can't tap a holder. An
+Android reader or holder that offers both still works with this
+package over the QR code.
+
 Both sides need `NSBluetoothAlwaysUsageDescription` in the app's
 Info.plist. Keep the app in the foreground during a session: neither
 side keeps one going while the app is suspended. A session answers one
