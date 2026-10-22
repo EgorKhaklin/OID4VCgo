@@ -38,7 +38,8 @@ import (
 // that for local development and internal deployments.
 type Fetcher struct {
 	// HTTP is the client fetches use, e.g. one trusting a private CA.
-	// Nil means a client with a 30-second timeout. Its CheckRedirect is
+	// Nil means a client with a 30-second timeout, which is also the
+	// timeout of a client given without one. Its CheckRedirect is
 	// overridden as described above, and its Transport must be nil or
 	// an *http.Transport: a copy of it is used whose connections are
 	// checked against the address policy above, with its proxy and
@@ -71,6 +72,24 @@ type Fetcher struct {
 	UncheckedTransport bool
 }
 
+// fetchTimeout bounds a fetch whose HTTP client sets no Timeout.
+const fetchTimeout = 30 * time.Second
+
+// client is a copy of f.HTTP, or a new client, that times out after
+// fetchTimeout unless f.HTTP sets a Timeout of its own: a client built
+// with fapihttp.NewClient, say, sets none, and a status list server
+// that stalls would otherwise hold the check until ctx ends.
+func (f Fetcher) client() http.Client {
+	var client http.Client
+	if f.HTTP != nil {
+		client = *f.HTTP
+	}
+	if client.Timeout <= 0 {
+		client.Timeout = fetchTimeout
+	}
+	return client
+}
+
 // MaxStatusListRedirects is how many redirects a Fetcher follows.
 const MaxStatusListRedirects = 3
 
@@ -85,10 +104,7 @@ func (f Fetcher) Fetch(ctx context.Context, uri, mediaType string) ([]byte, erro
 		return nil, fmt.Errorf("statuslist: fetch: %w", err)
 	}
 	req.Header.Set("Accept", mediaType)
-	client := http.Client{Timeout: 30 * time.Second}
-	if f.HTTP != nil {
-		client = *f.HTTP
-	}
+	client := f.client()
 	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
 		switch {
 		case len(via) > MaxStatusListRedirects:

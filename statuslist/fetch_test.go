@@ -328,3 +328,21 @@ func TestChecker_FailsClosed(t *testing.T) {
 		t.Error("RequireValid accepted a status it couldn't read")
 	}
 }
+
+// A given client without a Timeout, as fapihttp.NewClient builds one,
+// still times out: a stalled status list server can't hold a check
+// until its context ends. One with its own Timeout keeps it.
+func TestFetcherClient_Timeout(t *testing.T) {
+	for name, tc := range map[string]struct {
+		given *http.Client
+		want  time.Duration
+	}{
+		"none":            {nil, fetchTimeout},
+		"without timeout": {&http.Client{}, fetchTimeout},
+		"with timeout":    {&http.Client{Timeout: time.Second}, time.Second},
+	} {
+		if got := (Fetcher{HTTP: tc.given}).client().Timeout; got != tc.want {
+			t.Errorf("%s: Timeout = %v, want %v", name, got, tc.want)
+		}
+	}
+}

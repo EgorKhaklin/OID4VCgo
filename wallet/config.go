@@ -132,8 +132,9 @@ type Dependencies struct {
 	// changed after NewClient built it, and one allowing loopback. An *http.Client is used through a
 	// copy that follows no redirect, so a DPoP proof, access token or
 	// client attestation is never resent to a host the Wallet didn't
-	// choose; another HTTPClient (a wrapper) must not follow redirects
-	// itself.
+	// choose, and whose Timeout, if zero (as NewClient leaves it), is
+	// Config.Fetch.RequestTimeout; another HTTPClient (a wrapper) must
+	// not follow redirects itself, and must bound each request's time.
 	HTTP fapihttp.HTTPClient
 
 	// Clock supplies the current time — the jwt-type key proof's own
@@ -225,12 +226,22 @@ func checkIssuerMetadataConfig(cfg Config) error {
 // when Dependencies.HTTP is nil and Config.Fetch sets no RequestTimeout.
 const defaultHTTPTimeout = 30 * time.Second
 
+// requestTimeout is the per-request timeout of the Wallet's HTTP
+// client: cfg.Fetch.RequestTimeout, or defaultHTTPTimeout.
+func requestTimeout(cfg Config) time.Duration {
+	if cfg.Fetch.RequestTimeout > 0 {
+		return cfg.Fetch.RequestTimeout
+	}
+	return defaultHTTPTimeout
+}
+
 // walletHTTPClient is the HTTP client the Wallet uses: with none given,
 // fapihttp's hardened one, its loopback and private-host allowances
 // those of cfg.Fetch; with an *http.Client, a copy that follows no
 // redirect, so a token request's or a Credential Request's DPoP proof,
 // access token or client attestation is never resent to a host the
-// Wallet didn't choose. Another HTTPClient is used as it is.
+// Wallet didn't choose, and that times out after requestTimeout when
+// it has no Timeout of its own. Another HTTPClient is used as it is.
 func walletHTTPClient(cfg Config, given fapihttp.HTTPClient) (fapihttp.HTTPClient, error) {
 	switch c := given.(type) {
 	case nil:
@@ -242,10 +253,7 @@ func walletHTTPClient(cfg Config, given fapihttp.HTTPClient) (fapihttp.HTTPClien
 		if err != nil {
 			return nil, fmt.Errorf("wallet: dependencies: http: %w", err)
 		}
-		client.Timeout = cfg.Fetch.RequestTimeout
-		if client.Timeout <= 0 {
-			client.Timeout = defaultHTTPTimeout
-		}
+		client.Timeout = requestTimeout(cfg)
 		return client, nil
 	case *http.Client:
 		if c == nil {
@@ -253,6 +261,13 @@ func walletHTTPClient(cfg Config, given fapihttp.HTTPClient) (fapihttp.HTTPClien
 		}
 		noRedirects := *c
 		noRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		// fapihttp.NewClient sets no Timeout. The fetcher bounds its own
+		// calls, but the token, Credential and direct_post requests go
+		// through this client directly, so without one a stalled server
+		// holds them until ctx ends.
+		if noRedirects.Timeout <= 0 {
+			noRedirects.Timeout = requestTimeout(cfg)
+		}
 		return &noRedirects, nil
 	default:
 		return given, nil
