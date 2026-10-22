@@ -39,6 +39,19 @@ func TestNewProductionRejectsAllowLoopbackHosts(t *testing.T) {
 	}
 }
 
+// AllowedLoopbackHosts is one of fapihttp's loopback exceptions: the
+// transport New builds would dial loopback for a listed host.
+func TestNewProductionRejectsAllowedLoopbackHosts(t *testing.T) {
+	cfg := validConfig()
+	cfg.Assurance = wallet.AssuranceProduction
+	cfg.Fetch.AllowLoopbackHTTP = false
+	cfg.Fetch.AllowedLoopbackHosts = []string{"issuer-sidecar.internal"}
+	_, err := wallet.New(cfg, productionDependencies())
+	if err == nil || !strings.Contains(err.Error(), "allowed_loopback_hosts") {
+		t.Fatalf("New(AssuranceProduction, AllowedLoopbackHosts) error = %v, want an allowed_loopback_hosts rejection", err)
+	}
+}
+
 func TestNewProductionAcceptsHardenedFetch(t *testing.T) {
 	cfg := validConfig()
 	cfg.Assurance = wallet.AssuranceProduction
@@ -46,7 +59,6 @@ func TestNewProductionAcceptsHardenedFetch(t *testing.T) {
 	// An explicit private-host allow-list is a deployment choice, not a
 	// development switch, so it stays permitted.
 	cfg.Fetch.AllowedPrivateHosts = []string{"issuer.internal"}
-	cfg.Fetch.AllowedLoopbackHosts = []string{"issuer-sidecar.internal"}
 	if _, err := wallet.New(cfg, productionDependencies()); err != nil {
 		t.Fatalf("New(AssuranceProduction): %v", err)
 	}

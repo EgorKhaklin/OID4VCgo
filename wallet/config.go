@@ -201,6 +201,12 @@ func checkAssuranceConfig(cfg Config) error {
 	if cfg.Assurance == AssuranceProduction && cfg.Fetch.AllowLoopbackHosts {
 		return fmt.Errorf("wallet: config: fetch.allow_loopback_hosts is not permitted under AssuranceProduction")
 	}
+	// fapihttp's own rule: every loopback exception is for local
+	// development, and the transport New builds dials loopback for a
+	// host AllowedLoopbackHosts lists.
+	if cfg.Assurance == AssuranceProduction && cfg.Fetch.AllowsLoopback() {
+		return fmt.Errorf("wallet: config: fetch.allowed_loopback_hosts is not permitted under AssuranceProduction")
+	}
 	if cfg.Assurance == AssuranceProduction && isNoVerifierTrust(cfg.VerifierTrust) {
 		return fmt.Errorf("wallet: config: verifier_trust NoVerifierTrust is not permitted under AssuranceProduction")
 	}
