@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
@@ -256,7 +257,7 @@ func toInt64Claim(v interface{}) (int64, error) {
 // "status_list" or "exp" entries would let a decoder pick either), a
 // struct field matches only its exact key, and nesting is bounded. The
 // claims' size is bounded already, by the signed token's.
-var cwtDecMode = func() cbor.DecMode {
+var cwtDecMode = func() strictcbor.DecMode {
 	mode, err := cbor.DecOptions{
 		MaxNestedLevels:   16,
 		DupMapKey:         cbor.DupMapKeyEnforcedAPF,
@@ -265,5 +266,5 @@ var cwtDecMode = func() cbor.DecMode {
 	if err != nil {
 		panic(fmt.Sprintf("statuslist: build CBOR decoder: %v", err))
 	}
-	return mode
+	return strictcbor.Wrap(mode)
 }()
