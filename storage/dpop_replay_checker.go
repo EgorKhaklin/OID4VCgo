@@ -8,13 +8,12 @@ import (
 )
 
 // DPoPReplayChecker is an in-memory issuer.DPoPReplayChecker: it
-// remembers every "jti" UseOnce has ever seen and rejects a repeat,
-// per RFC 9449 §11.1's own "MUST reject any DPoP proof in which the
-// jti has been seen before". expiresAt is accepted only to satisfy
-// the interface — this store never evicts an entry, so a jti is
-// rejected as reused indefinitely, past its own DPoP proof's validity
-// window. See the package doc comment for why that's development/
-// testing only.
+// remembers every "jti" UseOnce has seen and rejects a repeat, per
+// RFC 9449 §11.1's own "MUST reject any DPoP proof in which the jti
+// has been seen before". Each jti is kept until its expiresAt — past
+// it the proof is refused for its age anyway — and expired ones are
+// dropped as the map grows. In-memory and non-durable: see the package
+// doc comment for why that's development/testing only.
 type DPoPReplayChecker struct {
 	mu    sync.Mutex
 	seen  map[string]time.Time // until when each jti is remembered

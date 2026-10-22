@@ -3,7 +3,9 @@ package dpop
 import (
 	"context"
 	"crypto"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
@@ -20,13 +22,18 @@ import (
 // the same constant wallet's own GenerateDPoPProof sets.
 const proofTyp = "dpop+jwt"
 
+// MaxJTILength bounds a proof's "jti" in bytes. RFC 9449 §4.2 asks only
+// for enough entropy to make a collision unlikely (a 96-bit random
+// value is suggested), so anything longer is refused rather than
+// verified and remembered.
+const MaxJTILength = 256
+
 // ReplayChecker records that a DPoP proof's own "jti" has been used,
 // failing if it has already been seen — RFC 9449 §11.1's own MUST
 // ("The server MUST reject any DPoP proof in which the jti has been
-// seen before"). Implementations are expected to key storage by a
-// namespaced digest of jti, not the raw value, but that adaptation is
-// the caller's own responsibility so this package stays decoupled from
-// any specific storage contract.
+// seen before"). Verify passes it JTIDigest(jti), not the raw value,
+// so what a checker remembers per proof is small and fixed-size
+// whatever the client sent.
 type ReplayChecker interface {
 	UseOnce(ctx context.Context, jti string, expiresAt time.Time) error
 }
@@ -61,6 +68,13 @@ type VerifyRequest struct {
 	// server side of the retry wallet.RequestPreAuthorizedCodeToken
 	// already implements client-side).
 	RequiredNonce string
+
+	// CheckNonce, if set, is called with the proof's "nonce" claim
+	// (empty if absent) once the proof is otherwise valid and before
+	// its jti is recorded with Replay, so a proof failing a server's
+	// nonce policy (RFC 9449 §8) leaves nothing in the replay record.
+	// An error from it fails Verify, wrapped.
+	CheckNonce func(ctx context.Context, nonce string) error
 
 	// Replay detects proof replay by "jti" (RFC 9449 §11.1). Required:
 	// there's no safe way for a server-side verifier to skip it.
@@ -122,7 +136,13 @@ func Verify(ctx context.Context, req VerifyRequest) (VerifiedProof, error) {
 		return VerifiedProof{}, err
 	}
 
-	if err := req.Replay.UseOnce(ctx, claims.JTI, iat.Add(req.MaxProofAge)); err != nil {
+	if req.CheckNonce != nil {
+		if err := req.CheckNonce(ctx, claims.Nonce); err != nil {
+			return VerifiedProof{}, fmt.Errorf("dpop: nonce: %w", err)
+		}
+	}
+
+	if err := req.Replay.UseOnce(ctx, JTIDigest(claims.JTI), iat.Add(req.MaxProofAge)); err != nil {
 		return VerifiedProof{}, fmt.Errorf("dpop: replay check: %w", err)
 	}
 
@@ -131,6 +151,13 @@ func Verify(ctx context.Context, req VerifyRequest) (VerifiedProof, error) {
 		return VerifiedProof{}, fmt.Errorf("dpop: %w", err)
 	}
 	return VerifiedProof{PublicKey: pub, Thumbprint: thumbprint, IssuedAt: iat, Nonce: claims.Nonce}, nil
+}
+
+// JTIDigest is the key Verify records a proof's jti under with
+// ReplayChecker: its SHA-256 digest, base64url-encoded without padding.
+func JTIDigest(jti string) string {
+	sum := sha256.Sum256([]byte(jti))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 // validateVerifyRequest checks req's own required fields — split out
@@ -192,6 +219,9 @@ func resolveDPoPProofKey(header map[string]any) (crypto.PublicKey, jwk.JWK, erro
 func validateDPoPClaims(claims dpopClaims, req VerifyRequest) (time.Time, error) {
 	if claims.JTI == "" {
 		return time.Time{}, fmt.Errorf("dpop: jti is required")
+	}
+	if len(claims.JTI) > MaxJTILength {
+		return time.Time{}, fmt.Errorf("dpop: jti is longer than %d bytes", MaxJTILength)
 	}
 	if !strings.EqualFold(claims.HTM, req.Method) {
 		return time.Time{}, fmt.Errorf("dpop: htm does not match")

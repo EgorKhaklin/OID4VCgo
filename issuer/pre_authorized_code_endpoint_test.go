@@ -799,6 +799,11 @@ func TestExchangePreAuthorizedCode_ChallengesMissingNonceThenSucceedsOnRetryWith
 	if !errors.As(err, &ierr) || ierr.Nonce() == "" {
 		t.Fatalf("error = %v, want a non-empty Nonce()", err)
 	}
+	// The nonce is checked before the proof's jti is recorded, so a
+	// challenged proof leaves nothing in the replay record.
+	if n := len(f.replay.seen); n != 0 {
+		t.Fatalf("replay record holds %d entries after the nonce challenge, want 0", n)
+	}
 
 	result, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
 		PreAuthorizedCode: "code-1", DPoPProof: f.validProofWithNonce(t, ierr.Nonce()), TokenEndpoint: testTokenEndpointURL(t),

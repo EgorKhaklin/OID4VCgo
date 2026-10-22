@@ -20,7 +20,10 @@ import (
 // §11.1) for ExchangePreAuthorizedCode's own Token Request — the same
 // interface shape internal/dpop.ReplayChecker declares, restated here
 // so a caller can satisfy it without reaching past this package's own
-// public API into an internal one.
+// public API into an internal one. The jti UseOnce receives is the
+// proof's own jti hashed (base64url SHA-256, 43 characters), so a
+// store holds a fixed-size key per proof whatever the client sent; a
+// jti over 256 bytes is refused before it gets here.
 type DPoPReplayChecker interface {
 	UseOnce(ctx context.Context, jti string, expiresAt time.Time) error
 }
@@ -475,18 +478,27 @@ func (iss *Issuer) preAuthorizedBinding(ctx context.Context, req ExchangePreAuth
 		return VerifiedTokenRequest{}, fmt.Errorf("issuer: exchange pre-authorized code: token_endpoint is required")
 	}
 	target := req.TokenEndpoint.URL()
-	verified, err := dpop.Verify(ctx, dpop.VerifyRequest{
+	verifyReq := dpop.VerifyRequest{
 		Proof: req.DPoPProof, Method: http.MethodPost, URL: target.String(),
 		Now: now, MaxProofAge: iss.cfg.Limits.MaxDPoPProofAge, MaxClockSkew: iss.cfg.Limits.MaxDPoPClockSkew,
 		Replay: iss.deps.DPoPReplay,
-	})
+	}
+	// The nonce is checked before the proof's jti is recorded, so a
+	// nonce-less first attempt (or any proof the nonce policy refuses)
+	// leaves no replay entry behind.
+	var nonceErr error
+	if iss.deps.DPoPNonces != nil {
+		verifyReq.CheckNonce = func(ctx context.Context, nonce string) error {
+			nonceErr = iss.checkDPoPNonce(ctx, nonce, now)
+			return nonceErr
+		}
+	}
+	verified, err := dpop.Verify(ctx, verifyReq)
+	if nonceErr != nil {
+		return VerifiedTokenRequest{}, nonceErr
+	}
 	if err != nil {
 		return VerifiedTokenRequest{}, newError(ErrorInvalidDPoPProof, 400, "invalid DPoP proof", err)
-	}
-	if iss.deps.DPoPNonces != nil {
-		if challenge := iss.checkDPoPNonce(ctx, verified.Nonce, now); challenge != nil {
-			return VerifiedTokenRequest{}, challenge
-		}
 	}
 	return VerifiedTokenRequest{DPoPThumbprint: verified.Thumbprint}, nil
 }
