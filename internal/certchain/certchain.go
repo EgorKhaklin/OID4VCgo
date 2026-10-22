@@ -23,6 +23,12 @@ import (
 	"time"
 )
 
+// MaxChainLength is the most certificates a presented chain may hold,
+// leaf included. Real chains are two or three long; the bound keeps a
+// chain an attacker sends from costing a parse (and, in CheckNoAnchor
+// and path building, more) per entry without limit.
+const MaxChainLength = 8
+
 // X5CDERsFromHeader extracts header's own "x5c" member (RFC 7515
 // §4.1.6: a JSON array of standard-base64-encoded DER certificates,
 // leaf first) as raw DER bytes, requiring at least one entry —
@@ -105,8 +111,11 @@ func VerifyChainsAt(ders [][]byte, roots *x509.CertPool, now time.Time) (*x509.C
 	if roots == nil {
 		return nil, nil, fmt.Errorf("certchain: no trust anchors configured (a nil root pool would mean the system roots)")
 	}
-	if len(ders) == 0 {
+	switch {
+	case len(ders) == 0:
 		return nil, nil, fmt.Errorf("certchain: certificate chain is empty")
+	case len(ders) > MaxChainLength:
+		return nil, nil, fmt.Errorf("certchain: certificate chain has %d entries, more than %d", len(ders), MaxChainLength)
 	}
 	certs := make([]*x509.Certificate, 0, len(ders))
 	for i, der := range ders {
@@ -162,6 +171,9 @@ func IsSelfSigned(cert *x509.Certificate) bool {
 // "x5c" header member already type-asserted to []any) into raw DER
 // bytes suitable for VerifyLeaf.
 func DERsFromBase64(entries []any) ([][]byte, error) {
+	if len(entries) > MaxChainLength {
+		return nil, fmt.Errorf("certchain: certificate chain has %d entries, more than %d", len(entries), MaxChainLength)
+	}
 	ders := make([][]byte, 0, len(entries))
 	for i, e := range entries {
 		s, ok := e.(string)
@@ -227,19 +239,26 @@ func CheckIssuerName(leaf *x509.Certificate, iss string) error {
 	return fmt.Errorf("certchain: iss %q isn't a URI of the signing certificate", iss)
 }
 
-// CheckNoAnchor refuses a presented chain that includes a self-signed
-// certificate after the leaf: a trust anchor, which HAIP 1.0 (§4.1, §5,
-// §6.1.1) has the sender leave out of x5c, since the receiver's own
-// roots decide on it. It's for JOSE x5c chains: an mdoc's x5chain and a
+// CheckNoAnchor refuses a presented chain that includes a self-issued
+// certificate (its issuer its own subject) after the leaf: a trust
+// anchor, which HAIP 1.0 (§4.1, §5, §6.1.1) has the sender leave out of
+// x5c, since the receiver's own roots decide on it. It doesn't check
+// the certificate's signature: no intermediate a path is built through
+// names itself as its issuer, so a self-issued one is refused whether
+// or not it's actually self-signed, without the cost of a signature
+// check per entry. It's for JOSE x5c chains: an mdoc's x5chain and a
 // reader's certificate chain often include the root.
 func CheckNoAnchor(ders [][]byte) error {
+	if len(ders) > MaxChainLength {
+		return fmt.Errorf("certchain: certificate chain has %d entries, more than %d", len(ders), MaxChainLength)
+	}
 	for i, der := range ders[min(1, len(ders)):] {
 		cert, err := x509.ParseCertificate(der)
 		if err != nil {
 			return fmt.Errorf("certchain: parse certificate chain entry %d: %w", i+1, err)
 		}
-		if IsSelfSigned(cert) {
-			return fmt.Errorf("certchain: certificate chain entry %d is self-signed: the trust anchor must not be included", i+1)
+		if bytes.Equal(cert.RawIssuer, cert.RawSubject) {
+			return fmt.Errorf("certchain: certificate chain entry %d is self-issued: the trust anchor must not be included", i+1)
 		}
 	}
 	return nil

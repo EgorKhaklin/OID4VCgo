@@ -12,6 +12,7 @@ import (
 	"math"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/ecdsafixed"
 	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 )
@@ -153,6 +154,9 @@ func x5ChainFromValue(v interface{}) ([][]byte, error) {
 	case []byte:
 		return [][]byte{vv}, nil
 	case []interface{}:
+		if len(vv) > certchain.MaxChainLength {
+			return nil, fmt.Errorf("cose: x5chain has %d entries, more than %d", len(vv), certchain.MaxChainLength)
+		}
 		chain := make([][]byte, len(vv))
 		for i, item := range vv {
 			b, ok := item.([]byte)
