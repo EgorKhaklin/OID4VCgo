@@ -313,7 +313,9 @@ func TestDecryptRejectsCriticalExtension(t *testing.T) {
 	}
 }
 
-func TestDecryptAcceptsEmptyCrit(t *testing.T) {
+// RFC 7515 §4.1.11, which RFC 7516 §4.1.13 follows: "Producers MUST
+// NOT use the empty list".
+func TestDecryptRejectsEmptyCrit(t *testing.T) {
 	key := testP256Key(t)
 	compact, err := Encrypt(&key.PublicKey, A128GCM, []byte("hi"), EncryptOptions{})
 	if err != nil {
@@ -321,8 +323,33 @@ func TestDecryptAcceptsEmptyCrit(t *testing.T) {
 	}
 	tampered := tamperHeader(t, compact, func(h map[string]any) { h["crit"] = []string{} })
 
-	if _, err := DecodeHeader(tampered); err != nil {
-		t.Errorf("DecodeHeader: %v", err)
+	if _, err := DecodeHeader(tampered); err == nil {
+		t.Error("DecodeHeader = nil error, want error (empty crit)")
+	}
+}
+
+// RFC 7516 §4: a JWE with a Header Parameter named twice is rejected,
+// not read last-wins.
+func TestDecodeHeaderRejectsDuplicateHeaderParameters(t *testing.T) {
+	key := testP256Key(t)
+	compact, err := Encrypt(&key.PublicKey, A128GCM, []byte("hi"), EncryptOptions{KeyID: "k1"})
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	parts := strings.Split(compact, ".")
+	rawHeader, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{`{"crit":["exp"],"exp":1,"crit":[],`, `{"kid":"k2",`} {
+		parts[0] = base64.RawURLEncoding.EncodeToString(append([]byte(prefix), rawHeader[1:]...))
+		dup := strings.Join(parts, ".")
+		if _, err := DecodeHeader(dup); err == nil {
+			t.Errorf("%s: DecodeHeader = nil error, want error", prefix)
+		}
+		if _, err := Decrypt(key, dup); err == nil {
+			t.Errorf("%s: Decrypt = nil error, want error", prefix)
+		}
 	}
 }
 

@@ -305,7 +305,10 @@ func splitCompact(compact string) (header map[string]any, encHeader, iv, ciphert
 	if err != nil {
 		return nil, "", "", "", "", fmt.Errorf("jwe: decode header: %w", err)
 	}
-	if err := json.Unmarshal(raw, &header); err != nil {
+	// strictjson: a Header Parameter named twice is refused (RFC 7516
+	// §4), not read last-wins, which another parser of the same header
+	// may not do.
+	if err := strictjson.Unmarshal(raw, &header); err != nil {
 		return nil, "", "", "", "", fmt.Errorf("jwe: unmarshal header: %w", err)
 	}
 	// "crit" (RFC 7516 §4.1.13) names header parameters a recipient
@@ -314,11 +317,13 @@ func splitCompact(compact string) (header map[string]any, encHeader, iv, ciphert
 	// mandatory ECDH-ES+GCM profile never requires one, and no sender
 	// in this repo ever sets "crit" — so any non-empty "crit" on an
 	// incoming JWE is, by construction, naming something this package
-	// doesn't understand.
+	// doesn't understand. An empty one is refused too: producers "MUST
+	// NOT use the empty list" (RFC 7515 §4.1.11).
 	if crit, ok := header["crit"]; ok {
-		if arr, ok := crit.([]any); !ok || len(arr) > 0 {
-			return nil, "", "", "", "", errors.New("jwe: JWE names a critical header extension this package does not understand")
+		if arr, ok := crit.([]any); ok && len(arr) == 0 {
+			return nil, "", "", "", "", errors.New(`jwe: JWE has an empty "crit" header parameter`)
 		}
+		return nil, "", "", "", "", errors.New("jwe: JWE names a critical header extension this package does not understand")
 	}
 	return header, parts[0], parts[2], parts[3], parts[4], nil
 }
