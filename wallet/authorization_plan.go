@@ -78,11 +78,24 @@ func PlanAuthorization(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata)
 	if plan.AuthorizationServer, err = selectAuthorizationServer(offer.CredentialIssuer, named, metadata.AuthorizationServers); err != nil {
 		return AuthorizationPlan{}, fmt.Errorf("wallet: plan authorization: %w", err)
 	}
+	if err := addOfferedConfigurations(&plan, offer, metadata); err != nil {
+		return AuthorizationPlan{}, err
+	}
+	if len(plan.Scopes) == 0 && len(plan.AuthorizationDetails) == 0 {
+		return AuthorizationPlan{}, errors.New("wallet: plan authorization: the offer offers no credential configuration")
+	}
+	return plan, nil
+}
+
+// addOfferedConfigurations adds to plan, once each, the scope of every
+// configuration offer offers, or an authorization detail for one with
+// no scope, refusing a configuration that isn't in metadata.
+func addOfferedConfigurations(plan *AuthorizationPlan, offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) error {
 	seen, detailed := map[string]bool{}, map[string]bool{}
 	for _, id := range offer.CredentialConfigurationIDs {
 		conf, ok := metadata.CredentialConfigurationsSupported[id]
 		if !ok {
-			return AuthorizationPlan{}, fmt.Errorf("wallet: plan authorization: offered configuration %q isn't in the issuer's metadata", id)
+			return fmt.Errorf("wallet: plan authorization: offered configuration %q isn't in the issuer's metadata", id)
 		}
 		if conf.Scope == "" {
 			if !detailed[id] {
@@ -96,10 +109,7 @@ func PlanAuthorization(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata)
 			plan.Scopes = append(plan.Scopes, conf.Scope)
 		}
 	}
-	if len(plan.Scopes) == 0 && len(plan.AuthorizationDetails) == 0 {
-		return AuthorizationPlan{}, errors.New("wallet: plan authorization: the offer offers no credential configuration")
-	}
-	return plan, nil
+	return nil
 }
 
 // selectAuthorizationServer is the Authorization Server for a grant
