@@ -12,6 +12,7 @@ import (
 	"github.com/idfoundry/fapigo/storage"
 
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // attesterTrust picks how fapigo/server trusts a Client Attestation's
@@ -69,7 +70,7 @@ func attesterKeys(cfg Config) (keys.StaticAttesterKeys, error) {
 		var set struct {
 			Keys []json.RawMessage `json:"keys"`
 		}
-		if err := json.Unmarshal(cc.AttesterJWKS, &set); err != nil || len(set.Keys) == 0 {
+		if err := strictjson.Unmarshal(cc.AttesterJWKS, &set); err != nil || len(set.Keys) == 0 {
 			return nil, fmt.Errorf("config: client %s: attester_jwks must be a JWK Set with at least one key", cc.ID)
 		}
 		for i, raw := range set.Keys {
@@ -94,7 +95,7 @@ func attesterKey(raw json.RawMessage) (keys.VerificationKey, error) {
 		Kid string `json:"kid"`
 		Alg string `json:"alg"`
 	}
-	if err := json.Unmarshal(raw, &params); err != nil {
+	if err := strictjson.Unmarshal(raw, &params); err != nil {
 		return keys.VerificationKey{}, err
 	}
 	if params.Alg == "" {

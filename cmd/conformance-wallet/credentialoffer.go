@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // credentialOfferPath is appended to -credential-offer-endpoint to
@@ -75,7 +76,7 @@ func findCredentialOfferRedirectURL(body []byte) (string, bool) {
 			continue
 		}
 		var url string
-		if err := json.Unmarshal(raw, &url); err == nil && url != "" {
+		if err := strictjson.Unmarshal(raw, &url); err == nil && url != "" {
 			return url, true
 		}
 	}
