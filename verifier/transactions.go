@@ -264,31 +264,49 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 	if cfg.Lifetime == 0 {
 		cfg.Lifetime = 10 * time.Minute
 	}
-	if cfg.Verify.Query.Credentials != nil || cfg.Verify.ExpectedNonce != "" || cfg.Verify.ResponseEncryptionKey != nil || cfg.Verify.Origin != "" || cfg.Verify.ExpectedOrigins != nil || cfg.Verify.Response.VPToken != nil {
-		return nil, errors.New("verifier: transactions: verify: query, response, expected_nonce, response_encryption_key, origin and expected_origins are set per request; leave them zero")
-	}
-	if err := checkTimeBounds(cfg.Verify); err != nil {
+	if err := checkTransactionsVerify(cfg.Verify); err != nil {
 		return nil, err
 	}
-	if cfg.Verify.Accept != nil || cfg.Verify.NoStatusCheck {
-		return nil, errors.New("verifier: transactions: set accept and no_status_check on the transactions config, not on verify")
-	}
 	if v.cfg.Assurance == AssuranceProduction {
-		asserter, ok := store.(StoreAssurance)
-		if !ok || !asserter.Capabilities().Durable || !asserter.Capabilities().AtomicUpdate {
-			return nil, errors.New("verifier: transactions: the store must implement verifier.StoreAssurance with Durable and AtomicUpdate under AssuranceProduction")
-		}
-		if err := checkProductionKeySources(cfg.Verify); err != nil {
-			return nil, fmt.Errorf("verifier: transactions: %w", err)
-		}
-		if cfg.Accept == nil && !cfg.NoStatusCheck {
-			return nil, errors.New("verifier: transactions: under AssuranceProduction, set accept (verifier.RequireValidStatus checks revocation) or no_status_check: without either, a revoked credential is accepted")
-		}
-		if cfg.Verify.IssuerAuthorized == nil && !cfg.Verify.AnyIssuerForAnyType {
-			return nil, errors.New("verifier: transactions: under AssuranceProduction, set verify.issuer_authorized (which issuers may issue which types) or verify.any_issuer_for_any_type: without either, any trusted issuer is accepted for any type")
+		if err := checkProductionTransactions(store, cfg); err != nil {
+			return nil, err
 		}
 	}
 	return &Transactions{v: v, store: store, cfg: cfg}, nil
+}
+
+// checkTransactionsVerify refuses, in TransactionsConfig.Verify, the
+// fields Transactions sets per request or takes from its own config.
+func checkTransactionsVerify(verify VerifyResponseRequest) error {
+	if verify.Query.Credentials != nil || verify.ExpectedNonce != "" || verify.ResponseEncryptionKey != nil || verify.Origin != "" || verify.ExpectedOrigins != nil || verify.Response.VPToken != nil {
+		return errors.New("verifier: transactions: verify: query, response, expected_nonce, response_encryption_key, origin and expected_origins are set per request; leave them zero")
+	}
+	if err := checkTimeBounds(verify); err != nil {
+		return err
+	}
+	if verify.Accept != nil || verify.NoStatusCheck {
+		return errors.New("verifier: transactions: set accept and no_status_check on the transactions config, not on verify")
+	}
+	return nil
+}
+
+// checkProductionTransactions refuses a store and config that aren't
+// fit for AssuranceProduction.
+func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig) error {
+	asserter, ok := store.(StoreAssurance)
+	if !ok || !asserter.Capabilities().Durable || !asserter.Capabilities().AtomicUpdate {
+		return errors.New("verifier: transactions: the store must implement verifier.StoreAssurance with Durable and AtomicUpdate under AssuranceProduction")
+	}
+	if err := checkProductionKeySources(cfg.Verify); err != nil {
+		return fmt.Errorf("verifier: transactions: %w", err)
+	}
+	if cfg.Accept == nil && !cfg.NoStatusCheck {
+		return errors.New("verifier: transactions: under AssuranceProduction, set accept (verifier.RequireValidStatus checks revocation) or no_status_check: without either, a revoked credential is accepted")
+	}
+	if cfg.Verify.IssuerAuthorized == nil && !cfg.Verify.AnyIssuerForAnyType {
+		return errors.New("verifier: transactions: under AssuranceProduction, set verify.issuer_authorized (which issuers may issue which types) or verify.any_issuer_for_any_type: without either, any trusted issuer is accepted for any type")
+	}
+	return nil
 }
 
 func checkAbsoluteURL(name, raw string, assurance AssuranceLevel) error {

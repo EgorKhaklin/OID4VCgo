@@ -156,17 +156,8 @@ type Wallet struct {
 
 // New validates cfg and deps and returns a ready-to-use Wallet.
 func New(cfg Config, deps Dependencies) (*Wallet, error) {
-	if cfg.Assurance != AssuranceDevelopment && cfg.Assurance != AssuranceProduction {
-		return nil, fmt.Errorf("wallet: config: assurance level is invalid")
-	}
-	if cfg.Assurance == AssuranceProduction && cfg.Fetch.AllowLoopbackHTTP {
-		return nil, fmt.Errorf("wallet: config: fetch.allow_loopback_http is not permitted under AssuranceProduction")
-	}
-	if cfg.Assurance == AssuranceProduction && cfg.Fetch.AllowLoopbackHosts {
-		return nil, fmt.Errorf("wallet: config: fetch.allow_loopback_hosts is not permitted under AssuranceProduction")
-	}
-	if cfg.Assurance == AssuranceProduction && isNoVerifierTrust(cfg.VerifierTrust) {
-		return nil, fmt.Errorf("wallet: config: verifier_trust NoVerifierTrust is not permitted under AssuranceProduction")
+	if err := checkAssuranceConfig(cfg); err != nil {
+		return nil, err
 	}
 	if cfg.ProofSigningAlg == "" {
 		return nil, fmt.Errorf("wallet: config: proof_signing_alg is required")
@@ -186,14 +177,8 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		return nil, fmt.Errorf("wallet: dependencies: clock is required")
 	}
 
-	if cfg.RequireSignedIssuerMetadata && cfg.IssuerMetadataRoots == nil {
-		return nil, fmt.Errorf("wallet: config: require_signed_issuer_metadata needs issuer_metadata_roots")
-	}
-	if cfg.RequireIssuerMetadataName && cfg.IssuerMetadataRoots == nil {
-		return nil, fmt.Errorf("wallet: config: require_issuer_metadata_name needs issuer_metadata_roots")
-	}
-	if cfg.MaxIssuerMetadataAge < 0 {
-		return nil, fmt.Errorf("wallet: config: max_issuer_metadata_age must not be negative")
+	if err := checkIssuerMetadataConfig(cfg); err != nil {
+		return nil, err
 	}
 
 	fetcher, err := fapihttp.New(deps.HTTP, cfg.Fetch)
@@ -201,6 +186,39 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		return nil, fmt.Errorf("wallet: config: fetch: %w", err)
 	}
 	return &Wallet{cfg: cfg, deps: deps, fetcher: fetcher}, nil
+}
+
+// checkAssuranceConfig refuses an invalid assurance level, and the
+// loopback and verifier-trust allowances AssuranceProduction forbids.
+func checkAssuranceConfig(cfg Config) error {
+	if cfg.Assurance != AssuranceDevelopment && cfg.Assurance != AssuranceProduction {
+		return fmt.Errorf("wallet: config: assurance level is invalid")
+	}
+	if cfg.Assurance == AssuranceProduction && cfg.Fetch.AllowLoopbackHTTP {
+		return fmt.Errorf("wallet: config: fetch.allow_loopback_http is not permitted under AssuranceProduction")
+	}
+	if cfg.Assurance == AssuranceProduction && cfg.Fetch.AllowLoopbackHosts {
+		return fmt.Errorf("wallet: config: fetch.allow_loopback_hosts is not permitted under AssuranceProduction")
+	}
+	if cfg.Assurance == AssuranceProduction && isNoVerifierTrust(cfg.VerifierTrust) {
+		return fmt.Errorf("wallet: config: verifier_trust NoVerifierTrust is not permitted under AssuranceProduction")
+	}
+	return nil
+}
+
+// checkIssuerMetadataConfig refuses an issuer metadata requirement
+// without the roots to check it, and a negative maximum age.
+func checkIssuerMetadataConfig(cfg Config) error {
+	if cfg.RequireSignedIssuerMetadata && cfg.IssuerMetadataRoots == nil {
+		return fmt.Errorf("wallet: config: require_signed_issuer_metadata needs issuer_metadata_roots")
+	}
+	if cfg.RequireIssuerMetadataName && cfg.IssuerMetadataRoots == nil {
+		return fmt.Errorf("wallet: config: require_issuer_metadata_name needs issuer_metadata_roots")
+	}
+	if cfg.MaxIssuerMetadataAge < 0 {
+		return fmt.Errorf("wallet: config: max_issuer_metadata_age must not be negative")
+	}
+	return nil
 }
 
 // defaultHTTPTimeout bounds each request of the HTTP client New builds

@@ -29,6 +29,8 @@ each release:
 | `org-iso-mdoc` over the Digital Credentials API (`startMdocPresentation`, `mdocCandidates`) | ✓ Safari, through a document provider extension | in the library, but Chrome sends OpenID4VP instead |
 | In person, as the holder (`startProximityPresentation`) | ✓ | ✓ |
 | In person, as the reader (`ProximityReader`) | ✓ | ✓ |
+| In person by NFC tap, as the holder (`startNfcPresentation`, `startCombinedPresentation` for QR or NFC) | — | ✓ through an app's `NfcEngagementService` |
+| In person by NFC tap, as the reader (`ProximityReader.startFromNfc`) | — | ✓ |
 | Keys | `KeychainKeyStore` (Secure Enclave) | `AndroidKeystoreKeyStore` (StrongBox or TEE) |
 | Credential store | `FileCredentialStore` | `FileCredentialStore` |
 | Certificate pinning for the SDK's requests (`tlsPins`) | ✓ | ✓ |
@@ -57,6 +59,14 @@ provider activity.
 ISO/IEC 18013-5 device retrieval over BLE. The libraries carry the BLE
 GATT transport: an app shows or scans a QR code and follows a session's
 states; it never sees GATT.
+
+On Android, an NFC tap can engage instead of the QR code, or alongside
+it, with static or negotiated handover, and the data can then go over
+BLE or stay on NFC. The holder answers taps through a subclass of the
+library's `NfcEngagementService` that the app declares; the reader
+passes the tag from Android's reader mode to `startFromNfc`. The
+sessions have the same states as QR ones. [Presenting in person](android/docs/PresentingInPerson.md)
+has the setup, the lifecycle and the routing rules.
 
 - **The holder:** `wallet.startProximityPresentation()` returns a
   session whose `qrCode` the app shows. It offers both BLE modes by

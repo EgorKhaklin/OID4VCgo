@@ -1,13 +1,28 @@
 # Presenting in person
 
-Share an mdoc with a reader nearby over Bluetooth, or be the reader,
-with ISO/IEC 18013-5 device retrieval.
+Share an mdoc with a reader nearby, or be the reader, with ISO/IEC
+18013-5 device retrieval: engaged by a QR code or an NFC tap, then
+exchanged over Bluetooth LE or NFC.
 
-In person, the holder shows a QR code and the reader scans it: the code
-carries the holder's ephemeral key and how to reach it over Bluetooth
-LE. The two devices then exchange encrypted messages over GATT. The
-library carries the Bluetooth side itself: your app shows or scans the
-QR code, follows the session's states, and asks the holder.
+In person, the holder first gives the reader its ephemeral key and how
+to reach it (engagement): a QR code the reader scans, or an NFC tap the
+reader reads. The two devices then exchange encrypted messages over
+Bluetooth LE GATT, or, for NFC transfer, over NFC while the phones stay
+together. The library carries Bluetooth and NFC itself: your app shows
+the QR code or asks for the tap, follows the session's states, and asks
+the holder.
+
+| The holder starts | The reader | Data goes over | Phones |
+|---|---|---|---|
+| `startProximityPresentation` | scans the QR code | Bluetooth | apart |
+| `startNfcPresentation` | taps | Bluetooth | apart after the tap |
+| `startNfcPresentation(nfcData = true)` | taps | NFC | together until shared |
+| `startCombinedPresentation` | scans or taps, whichever comes first | Bluetooth, or NFC with `nfcData` | as above |
+
+Every holder entry point answers with the same `ProximityPresentation.State`s
+and the same `respond`/`decline`, so one consent screen serves them all.
+NFC needs an `NfcEngagementService` subclass in your manifest
+([NFC holder and reader](#nfc-holder-and-reader)); QR alone doesn't.
 
 The library's manifest adds the Bluetooth permissions to your app's:
 on Android 11 and earlier `BLUETOOTH`, `BLUETOOTH_ADMIN` and
@@ -130,10 +145,21 @@ unchecked: check it before relying on the document.
 
 ## NFC holder and reader
 
-The NFC additions include static and negotiated handover for BLE and
-classic NFC-only retrieval. They require physical interoperability and
-normative specification review before a conformance claim. iOS NFC,
-USB readers, L2CAP and Concurrent Channel Engagement are outside this work.
+Android only. NFC engagement uses static or negotiated (TNEP) handover,
+then Bluetooth LE or NFC-only retrieval. Every combination, with both
+Bluetooth roles, interoperated with the independent Multipaz
+implementation on physical phones, in both directions, at 6aef12e
+(#659), when the APDU protocols still ran in Kotlin. They now run in Go
+(`proximity/nfcapdu`), which hasn't been re-tested on phones yet. None of
+this is a conformance claim: the licensed ISO/IEC 18013-5 and NFC Forum
+texts haven't been reviewed against it. iOS NFC, USB readers, L2CAP and
+Concurrent Channel Engagement aren't supported.
+
+The holder answers taps through host card emulation (HCE): Android
+routes the reader's commands to your app's NFC service, which hands
+them to the presentation your app has started. No presentation started,
+no answer. NFC needs no runtime permission; it needs NFC on, and the
+device unlocked.
 
 Declare an application subclass, for example `class IdentityNfcService :
 NfcEngagementService()`, and its HCE service:
@@ -166,13 +192,21 @@ suspend fun startNfcHolder(
 // For negotiated NFC-only, pass both nfcData = true and negotiated = true.
 ```
 
-Follow `session.state` and use the existing `respond`/`decline` consent
-flow. On a resumed Activity, call
+Follow `owner.presentation.state` and use the existing `respond`/`decline`
+consent flow. On a resumed Activity, call
 `owner.preferForeground(activity, IdentityNfcService::class.java)` and
 check its Boolean result. Call `releaseForeground(activity)` on pause
-and completion, and acquire preference again on every resume. The
-platform can refuse preference; the application should explain how
-to select its NFC service. Reapply it to each new presentation.
+and completion, and acquire preference again on every resume while the
+session is still going. The platform can refuse preference; the
+application should explain how to select its NFC service. Reapply it to
+each new presentation.
+
+Another wallet on the phone can register the same NFC application ID;
+while your app holds the preference, taps come to it. Don't prefer again
+for a session that has ended: the fingerprint or screen-lock prompt
+resumes your activity after sharing, and an `onResume` that prefers
+unconditionally keeps taps away from other wallets until the screen is
+left. Check `state.value.isFinal` first.
 
 `owner.close()` cancels and awaits cleanup. Starting another NFC owner
 waits for the previous owner's tasks and radio resources to close.
@@ -185,9 +219,28 @@ Field loss during NFC-only retrieval ends that session; start a new one
 to recover. NFC-only mode does not require Bluetooth permissions.
 
 On the verifier, enable Android reader mode with NFC-A/NFC-B and
-`FLAG_READER_SKIP_NDEF_CHECK`, then invoke from a coroutine:
+`FLAG_READER_SKIP_NDEF_CHECK` while the reader screen is resumed, then
+start the session from a coroutine with the tag it delivers:
 
 ```kotlin
+/** Arms the reader screen for a tap: `onTag` gets the holder's tag, on a binder thread. Call on resume. */
+fun armNfcReader(activity: Activity, onTag: (Tag) -> Unit): Boolean {
+    val adapter = android.nfc.NfcAdapter.getDefaultAdapter(activity)
+    if (adapter?.isEnabled != true) return false // Ask the user to turn NFC on.
+    adapter.enableReaderMode(
+        activity, { tag -> onTag(tag) },
+        android.nfc.NfcAdapter.FLAG_READER_NFC_A or android.nfc.NfcAdapter.FLAG_READER_NFC_B or
+            android.nfc.NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK,
+        null,
+    )
+    return true
+}
+
+/** Stops listening for taps: call on pause, and on leaving the reader screen. */
+fun disarmNfcReader(activity: Activity) {
+    android.nfc.NfcAdapter.getDefaultAdapter(activity)?.disableReaderMode(activity)
+}
+
 suspend fun startNfcReader(
     context: Context, reader: ProximityReader, tag: Tag,
     docType: String, elements: Map<String, List<String>>,
@@ -214,9 +267,13 @@ message; the controller's smaller transceive limit is applied as well.
 The final ENVELOPE remains asynchronous during consent, so hardware
 timeout/WTX behavior must be included in real-device validation.
 
-The demo's presentation settings select QR, static NFC-to-BLE,
-negotiated NFC-to-BLE, or NFC-only. Reader presets offer NFC/Bluetooth
-and NFC-only actions; the latter does not request Bluetooth permissions.
+The [demo wallet](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile/android/DemoWallet) is a complete app on all of this. Its
+presentation settings select QR, QR or NFC (combined), static or
+negotiated NFC-to-BLE, or static or negotiated NFC-only, and the
+Bluetooth mode, greyed out for NFC-only. Its `InPersonSession` shows one
+consent flow over all three holder entry points. Reader presets offer
+NFC/Bluetooth and NFC-only actions; the latter does not request
+Bluetooth permissions.
 
 ## Combined QR and NFC engagement
 
@@ -252,6 +309,8 @@ fun resumeCombinedHolder(
     owner: CombinedPresentation, activity: Activity,
     showNfcServiceSelectionInstructions: () -> Unit,
 ) {
+    // Ended (the consent prompt resumes the activity after sharing): leave taps to other wallets.
+    if (owner.state.value.isFinal) return pauseCombinedHolder(owner, activity)
     val preferred = owner.preferForeground(activity, IdentityNfcService::class.java)
     if (!preferred) showNfcServiceSelectionInstructions()
 }
@@ -303,8 +362,8 @@ either handover method or both; it requires both on the reader. See the
 [ISO-authored sample](https://standards.theiteh.com/catalog/standards/iso/8b349f37-4a4d-4379-9feb-0061079dba81/iso-iec-18013-5-2021)
 and NFC Forum's [CH overview](https://nfc-forum.org/build/specifications/connection-handover-technical-specification/).
 These support explicit mode selection, not a mandatory silent fallback.
-Detailed licensed review of §8.2.2.1, CH 1.5 and TNEP 1.0 remains an open
-conformance gate; public overviews do not replace those normative texts.
+Detailed licensed review of §8.2.2.1, CH 1.5 and TNEP 1.0 hasn't been
+done; public overviews do not replace those normative texts.
 
 For opt-in Android lifecycle diagnostics:
 

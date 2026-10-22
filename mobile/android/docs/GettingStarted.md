@@ -25,8 +25,9 @@ dependencies {
 }
 ```
 
-The AAR goes in an app module, and holds the Go library for arm64 and
-x86_64 (the emulator). It needs Android 8.0 (API 26); holder keys that
+The AAR goes in an app module, and holds the Go library for every
+Android ABI: arm64-v8a, armeabi-v7a, x86_64 and x86 (the emulator), each
+linked for 16 KB memory pages. It needs Android 8.0 (API 26); holder keys that
 ask for the holder's fingerprint or screen lock each time need Android
 11 (API 30).
 
@@ -163,8 +164,10 @@ has, so it can refuse to run on the test build.
 - [Receiving credentials](ReceivingCredentials.md)
 - [Presenting from a link](PresentingFromALink.md)
 - [Presenting to Chrome](PresentingToChrome.md)
-- [Presenting in person](PresentingInPerson.md)
+- [Presenting in person](PresentingInPerson.md): QR code, NFC tap, or both
 - [Handling errors](HandlingErrors.md)
 - [Going to production](GoingToProduction.md)
+- [Integration checklist](IntegrationChecklist.md): every step and rule in
+  one list, for a developer or a coding assistant to follow and check
 
 Every class and function is in [the API reference](https://idfoundry.github.io/OID4VCgo-wallet-kotlin/latest/).

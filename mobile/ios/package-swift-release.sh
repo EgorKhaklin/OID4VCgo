@@ -92,7 +92,9 @@ OpenID4VCI 1.0 and presents them over OpenID4VP 1.0, under HAIP 1.0, with
 SD-JWT VC and ISO mdoc credentials. OID4VCgo is OpenID Certified for
 those roles. It also presents an mdoc to Safari's Digital Credentials API
 (`org-iso-mdoc`, from an iOS document provider extension), and in person
-over Bluetooth (ISO/IEC 18013-5), as the holder or as the reader.
+over Bluetooth (ISO/IEC 18013-5), as the holder or as the reader,
+engaged by a QR code. NFC engagement is in the Kotlin library only:
+an iOS wallet can't answer an NFC tap here.
 
 The protocols run in OID4VCgo's Go code, compiled with gomobile into the
 `Mobile` XCFramework this package links. Your app owns the keys, the
@@ -134,6 +136,7 @@ Errors are `WalletError`s. Each has:
 
 - [The OID4VCWallet documentation](@DOCS@): getting started, an article
   for each task, and the API reference.
+- What's new: each [release](https://github.com/IDFoundry/OID4VCgo-wallet-swift/releases)'s notes.
 - [OID4VCgo's `mobile/`](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile):
   what each platform supports, in-person presentation, the Go side and
   its [ABI](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/ABI.md).
@@ -141,6 +144,16 @@ Errors are `WalletError`s. Each has:
   the design.
 - [The demo wallet app](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile/ios/DemoWallet):
   a complete app on this package, including the document provider.
+
+## For coding assistants
+
+Integrating this package for someone? Read the documentation's Getting
+started article, then the article for each feature, before writing
+code. Use only the public API those name: never the `Mobile` framework's
+generated types directly, and don't reimplement the protocols or the
+Bluetooth transport the package carries. In person, this package
+engages by QR code only: don't add NFC around it. Match the version of
+the documentation you read to the package version you depend on.
 
 ## Contributing
 

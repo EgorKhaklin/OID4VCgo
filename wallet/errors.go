@@ -93,25 +93,30 @@ func challengeParam(challenge, name string) string {
 			return ""
 		}
 		key = strings.TrimSpace(key)
-		rest = strings.TrimLeft(rest, " ")
 		var value string
-		if strings.HasPrefix(rest, `"`) {
-			var b strings.Builder
-			i := 1
-			for ; i < len(rest) && rest[i] != '"'; i++ {
-				if rest[i] == '\\' && i+1 < len(rest) {
-					i++
-				}
-				b.WriteByte(rest[i])
-			}
-			value, params = b.String(), rest[min(i+1, len(rest)):]
-		} else {
-			value, params, _ = strings.Cut(rest, ",")
-			value = strings.TrimSpace(value)
-		}
+		value, params = challengeParamValue(strings.TrimLeft(rest, " "))
 		if strings.EqualFold(key, name) {
 			return value
 		}
 	}
 	return ""
+}
+
+// challengeParamValue splits rest, which starts with an auth-param's
+// value, into that value, unquoted if it's a quoted-string, and what
+// follows it.
+func challengeParamValue(rest string) (value, remainder string) {
+	if !strings.HasPrefix(rest, `"`) {
+		value, remainder, _ = strings.Cut(rest, ",")
+		return strings.TrimSpace(value), remainder
+	}
+	var b strings.Builder
+	i := 1
+	for ; i < len(rest) && rest[i] != '"'; i++ {
+		if rest[i] == '\\' && i+1 < len(rest) {
+			i++
+		}
+		b.WriteByte(rest[i])
+	}
+	return b.String(), rest[min(i+1, len(rest)):]
 }

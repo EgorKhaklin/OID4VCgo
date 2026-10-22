@@ -829,6 +829,26 @@ func normalizeClientAuthentication(a PreAuthorizedCodeClientAuthentication) (Pre
 //   - a signer certificate not valid now, whose credentials every
 //     Verifier would refuse.
 func checkIssuable(c CredentialConfiguration, deps Dependencies) error {
+	if err := checkBindingMethods(c); err != nil {
+		return err
+	}
+	var now time.Time
+	if deps.Clock != nil {
+		now = deps.Clock.Now()
+	}
+	leaf, err := signerLeaf(c, deps)
+	if err != nil {
+		return err
+	}
+	if leaf != nil && !now.IsZero() && (now.Before(leaf.NotBefore) || now.After(leaf.NotAfter)) {
+		return fmt.Errorf("the signer's certificate isn't valid now (%s to %s)", leaf.NotBefore.Format(time.RFC3339), leaf.NotAfter.Format(time.RFC3339))
+	}
+	return nil
+}
+
+// checkBindingMethods refuses a configuration binding no key, or by a
+// method its format doesn't use.
+func checkBindingMethods(c CredentialConfiguration) error {
 	if len(c.CryptographicBindingMethodsSupported) == 0 {
 		return errors.New("cryptographic_binding_methods_supported is empty: this issuer issues only key-bound credentials")
 	}
@@ -840,27 +860,27 @@ func checkIssuable(c CredentialConfiguration, deps Dependencies) error {
 			return fmt.Errorf("cryptographic_binding_methods_supported %q isn't a binding method for %q", m, c.Format)
 		}
 	}
-	var now time.Time
-	if deps.Clock != nil {
-		now = deps.Clock.Now()
-	}
+	return nil
+}
+
+// signerLeaf refuses a configuration whose
+// credential_signing_alg_values_supported doesn't list its format's
+// signer's algorithm, and returns that signer's certificate, if any.
+func signerLeaf(c CredentialConfiguration, deps Dependencies) (*x509.Certificate, error) {
 	var leaf *x509.Certificate
 	switch c.Format {
 	case sdjwtvc.CredentialFormat:
 		if algs := c.CredentialSigningAlgValuesSupported; len(algs) > 0 && !slices.Contains(algs, string(deps.SDJWTSigner.Alg)) {
-			return fmt.Errorf("credential_signing_alg_values_supported %v doesn't list the signer's %q", algs, deps.SDJWTSigner.Alg)
+			return nil, fmt.Errorf("credential_signing_alg_values_supported %v doesn't list the signer's %q", algs, deps.SDJWTSigner.Alg)
 		}
 		leaf = deps.SDJWTSigner.IssuerCertificate
 	case mdoc.CredentialFormat:
 		if algs := c.CredentialSigningAlgValuesSupportedCOSE; len(algs) > 0 && !slices.Contains(algs, deps.MdocSigner.Alg) {
-			return fmt.Errorf("credential_signing_alg_values_supported %v doesn't list the signer's %d", algs, deps.MdocSigner.Alg)
+			return nil, fmt.Errorf("credential_signing_alg_values_supported %v doesn't list the signer's %d", algs, deps.MdocSigner.Alg)
 		}
 		if len(deps.MdocSigner.X5Chain) > 0 {
 			leaf, _ = x509.ParseCertificate(deps.MdocSigner.X5Chain[0])
 		}
 	}
-	if leaf != nil && !now.IsZero() && (now.Before(leaf.NotBefore) || now.After(leaf.NotAfter)) {
-		return fmt.Errorf("the signer's certificate isn't valid now (%s to %s)", leaf.NotBefore.Format(time.RFC3339), leaf.NotAfter.Format(time.RFC3339))
-	}
-	return nil
+	return leaf, nil
 }

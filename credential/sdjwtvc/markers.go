@@ -240,22 +240,42 @@ func hasSDMarkerValue(rv reflect.Value, depth int) bool {
 	case reflect.Interface, reflect.Pointer:
 		return !rv.IsNil() && hasSDMarkerValue(rv.Elem(), depth+1)
 	case reflect.Map:
-		for it := rv.MapRange(); it.Next(); {
-			if hasSDMarkerValue(it.Value(), depth+1) {
-				return true
-			}
-		}
+		return mapHasSDMarker(rv, depth)
 	case reflect.Slice, reflect.Array:
-		for i := range rv.Len() {
-			if hasSDMarkerValue(rv.Index(i), depth+1) {
-				return true
-			}
-		}
+		return elemsHaveSDMarker(rv, depth)
 	case reflect.Struct:
-		for i := range rv.NumField() {
-			if hasSDMarkerValue(rv.Field(i), depth+1) {
-				return true
-			}
+		return fieldsHaveSDMarker(rv, depth)
+	}
+	return false
+}
+
+// mapHasSDMarker is hasSDMarkerValue for the values of the map rv.
+func mapHasSDMarker(rv reflect.Value, depth int) bool {
+	for it := rv.MapRange(); it.Next(); {
+		if hasSDMarkerValue(it.Value(), depth+1) {
+			return true
+		}
+	}
+	return false
+}
+
+// elemsHaveSDMarker is hasSDMarkerValue for the elements of the slice
+// or array rv.
+func elemsHaveSDMarker(rv reflect.Value, depth int) bool {
+	for i := range rv.Len() {
+		if hasSDMarkerValue(rv.Index(i), depth+1) {
+			return true
+		}
+	}
+	return false
+}
+
+// fieldsHaveSDMarker is hasSDMarkerValue for the fields of the struct
+// rv.
+func fieldsHaveSDMarker(rv reflect.Value, depth int) bool {
+	for i := range rv.NumField() {
+		if hasSDMarkerValue(rv.Field(i), depth+1) {
+			return true
 		}
 	}
 	return false
