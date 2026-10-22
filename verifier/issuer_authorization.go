@@ -80,26 +80,7 @@ func authorizeIssuer(ctx context.Context, req VerifyResponseRequest, cq dcql.Cre
 	a := IssuerAuthorization{CredentialQueryID: cq.ID, Format: cq.Format, IssuerChain: chain, Claims: claims}
 	switch cq.Format {
 	case sdjwtvc.CredentialFormat:
-		a.Type, _ = claims["vct"].(string)
-		a.ClaimedIssuer, _ = claims["iss"].(string)
-		if binder, ok := req.IssuerKeys.(IssuerNameBinding); ok && binder.BindsIssuerName() {
-			a.Issuer = a.ClaimedIssuer
-		}
-		if aka, ok := claims["aka_vcts"].([]any); ok {
-			for _, t := range aka {
-				if s, ok := t.(string); ok {
-					a.AkaTypes = append(a.AkaTypes, s)
-				}
-			}
-		}
-		if meta, err := cq.SDJWTVCMeta(); err == nil {
-			a.RequestedTypes = meta.VCTValues
-		}
-		for _, t := range append([]string{a.Type}, a.AkaTypes...) {
-			if t != "" && slices.Contains(a.RequestedTypes, t) && !slices.Contains(a.MatchedTypes, t) {
-				a.MatchedTypes = append(a.MatchedTypes, t)
-			}
-		}
+		setSDJWTVCTypes(&a, req, cq, claims)
 	case mdoc.CredentialFormat:
 		// VerifyResponse has already checked the doctype is the
 		// requested one.
@@ -113,6 +94,31 @@ func authorizeIssuer(ctx context.Context, req VerifyResponseRequest, cq dcql.Cre
 		return newError(ReasonUntrustedIssuer, "issuer authorization", err)
 	}
 	return nil
+}
+
+// setSDJWTVCTypes fills in a's issuer and types for an SD-JWT VC
+// presentation with the disclosed claims.
+func setSDJWTVCTypes(a *IssuerAuthorization, req VerifyResponseRequest, cq dcql.CredentialQuery, claims map[string]any) {
+	a.Type, _ = claims["vct"].(string)
+	a.ClaimedIssuer, _ = claims["iss"].(string)
+	if binder, ok := req.IssuerKeys.(IssuerNameBinding); ok && binder.BindsIssuerName() {
+		a.Issuer = a.ClaimedIssuer
+	}
+	if aka, ok := claims["aka_vcts"].([]any); ok {
+		for _, t := range aka {
+			if s, ok := t.(string); ok {
+				a.AkaTypes = append(a.AkaTypes, s)
+			}
+		}
+	}
+	if meta, err := cq.SDJWTVCMeta(); err == nil {
+		a.RequestedTypes = meta.VCTValues
+	}
+	for _, t := range append([]string{a.Type}, a.AkaTypes...) {
+		if t != "" && slices.Contains(a.RequestedTypes, t) && !slices.Contains(a.MatchedTypes, t) {
+			a.MatchedTypes = append(a.MatchedTypes, t)
+		}
+	}
 }
 
 // IssuerNameBinding is implemented by an SDJWTVCIssuerKeyResolver that
