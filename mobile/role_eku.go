@@ -94,10 +94,7 @@ func checkRoleRoots(cfg config) error {
 	if cfg.MdocReaderRequireEKU {
 		mdocEKU = mdocReaderAuthEKU
 	}
-	roles := []struct {
-		name, roots string
-		eku         string
-	}{
+	roles := []roleRoots{
 		{"verifier_roots", cfg.VerifierRoots, cfg.VerifierRequireEKU},
 		{"registrar_roots", cfg.RegistrarRoots, cfg.RegistrarRequireEKU},
 		{"issuer_roots", cfg.IssuerRoots, cfg.IssuerRequireEKU},
@@ -106,18 +103,33 @@ func checkRoleRoots(cfg config) error {
 	}
 	for i, a := range roles {
 		for _, b := range roles[i+1:] {
-			if !mayShareAnchor(a.roots, b.roots) {
-				continue
-			}
-			for _, r := range []struct{ name, eku, other string }{{a.name, a.eku, b.name}, {b.name, b.eku, a.name}} {
-				if r.eku == "" {
-					return newError(CodeInvalidInput, fmt.Errorf("%s may share a trust anchor with %s: set %s to tell its certificates apart", r.name, r.other, ekuKey(r.name)))
-				}
-			}
-			if a.eku == b.eku {
-				return newError(CodeInvalidInput, fmt.Errorf("%s and %s may share a trust anchor, and %s and %s are the same extended key usage, which can't tell their certificates apart", a.name, b.name, ekuKey(a.name), ekuKey(b.name)))
+			if err := checkRolePair(a, b); err != nil {
+				return err
 			}
 		}
+	}
+	return nil
+}
+
+// roleRoots is one role's roots configuration key, its roots and its
+// extended key usage, for checkRoleRoots.
+type roleRoots struct {
+	name, roots string
+	eku         string
+}
+
+// checkRolePair is checkRoleRoots for roles a and b.
+func checkRolePair(a, b roleRoots) error {
+	if !mayShareAnchor(a.roots, b.roots) {
+		return nil
+	}
+	for _, r := range []struct{ name, eku, other string }{{a.name, a.eku, b.name}, {b.name, b.eku, a.name}} {
+		if r.eku == "" {
+			return newError(CodeInvalidInput, fmt.Errorf("%s may share a trust anchor with %s: set %s to tell its certificates apart", r.name, r.other, ekuKey(r.name)))
+		}
+	}
+	if a.eku == b.eku {
+		return newError(CodeInvalidInput, fmt.Errorf("%s and %s may share a trust anchor, and %s and %s are the same extended key usage, which can't tell their certificates apart", a.name, b.name, ekuKey(a.name), ekuKey(b.name)))
 	}
 	return nil
 }
