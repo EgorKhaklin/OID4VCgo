@@ -113,6 +113,7 @@ type Presentation struct {
 	req     wallet.AuthorizationRequest
 	queries []Query
 	byID    map[string]StoredCredential
+	order   []string // byID's IDs, in the CredentialStore's order
 	// registration is the Verifier's, checked when it started.
 	registration Registration
 
@@ -190,6 +191,7 @@ func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRe
 	byCredential := make(map[string]StoredCredential, len(stored))
 	for _, c := range stored {
 		p.byID[c.ID] = c
+		p.order = append(p.order, c.ID)
 		h := heldCredential(c, nil)
 		// Only what the Verifier says it can verify is offered
 		// (vp_formats_supported, OpenID4VP 1.0 §11.1).
@@ -277,12 +279,14 @@ func (p *Presentation) CredentialSets() []CredentialSet {
 // DefaultSelection is the Selection the wallet would make itself, for an
 // application with no policy of its own, or to start from: the first
 // answerable option of each credential set, and each query's first
-// credential (all of them when it takes several). It returns
-// ErrNoMatchingCredential when the request can't be answered.
+// credential, as Queries lists them, even when it takes several: the
+// holder adds the others. It returns ErrNoMatchingCredential when the
+// request can't be answered.
 func (p *Presentation) DefaultSelection(ctx context.Context) (Selection, error) {
 	held := make([]wallet.HeldCredential, 0, len(p.byID))
 	byCredential := make(map[string]string, len(p.byID))
-	for id, c := range p.byID {
+	for _, id := range p.order {
+		c := p.byID[id]
 		h := heldCredential(c, nil)
 		// As the queries offer: what the Verifier can take.
 		if !p.req.VPFormats.Accepts(h) {

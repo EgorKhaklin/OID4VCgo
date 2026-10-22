@@ -1091,9 +1091,9 @@ public class Presentation internal constructor(private val handle: MobilePresent
     /**
      * The selection the wallet would make itself, for an app with no
      * policy of its own, or to start from: the first answerable option
-     * of each credential set, and each query's first credential (all of
-     * them when it takes several). Throws `noMatchingCredential` when
-     * the request can't be answered.
+     * of each credential set, and each query's first credential, even
+     * when it takes several: the holder adds the others. Throws
+     * `noMatchingCredential` when the request can't be answered.
      */
     public suspend fun defaultSelection(): Selection {
         return decode<SelectionResult>(OID4VC.offMain { handle.defaultSelection() }).selection

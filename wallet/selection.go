@@ -84,11 +84,19 @@ func checkCredentialSets(query dcql.Query, selection map[string][]HeldCredential
 
 // DefaultSelection is the selection the wallet would make itself:
 // MatchDCQLQuery's choice among candidates — the first satisfiable
-// option of each credential set, the first matching credential of each
-// query (all of them when multiple is true). An application with no
-// policy of its own can present it, or start from it.
+// option of each credential set — with the first matching credential of
+// each query, even one whose multiple is true: multiple lets the holder
+// present several, it doesn't ask for every match. An application with
+// no policy of its own can present it, or start from it.
 func DefaultSelection(ctx context.Context, query dcql.Query, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (map[string][]HeldCredential, error) {
-	return MatchDCQLQuery(ctx, query, candidates, trustedAuthorities)
+	matches, err := MatchDCQLQuery(ctx, query, candidates, trustedAuthorities)
+	if err != nil {
+		return nil, err
+	}
+	for id, held := range matches {
+		matches[id] = held[:1]
+	}
+	return matches, nil
 }
 
 // PreviewSelection reports what presenting selection would disclose,

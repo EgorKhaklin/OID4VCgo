@@ -292,6 +292,38 @@ func TestPresentation_PreviewShowsAlwaysDisclosed(t *testing.T) {
 	}
 }
 
+// A query that takes several credentials (multiple) permits them; the
+// wallet's own choice is still the first, as Queries lists them, and the
+// holder adds the others.
+func TestPresentation_DefaultSelectionTakesOneForMultiple(t *testing.T) {
+	f, v, w := presentationFixture(t)
+	receive(t, f, w, walletflowtest.SDJWTConfigurationID)
+	receive(t, f, w, walletflowtest.SDJWTConfigurationID)
+	ctx := context.Background()
+	q := f.env.SDJWTQuery(t, "pid", "given_name")
+	q.Multiple = true
+	_, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{q}})
+	p, err := w.StartPresentation(ctx, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates := p.Queries()[0].Credentials
+	if len(candidates) != 2 {
+		t.Fatalf("query offers %d credentials, want both held", len(candidates))
+	}
+	sel, err := p.DefaultSelection(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sel["pid"]; len(got) != 1 || got[0] != candidates[0].ID {
+		t.Errorf("DefaultSelection[pid] = %v, want the first candidate, %s", got, candidates[0].ID)
+	}
+	both := walletflow.Selection{"pid": {candidates[0].ID, candidates[1].ID}}
+	if _, err := p.Preview(ctx, both); err != nil {
+		t.Errorf("the holder adding the other: %v", err)
+	}
+}
+
 // A credential refreshed between Preview and Respond isn't presented:
 // what would be sent isn't what the holder was shown.
 func TestPresentation_RefreshedSinceShown(t *testing.T) {
