@@ -146,7 +146,7 @@ func annexCTranscript(t testing.TB, encryptionInfo, origin string) []byte {
 
 func verify(t *testing.T, h harness, response string, mutate func(*VerifyParams)) (Verified, error) {
 	t.Helper()
-	p := VerifyParams{Pending: h.request.Pending, Response: response, IssuerKeys: fixedIssuerKey{pub: h.f.IssuerKey.Public()}}
+	p := VerifyParams{Pending: h.request.Pending, Response: response, IssuerKeys: fixedIssuerKey{pub: h.f.IssuerKey.Public()}, Assurance: verifier.AssuranceDevelopment}
 	if mutate != nil {
 		mutate(&p)
 	}

@@ -427,6 +427,7 @@ func TestDeviceMACPreferredOnlyInPerson(t *testing.T) {
 		if _, err := mdocdcapi.VerifyResponse(ctx, mdocdcapi.VerifyParams{
 			Pending: pending, Response: base64.RawURLEncoding.EncodeToString(presented.EncryptedResponse),
 			IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: f.env.IssuerRoots},
+			Assurance:  verifier.AssuranceDevelopment,
 		}); err != nil {
 			t.Fatal(err)
 		}

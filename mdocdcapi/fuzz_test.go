@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // FuzzVerifyResponse feeds VerifyResponse arbitrary responses, seeded
@@ -14,7 +16,7 @@ func FuzzVerifyResponse(f *testing.F) {
 	f.Add(respond(f, h.request.Data, testOrigin, h.f))
 	f.Add("")
 	f.Add("gmVkY2FwaaA") // ["dcapi", {}]
-	p := VerifyParams{Pending: h.request.Pending, IssuerKeys: fixedIssuerKey{pub: h.f.IssuerKey.Public()}}
+	p := VerifyParams{Pending: h.request.Pending, IssuerKeys: fixedIssuerKey{pub: h.f.IssuerKey.Public()}, Assurance: verifier.AssuranceDevelopment}
 	f.Fuzz(func(t *testing.T, response string) {
 		p := p
 		p.Response = response
