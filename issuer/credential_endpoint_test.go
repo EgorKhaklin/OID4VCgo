@@ -541,6 +541,18 @@ func TestRequestCredential_CredentialIdentifier(t *testing.T) {
 			}},
 			wantErr: issuer.ErrorUnknownCredentialConfig,
 		},
+		"locations include this issuer": {
+			auth: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), AuthorizationDetails: []oid4vci.AuthorizationDetail{
+				{Type: "openid_credential", CredentialConfigurationID: testSDJWTConfigID, CredentialIdentifiers: []string{identifier}, Locations: []string{"https://elsewhere.example.com", testIssuer}},
+			}},
+		},
+		// §5.1.1: a detail for another location grants nothing here.
+		"locations name only another issuer": {
+			auth: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), AuthorizationDetails: []oid4vci.AuthorizationDetail{
+				{Type: "openid_credential", CredentialConfigurationID: testSDJWTConfigID, CredentialIdentifiers: []string{identifier}, Locations: []string{"https://elsewhere.example.com"}},
+			}},
+			wantErr: issuer.ErrorUnknownCredentialIdentifier,
+		},
 		"credential_configuration_id also present": {
 			auth: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), AuthorizationDetails: []oid4vci.AuthorizationDetail{
 				{Type: "openid_credential", CredentialConfigurationID: testSDJWTConfigID, CredentialIdentifiers: []string{identifier}},
@@ -602,6 +614,10 @@ func TestRequestCredential_CredentialConfigurationIDAuthorization(t *testing.T) 
 	detail := func(configID string, identifiers ...string) oid4vci.AuthorizationDetail {
 		return oid4vci.AuthorizationDetail{Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: configID, CredentialIdentifiers: identifiers}
 	}
+	located := func(d oid4vci.AuthorizationDetail, locations ...string) oid4vci.AuthorizationDetail {
+		d.Locations = locations
+		return d
+	}
 	for name, tc := range map[string]struct {
 		configID string
 		auth     issuer.AuthorizedRequest
@@ -616,6 +632,10 @@ func TestRequestCredential_CredentialConfigurationIDAuthorization(t *testing.T) 
 		"scope-less, no grant at all":                {testMdocConfigID, issuer.AuthorizedRequest{}, issuer.ErrorInsufficientScope},
 		"granted through credential_identifiers":     {testMdocConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testMdocConfigID, "mdl-1")}}, issuer.ErrorInvalidCredentialRequest},
 		"scope granted, but identifiers were issued": {testSDJWTConfigID, issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}, AuthorizationDetails: []oid4vci.AuthorizationDetail{detail(testSDJWTConfigID, "pid-1")}}, issuer.ErrorInvalidCredentialRequest},
+		"detail located at this issuer":              {testMdocConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{located(detail(testMdocConfigID), testIssuer)}}, ""},
+		"detail located elsewhere":                   {testMdocConfigID, issuer.AuthorizedRequest{AuthorizationDetails: []oid4vci.AuthorizationDetail{located(detail(testMdocConfigID), "https://elsewhere.example.com")}}, issuer.ErrorInsufficientScope},
+		// Identifiers issued for another location don't bar this one's scope.
+		"scope granted, identifiers for elsewhere": {testSDJWTConfigID, issuer.AuthorizedRequest{Scopes: []string{"identity_credential"}, AuthorizationDetails: []oid4vci.AuthorizationDetail{located(detail(testSDJWTConfigID, "pid-1"), "https://elsewhere.example.com")}}, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCredentialEndpointFixture(t)

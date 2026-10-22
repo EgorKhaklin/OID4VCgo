@@ -232,7 +232,7 @@ func (iss *Issuer) deferredAuthorized(record DeferredTransactionRecord, auth Aut
 		return false
 	}
 	return record.CredentialConfigurationID == "" ||
-		grantsConfiguration(auth, record.CredentialConfigurationID, iss.cfg.CredentialConfigurationsSupported[record.CredentialConfigurationID])
+		iss.grantsConfiguration(auth, record.CredentialConfigurationID, iss.cfg.CredentialConfigurationsSupported[record.CredentialConfigurationID])
 }
 
 // pollIntervalSeconds is d as §9.2's "interval": whole seconds, rounded
