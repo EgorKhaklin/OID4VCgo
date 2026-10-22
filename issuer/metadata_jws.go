@@ -222,15 +222,9 @@ func prefersJWT(accept []string) bool {
 	jwtQ, jsonQ := 0.0, 0.0
 	for _, line := range accept {
 		for _, part := range strings.Split(line, ",") {
-			mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(part))
-			if err != nil {
+			mediaType, q, ok := parseAcceptPart(part)
+			if !ok {
 				continue
-			}
-			q := 1.0
-			if v, ok := params["q"]; ok {
-				if q, err = strconv.ParseFloat(v, 64); err != nil || q < 0 || q > 1 {
-					continue
-				}
 			}
 			switch mediaType {
 			case "application/jwt":
@@ -241,6 +235,23 @@ func prefersJWT(accept []string) bool {
 		}
 	}
 	return jwtQ > 0 && jwtQ >= jsonQ
+}
+
+// parseAcceptPart parses one member of an Accept header into its media
+// type and q, 1 when absent. ok is false for a member that doesn't parse
+// or whose q isn't between 0 and 1.
+func parseAcceptPart(part string) (mediaType string, q float64, ok bool) {
+	mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(part))
+	if err != nil {
+		return "", 0, false
+	}
+	q = 1.0
+	if v, has := params["q"]; has {
+		if q, err = strconv.ParseFloat(v, 64); err != nil || q < 0 || q > 1 {
+			return "", 0, false
+		}
+	}
+	return mediaType, q, true
 }
 
 // MetadataHandler serves the Credential Issuer Metadata, signed when

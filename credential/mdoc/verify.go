@@ -149,35 +149,46 @@ func checkDigests(signed IssuerSigned, mso MobileSecurityObject) (map[string]map
 		if hasCache && len(cached) != len(items) {
 			return nil, fmt.Errorf("mdoc: namespace %q was changed after unmarshalling", namespace)
 		}
-		elements := make(map[string]interface{}, len(items))
-		for i, item := range items {
-			itemBytes, err := hashedItemBytes(cached, i, item)
-			if err != nil {
-				return nil, err
-			}
-			var hashed IssuerSignedItem
-			if err := unwrapTag24(itemBytes, &hashed); err != nil {
-				return nil, fmt.Errorf("mdoc: namespace %q item %d: %w", namespace, i, err)
-			}
-			want, ok := digests[hashed.DigestID]
-			if !ok {
-				return nil, fmt.Errorf("mdoc: namespace %q digestID %d has no entry in valueDigests", namespace, hashed.DigestID)
-			}
-			got, err := digest(mso.DigestAlgorithm, itemBytes)
-			if err != nil {
-				return nil, err
-			}
-			if !bytes.Equal(got, want) {
-				return nil, fmt.Errorf("mdoc: namespace %q element %q: digest mismatch", namespace, hashed.ElementIdentifier)
-			}
-			if _, dup := elements[hashed.ElementIdentifier]; dup {
-				return nil, fmt.Errorf("mdoc: namespace %q element %q appears twice", namespace, hashed.ElementIdentifier)
-			}
-			elements[hashed.ElementIdentifier] = hashed.ElementValue
+		elements, err := checkNamespaceDigests(namespace, items, cached, digests, mso.DigestAlgorithm)
+		if err != nil {
+			return nil, err
 		}
 		nameSpaces[namespace] = elements
 	}
 	return nameSpaces, nil
+}
+
+// checkNamespaceDigests is checkDigests for the items of one namespace,
+// whose received bytes, if any, are cached and whose digests the MSO
+// lists, by alg, in digests.
+func checkNamespaceDigests(namespace string, items []IssuerSignedItem, cached []cbor.RawMessage, digests DigestIDs, alg DigestAlg) (map[string]interface{}, error) {
+	elements := make(map[string]interface{}, len(items))
+	for i, item := range items {
+		itemBytes, err := hashedItemBytes(cached, i, item)
+		if err != nil {
+			return nil, err
+		}
+		var hashed IssuerSignedItem
+		if err := unwrapTag24(itemBytes, &hashed); err != nil {
+			return nil, fmt.Errorf("mdoc: namespace %q item %d: %w", namespace, i, err)
+		}
+		want, ok := digests[hashed.DigestID]
+		if !ok {
+			return nil, fmt.Errorf("mdoc: namespace %q digestID %d has no entry in valueDigests", namespace, hashed.DigestID)
+		}
+		got, err := digest(alg, itemBytes)
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Equal(got, want) {
+			return nil, fmt.Errorf("mdoc: namespace %q element %q: digest mismatch", namespace, hashed.ElementIdentifier)
+		}
+		if _, dup := elements[hashed.ElementIdentifier]; dup {
+			return nil, fmt.Errorf("mdoc: namespace %q element %q appears twice", namespace, hashed.ElementIdentifier)
+		}
+		elements[hashed.ElementIdentifier] = hashed.ElementValue
+	}
+	return elements, nil
 }
 
 // hashedItemBytes is the IssuerSignedItemBytes item i was received as,
