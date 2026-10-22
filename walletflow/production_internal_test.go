@@ -171,6 +171,8 @@ func TestNew_RoleSeparation(t *testing.T) {
 		"one pool for issuers and Verifiers":       {Config{IssuerRoots: shared, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared}}, false},
 		"one pool, only the issuer narrowed":       {Config{IssuerRoots: shared, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared}}, false},
 		"one pool, both narrowed":                  {Config{IssuerRoots: shared, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, true},
+		"one pool, Verifiers' by pointer":          {Config{IssuerRoots: shared, VerifierTrust: &wallet.X5CVerifierRoots{Roots: shared}}, false},
+		"one pool by pointer, both narrowed":       {Config{IssuerRoots: shared, IssuerLeafPolicy: policy, VerifierTrust: &wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, true},
 		"separate pools":                           {Config{IssuerRoots: shared, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifiers}}, true},
 		"one pool for issuers and readers, in dev": {Config{IssuerRoots: shared, MdocReaderRoots: shared, Development: true}, true},
 		"one pool for metadata and Verifiers":      {Config{IssuerRoots: verifiers, IssuerMetadataRoots: shared, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, false},

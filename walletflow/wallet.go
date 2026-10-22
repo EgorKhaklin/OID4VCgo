@@ -455,8 +455,13 @@ func checkRoleSeparation(c Config) error {
 		{"RegistrarRoots", c.RegistrarRoots, c.RegistrarLeafPolicy != nil},
 		{"MdocReaderRoots", c.MdocReaderRoots, c.MdocReaderLeafPolicy != nil},
 	}
-	if v, ok := c.VerifierTrust.(wallet.X5CVerifierRoots); ok {
+	switch v := c.VerifierTrust.(type) {
+	case wallet.X5CVerifierRoots:
 		roles = append(roles, role{"VerifierTrust", v.Roots, v.LeafPolicy != nil})
+	case *wallet.X5CVerifierRoots:
+		if v != nil {
+			roles = append(roles, role{"VerifierTrust", v.Roots, v.LeafPolicy != nil})
+		}
 	}
 	for i, a := range roles {
 		for _, b := range roles[i+1:] {
