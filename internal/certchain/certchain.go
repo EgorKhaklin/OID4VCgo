@@ -13,6 +13,7 @@ package certchain
 import (
 	"bytes"
 	"crypto"
+	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -21,6 +22,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
 // MaxChainLength is the most certificates a presented chain may hold,
@@ -138,6 +141,12 @@ func VerifyChainsAt(ders [][]byte, roots *x509.CertPool, now time.Time) (*x509.C
 	// isn't restricted.
 	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
 		return nil, nil, fmt.Errorf("certchain: leaf certificate's key usage doesn't allow digitalSignature")
+	}
+	// A small-order Ed25519 key verifies a forged signature over any
+	// message; jwk and COSE_Key parsing refuse one, and so must a
+	// certificate.
+	if pub, ok := leaf.PublicKey.(ed25519.PublicKey); ok && jwk.IsSmallOrderEd25519(pub) {
+		return nil, nil, fmt.Errorf("certchain: leaf certificate's Ed25519 key is of small order")
 	}
 
 	intermediates := x509.NewCertPool()
