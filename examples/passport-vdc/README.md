@@ -426,11 +426,15 @@ and rerun `cmd/wallet-provider`.
 - **Wallet Attestations** authenticate the wallet at PAR and the token
   endpoint (HAIP 1.0 §4.4.1; fapigo's `X5CAttesterChain`).
 - **Key Attestations** prove each holder key. Each credential
-  request must prove its holder key with a Key Attestation: the
-  `attestation` proof type (OID4VCI 1.0 Appendix F.3), which is the
-  only proof type the issuer offers. The attestation carries the
-  provider's certificate as `x5c` and the issuer's `c_nonce`, as HAIP
-  1.0 §4.5.1 requires.
+  request must prove its holder key with a Key Attestation, in either
+  of HAIP 1.0 §4.5.1's combinations the issuer offers: `jwt` proofs
+  carrying it in their `key_attestation` header (OID4VCI 1.0 Appendix
+  D.1, F.1), or the `attestation` proof type (Appendix F.3). The
+  wallets send `jwt` proofs: their `aud` names this issuer, while a
+  bare Key Attestation names no audience, so another issuer handed
+  one could redeem it here. The attestation carries the provider's
+  certificate as `x5c` and the issuer's `c_nonce`, as HAIP 1.0 §4.5.1
+  requires.
 
 The wallets never hold the provider's key. They ask its service
 (`walletprovider.Client`, `-wallet-provider-url`):
