@@ -195,6 +195,28 @@ func TestVerifyRejectsCriticalExtension(t *testing.T) {
 	}
 }
 
+// A signature segment whose unused trailing bits aren't zero decodes to
+// the same signature under a lenient decoder, which would give one JWS
+// a second serialization: it's refused.
+func TestVerifyRejectsNonCanonicalBase64(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	compact, err := Sign(ES256, key, map[string]any{}, []byte(`{}`))
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	// A 64-byte ES256 signature is 86 characters: the last carries 4
+	// unused bits.
+	last := strings.IndexByte(alphabet, compact[len(compact)-1])
+	variant := compact[:len(compact)-1] + string(alphabet[last|1])
+	if _, _, err := Verify(ES256, &key.PublicKey, variant); err == nil {
+		t.Error("Verify accepted a non-canonical signature encoding")
+	}
+}
+
 // RFC 7515 §4.1.11: "Producers MUST NOT use the empty list".
 func TestVerifyRejectsEmptyCrit(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

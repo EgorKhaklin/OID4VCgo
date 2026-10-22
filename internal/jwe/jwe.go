@@ -44,7 +44,9 @@ type Zip string
 // only registered "zip" value.
 const DEF Zip = "DEF"
 
-var b64 = base64.RawURLEncoding
+// b64 decodes strictly: an encoding whose unused trailing bits aren't zero
+// (RFC 4648 §3.5) is refused, as every encoder emits zero bits.
+var b64 = base64.RawURLEncoding.Strict()
 
 // MaxCompactBytes bounds how large a compact JWE Decrypt/DecodeHeader
 // will attempt to parse, to avoid doing unbounded base64url-decode and

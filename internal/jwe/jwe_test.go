@@ -313,6 +313,24 @@ func TestDecryptRejectsCriticalExtension(t *testing.T) {
 	}
 }
 
+// An authentication tag whose unused trailing bits aren't zero decodes
+// to the same tag under a lenient decoder, which would give one JWE a
+// second serialization: it's refused.
+func TestDecryptRejectsNonCanonicalBase64(t *testing.T) {
+	key := testP256Key(t)
+	compact, err := Encrypt(&key.PublicKey, A128GCM, []byte("hi"), EncryptOptions{})
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	// A 16-byte tag is 22 characters: the last carries 4 unused bits.
+	last := strings.IndexByte(alphabet, compact[len(compact)-1])
+	variant := compact[:len(compact)-1] + string(alphabet[last|1])
+	if _, err := Decrypt(key, variant); err == nil {
+		t.Error("Decrypt accepted a non-canonical tag encoding")
+	}
+}
+
 // RFC 7515 §4.1.11, which RFC 7516 §4.1.13 follows: "Producers MUST
 // NOT use the empty list".
 func TestDecryptRejectsEmptyCrit(t *testing.T) {

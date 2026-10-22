@@ -52,7 +52,9 @@ func IsSupported(alg Alg) bool {
 	}
 }
 
-var b64 = base64.RawURLEncoding
+// b64 decodes strictly: an encoding whose unused trailing bits aren't zero
+// (RFC 4648 §3.5) is refused, as every encoder emits zero bits.
+var b64 = base64.RawURLEncoding.Strict()
 
 // MaxCompactBytes bounds how large a compact JWS Verify/DecodeUnverified
 // will attempt to parse, to avoid doing unbounded base64url-decode and
