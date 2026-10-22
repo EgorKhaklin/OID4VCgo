@@ -1,6 +1,8 @@
 package walletflow
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"github.com/idfoundry/oid4vcgo"
 	"reflect"
@@ -46,8 +48,57 @@ func TestRequestUnits(t *testing.T) {
 	if got := s.requestUnits(); !slices.Equal(got, want) {
 		t.Errorf("requestUnits = %v, want %v", got, want)
 	}
-	if want[0].key() == want[1].key() || s.firstIdentifier("pid") != "pid-alice" || s.firstIdentifier("mdl") != "" {
-		t.Error("keys or first identifier wrong")
+	if want[0].key() == want[1].key() {
+		t.Error("two units share a key")
+	}
+}
+
+// A refresh asks for the credential_identifier the credential was
+// requested by. Where the wallet can't tell which of several datasets
+// its grant issued the credential holds, it refuses rather than guess:
+// asking for another would replace the credential with that one.
+func TestRefreshIdentifier(t *testing.T) {
+	ctx := context.Background()
+	alice := StoredCredential{ID: "alice", ConfigurationID: "pid", CredentialIdentifier: "pid-alice", GrantID: "g"}
+	bob := StoredCredential{ID: "bob", ConfigurationID: "pid", CredentialIdentifier: "pid-bob", GrantID: "g"}
+	legacy := StoredCredential{ID: "legacy", ConfigurationID: "pid", GrantID: "h"}
+	legacySibling := StoredCredential{ID: "legacy-2", ConfigurationID: "pid", GrantID: "h"}
+	alone := StoredCredential{ID: "alone", ConfigurationID: "pid", GrantID: "i"}
+	otherConfig := StoredCredential{ID: "mdl", ConfigurationID: "mdl", GrantID: "i"}
+	store := NewMemoryCredentialStore()
+	for _, c := range []StoredCredential{alice, bob, legacy, legacySibling, alone, otherConfig} {
+		if err := store.Put(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := &Wallet{deps: Dependencies{Credentials: store}}
+	both := []string{"pid-alice", "pid-bob"}
+	for name, tc := range map[string]struct {
+		old     StoredCredential
+		granted []string
+		want    string
+		refused bool
+	}{
+		"its own dataset":                         {bob, both, "pid-bob", false},
+		"its dataset no longer granted":           {bob, []string{"pid-alice"}, "", true},
+		"no identifiers granted, siblings":        {bob, nil, "", true},
+		"not kept, several granted":               {alone, both, "", true},
+		"not kept, one granted, siblings":         {legacy, []string{"pid-1"}, "", true},
+		"not kept, none granted, siblings":        {legacy, nil, "", true},
+		"not kept, one granted, alone":            {alone, []string{"pid-1"}, "pid-1", false},
+		"not kept, none granted, alone":           {alone, nil, "", false},
+		"by configuration, another configuration": {otherConfig, nil, "", false},
+	} {
+		got, err := w.refreshIdentifier(ctx, tc.old, tc.granted)
+		if tc.refused {
+			if !errors.Is(err, ErrReissueRequired) {
+				t.Errorf("%s: %q, %v; want ErrReissueRequired", name, got, err)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("%s: %q, %v; want %q", name, got, err, tc.want)
+		}
 	}
 }
 

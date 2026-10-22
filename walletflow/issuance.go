@@ -875,16 +875,6 @@ func (s *Issuance) requestUnits() []requestUnit {
 	return out
 }
 
-// firstIdentifier is a credential_identifier granted for configID, ""
-// for none: a refresh can't tell which dataset the credential it
-// replaces came from, so it asks for the first.
-func (s *Issuance) firstIdentifier(configID string) string {
-	if ids := s.identifiers[configID]; len(ids) > 0 {
-		return ids[0]
-	}
-	return ""
-}
-
 // permanent reports whether err, requesting one credential, won't go
 // away by asking again: the credential failed the wallet's checks, or
 // the issuer refused the request itself (an HTTP 4xx) rather than the
@@ -924,7 +914,7 @@ func (s *Issuance) request(ctx context.Context, configID, identifier string, req
 		return StoredCredential{}, nil, err
 	}
 	if result.TransactionID != "" {
-		d, err := s.deferred(ctx, configID, holders, result, requestEnc, responseEnc)
+		d, err := s.deferred(ctx, configID, identifier, holders, result, requestEnc, responseEnc)
 		if err != nil {
 			return StoredCredential{}, nil, err
 		}
@@ -937,7 +927,7 @@ func (s *Issuance) request(ctx context.Context, configID, identifier string, req
 	}
 	stored, err := s.w.accept(ctx, issued{
 		issuer: s.offer.CredentialIssuer, metadata: s.metadata, resource: s.resource,
-		configID: configID, holders: holders, result: result, grantID: grantID, replace: s.replace,
+		configID: configID, identifier: identifier, holders: holders, result: result, grantID: grantID, replace: s.replace,
 	})
 	if err != nil {
 		return StoredCredential{}, nil, err
@@ -1087,8 +1077,9 @@ func (s *Issuance) jwtProofsWithKeyAttestation(ctx context.Context, nonce string
 	return holders, req, nil
 }
 
-// deferred keeps a credential the issuer deferred, with holders, to poll.
-func (s *Issuance) deferred(ctx context.Context, configID string, holders []Key, result wallet.CredentialResult,
+// deferred keeps a credential the issuer deferred, requested by
+// identifier ("" for none), with holders, to poll.
+func (s *Issuance) deferred(ctx context.Context, configID, identifier string, holders []Key, result wallet.CredentialResult,
 	requestEnc *wallet.RequestEncryption, responseEnc *wallet.ResponseEncryption) (*Deferred, error) {
 	if s.metadata.DeferredCredentialEndpoint == nil {
 		return nil, fmt.Errorf("walletflow: credential %q was deferred, but the issuer advertises no deferred credential endpoint", configID)
@@ -1104,8 +1095,8 @@ func (s *Issuance) deferred(ctx context.Context, configID string, holders []Key,
 		return nil, err
 	}
 	p := PendingDeferred{
-		ID: id, CredentialIssuer: s.offer.CredentialIssuer, ConfigurationID: configID, TransactionID: result.TransactionID,
-		AccessToken: s.accessToken, AccessTokenExpiresAt: s.accessExpiresAt,
+		ID: id, CredentialIssuer: s.offer.CredentialIssuer, ConfigurationID: configID, CredentialIdentifier: identifier,
+		TransactionID: result.TransactionID, AccessToken: s.accessToken, AccessTokenExpiresAt: s.accessExpiresAt,
 		HolderKeyIDs: keyIDs(holders), Interval: result.Interval, DeferredAt: s.w.deps.Clock().UTC(),
 		GrantID: grantID, Replaces: s.replace,
 	}
@@ -1157,15 +1148,16 @@ func keyIDs(keys []Key) []string {
 var errInvalidCredential = errors.New("is invalid")
 
 // issued is a credential result to accept: from issuer, under
-// metadata, polled with resource, for configID, its copies bound to
-// holders.
+// metadata, polled with resource, for configID by identifier ("" for
+// none), its copies bound to holders.
 type issued struct {
-	issuer   string
-	metadata oid4vci.Metadata
-	resource wallet.ProtectedResourceClient
-	configID string
-	holders  []Key
-	result   wallet.CredentialResult
+	issuer     string
+	metadata   oid4vci.Metadata
+	resource   wallet.ProtectedResourceClient
+	configID   string
+	identifier string
+	holders    []Key
+	result     wallet.CredentialResult
 	// grantID is the RefreshGrant that can refresh it, if any; replace,
 	// the stored credential it replaces, if any.
 	grantID, replace string
@@ -1219,7 +1211,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		}
 	}
 	stored := StoredCredential{
-		ID: id, CredentialIssuer: c.issuer, ConfigurationID: c.configID,
+		ID: id, CredentialIssuer: c.issuer, ConfigurationID: c.configID, CredentialIdentifier: c.identifier,
 		Format: conf.Format, VCT: conf.VCT, DocType: conf.DocType,
 		Credential: copies[0].Credential, HolderKeyID: copies[0].HolderKeyID, Copies: copies,
 		ReceivedAt: now.UTC(), Claims: first.Claims,
