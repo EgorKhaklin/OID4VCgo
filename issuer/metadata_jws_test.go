@@ -58,8 +58,13 @@ func TestSignMetadataJWS_ProducesValidJWS(t *testing.T) {
 	if claims["sub"] != testIssuer {
 		t.Errorf("sub = %v, want %q (the credential_issuer value)", claims["sub"], testIssuer)
 	}
-	if claims["iat"] == nil {
+	iat, _ := claims["iat"].(float64)
+	if iat == 0 {
 		t.Error("iat claim missing")
+	}
+	// A captured copy mustn't verify forever (§12.2.3's exp).
+	if exp, _ := claims["exp"].(float64); exp-iat != issuer.DefaultMetadataLifetime.Seconds() {
+		t.Errorf("exp = %v, want iat + DefaultMetadataLifetime (%v)", claims["exp"], iat+issuer.DefaultMetadataLifetime.Seconds())
 	}
 	if claims["credential_endpoint"] != testCredentialEndpoint {
 		t.Errorf("credential_endpoint = %v, want passthrough of the metadata field", claims["credential_endpoint"])
@@ -143,9 +148,47 @@ func TestMetadataHandler_CachesSignedCopy(t *testing.T) {
 	}
 	var claims struct {
 		Iat int64 `json:"iat"`
+		Exp int64 `json:"exp"`
 	}
 	if err := json.Unmarshal(payload, &claims); err != nil || claims.Iat != clock.now.Unix() {
 		t.Errorf("iat = %d, want the Issuer's clock %d", claims.Iat, clock.now.Unix())
+	}
+	if want := clock.now.Add(issuer.DefaultMetadataLifetime).Unix(); claims.Exp != want {
+		t.Errorf("exp = %d, want iat + DefaultMetadataLifetime %d", claims.Exp, want)
+	}
+}
+
+// MetadataSigner.Lifetime sets exp; left zero, it's at least twice
+// Refresh, so a copy is never served expired.
+func TestMetadataHandler_Lifetime(t *testing.T) {
+	key, cert := testSignerAndCert(t)
+	iss := newTestIssuer(t, validConfig(t), validDependencies(t))
+	for name, tc := range map[string]struct {
+		refresh, lifetime, want time.Duration
+	}{
+		"set":                   {refresh: time.Minute, lifetime: 10 * time.Minute, want: 10 * time.Minute},
+		"default":               {want: issuer.DefaultMetadataLifetime},
+		"default, long Refresh": {refresh: 48 * time.Hour, want: 96 * time.Hour},
+	} {
+		handler, err := issuer.NewMetadataHandler(iss, &issuer.MetadataSigner{Signer: key, Alg: jose.ES256, Certificate: cert, Refresh: tc.refresh, Lifetime: tc.lifetime})
+		if err != nil {
+			t.Fatalf("%s: NewMetadataHandler: %v", name, err)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-credential-issuer", nil)
+		req.Header.Set("Accept", "application/jwt")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		_, payload, err := jose.Verify(jose.ES256, &key.PublicKey, rec.Body.String())
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var claims struct {
+			Iat int64 `json:"iat"`
+			Exp int64 `json:"exp"`
+		}
+		if err := json.Unmarshal(payload, &claims); err != nil || claims.Exp-claims.Iat != int64(tc.want.Seconds()) {
+			t.Errorf("%s: exp - iat = %d, want %d", name, claims.Exp-claims.Iat, int64(tc.want.Seconds()))
+		}
 	}
 }
 
@@ -159,6 +202,7 @@ func TestNewMetadataHandler_RefusesMisconfiguredSigner(t *testing.T) {
 		"another key's certificate": {Signer: other, Alg: jose.ES256, Certificate: cert},
 		"an unsupported alg":        {Signer: key, Alg: "HS256", Certificate: cert},
 		"no certificate":            {Signer: key, Alg: jose.ES256},
+		"Lifetime not over Refresh": {Signer: key, Alg: jose.ES256, Certificate: cert, Refresh: time.Hour, Lifetime: time.Hour},
 	} {
 		if _, err := issuer.NewMetadataHandler(iss, s); err == nil {
 			t.Errorf("%s: accepted", name)
