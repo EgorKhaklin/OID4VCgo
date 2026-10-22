@@ -64,7 +64,7 @@ func satisfies(ctx context.Context, cq dcql.CredentialQuery, held HeldCredential
 	if trustedAuthorities == nil && len(cq.TrustedAuthorities) > 0 {
 		return fmt.Errorf("trusted_authorities is required when the credential query declares trusted_authorities")
 	}
-	_, err := matchCredentialQuery(ctx, cq, []HeldCredential{held}, trustedAuthorities)
+	_, err := newMatcher([]HeldCredential{held}, trustedAuthorities).match(ctx, cq)
 	return err
 }
 

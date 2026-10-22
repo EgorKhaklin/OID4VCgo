@@ -71,3 +71,80 @@ func TestQueryValidate_SizeBounds(t *testing.T) {
 		}
 	}
 }
+
+// The bounds within one credential query: a claim_sets entry, the
+// trusted_authorities entries and their values, and vct_values. A
+// claim_sets entry naming one claim thousands of times, which once took
+// a wallet minutes to match, is refused.
+func TestQueryValidate_CredentialQueryBounds(t *testing.T) {
+	repeat := func(s string, n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = s
+		}
+		return out
+	}
+	vcts := func(n int) json.RawMessage {
+		raw, err := json.Marshal(map[string][]string{"vct_values": repeat("urn:test", n)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	authorities := func(n, values int) []dcql.TrustedAuthoritiesQuery {
+		out := make([]dcql.TrustedAuthoritiesQuery, n)
+		for i := range out {
+			out[i] = dcql.TrustedAuthoritiesQuery{Type: dcql.TrustedAuthorityAKI, Values: repeat("s9tIpPmhxdiuNkHMEWNpYim8S8Y", values)}
+		}
+		return out
+	}
+	claims := func(n int) []dcql.ClaimsQuery {
+		out := make([]dcql.ClaimsQuery, n)
+		for i := range out {
+			out[i] = dcql.ClaimsQuery{ID: fmt.Sprintf("c%d", i), Path: dcql.Path{dcql.PathKey(fmt.Sprintf("k%d", i))}}
+		}
+		return out
+	}
+	ids := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("c%d", i)
+		}
+		return out
+	}
+	for name, tc := range map[string]struct {
+		cq      dcql.CredentialQuery
+		refused string
+	}{
+		"at the bounds": {cq: dcql.CredentialQuery{
+			Meta:               vcts(dcql.MaxVCTValues),
+			TrustedAuthorities: authorities(dcql.MaxTrustedAuthorities, dcql.MaxTrustedAuthorityValues),
+			Claims:             claims(dcql.MaxClaimsPerCredential),
+			ClaimSets:          [][]string{ids(dcql.MaxClaimsPerCredential)},
+		}},
+		"claim set naming a claim twice": {cq: dcql.CredentialQuery{Claims: claims(2), ClaimSets: [][]string{{"c0", "c1", "c0"}}}, refused: `claim_sets[0] lists claim id "c0" twice`},
+		"claim set longer than the claims": {cq: dcql.CredentialQuery{
+			Claims:    claims(1),
+			ClaimSets: [][]string{{"c0"}, repeat("c0", dcql.MaxClaimsPerCredential+1)},
+		}, refused: "claim_sets[1]: 257 claims"},
+		"claim set of thousands":   {cq: dcql.CredentialQuery{Claims: claims(2), ClaimSets: [][]string{append(repeat("c0", 3499), "c1")}}, refused: "claim_sets[0]"},
+		"trusted authorities":      {cq: dcql.CredentialQuery{TrustedAuthorities: authorities(dcql.MaxTrustedAuthorities+1, 1)}, refused: "trusted authorities"},
+		"trusted authority values": {cq: dcql.CredentialQuery{TrustedAuthorities: authorities(1, dcql.MaxTrustedAuthorityValues+1)}, refused: "trusted_authorities[0]: 65 values"},
+		"vct_values":               {cq: dcql.CredentialQuery{Meta: vcts(dcql.MaxVCTValues + 1)}, refused: "65 vct_values"},
+	} {
+		tc.cq.ID, tc.cq.Format = "q", "dc+sd-jwt"
+		if tc.cq.Meta == nil {
+			tc.cq.Meta = vcts(1)
+		}
+		err := dcql.Query{Credentials: []dcql.CredentialQuery{tc.cq}}.Validate()
+		switch {
+		case tc.refused == "" && err != nil:
+			t.Errorf("%s: %v", name, err)
+		case tc.refused != "" && (err == nil || !strings.Contains(err.Error(), tc.refused)):
+			t.Errorf("%s: %v, want refused for %s", name, err, tc.refused)
+		}
+	}
+	if _, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: repeat("urn:test", dcql.MaxVCTValues+1)}); err == nil {
+		t.Error("NewSDJWTVCMeta accepted more than MaxVCTValues vct_values")
+	}
+}
