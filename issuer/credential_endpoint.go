@@ -714,8 +714,13 @@ func (iss *Issuer) issueSDJWT(claims sdjwtvc.Claims, key resolvedKey, typeMetada
 	if err != nil {
 		return "", fmt.Errorf("issuer: issue sd-jwt vc: %w", err)
 	}
+	var nestedDecoys func() (int, error)
+	if nested := iss.deps.SDJWTSigner.NestedDecoys; nested != nil {
+		nestedDecoys = func() (int, error) { return nested.count(iss.deps.Random) }
+	}
 	sdjwt, _, err := sdjwtvc.Issue(iss.deps.SDJWTSigner.Signer, iss.deps.SDJWTSigner.Alg, claims, sdjwtvc.IssueOptions{
 		Decoys:              decoys,
+		NestedDecoys:        nestedDecoys,
 		KeyID:               iss.deps.SDJWTSigner.KeyID,
 		IssuerCertificate:   iss.deps.SDJWTSigner.IssuerCertificate,
 		IssuerIntermediates: iss.deps.SDJWTSigner.IssuerIntermediates,

@@ -109,8 +109,20 @@ type IssueOptions struct {
 	// (RFC 9901 §4.2.5) when the credential has a selectively
 	// disclosable claim; one without has no _sd at all (SD-JWT VC
 	// draft-13 §3.2.2.4). 0 by default; Issue rejects a negative value
-	// or one above MaxDecoys.
+	// or one above MaxDecoys. Nested objects' _sd arrays get theirs
+	// from NestedDecoys and WithDecoys.
 	Decoys int
+
+	// NestedDecoys, if set, is called once for each _sd array below the
+	// top level that Issue produces — in an object of the claims, or of
+	// a disclosed value — for how many decoy digests (RFC 9901 §4.2.5)
+	// to add to it: 0 to MaxDecoys, or Issue fails. Draw the count
+	// afresh each call, from a range, so a Verifier can't subtract a
+	// fixed one and learn how many of an object's claims are really
+	// selectively disclosable. An object without selectively disclosable
+	// claims has no _sd array and gets none, unless WithDecoys gave it
+	// one. Nil adds none.
+	NestedDecoys func() (int, error)
 
 	// KeyID sets the JOSE "kid" header on the Issuer-signed JWT, if
 	// non-empty.
@@ -226,7 +238,7 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueO
 		tree[k] = v
 	}
 
-	sealed, disclosures, err := sealMap(tree, hashAlg)
+	sealed, disclosures, err := sealer{alg: hashAlg, nestedDecoys: opts.NestedDecoys}.sealObject(tree, 0, false)
 	if err != nil {
 		return "", nil, fmt.Errorf("sdjwtvc: seal claims: %w", err)
 	}
@@ -235,13 +247,15 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueO
 
 	// Decoys only beside a real disclosure: an SD-JWT VC with no
 	// selectively disclosable claims "MUST NOT contain the _sd claim"
-	// (draft-13 §3.2.2.4), nor then _sd_alg.
-	if len(disclosures) > 0 {
-		if opts.Decoys > 0 {
-			if err := addDecoys(sealed, hashAlg, opts.Decoys); err != nil {
-				return "", nil, err
-			}
+	// (draft-13 §3.2.2.4), nor then _sd_alg — unless a WithDecoys
+	// object carries digests of its own, which _sd_alg then names the
+	// algorithm of.
+	if len(disclosures) > 0 && opts.Decoys > 0 {
+		if err := addDecoys(sealed, hashAlg, opts.Decoys); err != nil {
+			return "", nil, err
 		}
+	}
+	if len(disclosures) > 0 || hasDisclosureDigest(sealed) {
 		sealed["_sd_alg"] = string(hashAlg)
 	}
 
