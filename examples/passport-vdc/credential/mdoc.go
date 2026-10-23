@@ -22,6 +22,9 @@ func fullDate(t time.Time) cbor.Tag {
 // left unset: issuer.RequestCredential binds each issued instance to
 // the Wallet's own key.
 //
+// The ISO namespace carries a decoy digest for each age_over_NN left
+// out (ageDecoys), so its number of digests doesn't depend on them.
+//
 // The MSO's signed and validFrom are ValidFrom(o.Now), the start of the
 // UTC day, not the signing instant (see ValidFrom): the document
 // signer's certificate must be valid from before that day began.
@@ -54,8 +57,13 @@ func MdocClaims(e passport.Evidence, o Options) (*mdoc.Claims, error) {
 	if len(e.Portrait) > 0 {
 		iso[Portrait] = e.Portrait
 	}
-	for threshold, over := range ageClaims(e, o, validUntil) {
+	ages := ageClaims(e, o, validUntil)
+	for threshold, over := range ages {
 		iso[fmt.Sprintf("%s%02d", mdocAgeOverPrefix, threshold)] = over
+	}
+	var decoys map[string]int
+	if n := ageDecoys(o, ages); n > 0 {
+		decoys = map[string]int{ISONamespace: n}
 	}
 
 	return &mdoc.Claims{
@@ -69,6 +77,7 @@ func MdocClaims(e passport.Evidence, o Options) (*mdoc.Claims, error) {
 		Signed:     validFrom,
 		ValidFrom:  validFrom,
 		ValidUntil: validUntil,
+		Decoys:     decoys,
 	}, nil
 }
 

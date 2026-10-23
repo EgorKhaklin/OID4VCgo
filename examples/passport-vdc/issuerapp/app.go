@@ -199,8 +199,12 @@ func (a *App) buildAuthorizationServer() error {
 		return fmt.Errorf("issuerapp: interaction cookie: %w", err)
 	}
 	// The token endpoint also serves the pre-authorized code grant
-	// (handleToken), so its metadata lists it.
+	// (handleToken), so its metadata lists it, with the
+	// authorization_details its tokens may carry.
 	cfg.AdditionalGrantTypes = []string{preAuthorizedCodeGrantType}
+	if cfg.RAR, err = credentialAuthorizationDetails(); err != nil {
+		return fmt.Errorf("issuerapp: authorization details: %w", err)
+	}
 
 	deps := server.Dependencies{
 		Clients: clients, Transactions: memstore.NewTransactionStore(), Grants: memstore.NewGrantStore(),
@@ -253,6 +257,10 @@ func (a *App) registerWallet() (*memstore.ClientRepository, *ephemeral.ClientKey
 	// redirect), the iOS demo app (a private-use scheme) — and the web
 	// wallet (https), which a native registration allows too (RFC 8252).
 	clientCfg.ApplicationType = storage.ApplicationTypeNative
+	// A pre-authorized code's token carries openid_credential
+	// authorization_details when the wallet asked for them
+	// (credentialAuthorizationDetails).
+	clientCfg.AuthorizationDetailsTypes = []string{oid4vci.AuthorizationDetailsTypeOpenIDCredential}
 	c, err := storage.NewRegisteredClient(clientCfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: register wallet: %w", err)

@@ -284,24 +284,37 @@ type SDJWTSigner struct {
 	// are selectively disclosable), as credential/sdjwtvc.IssueOptions.
 	// Decoys does. Nil adds none.
 	Decoys *DecoyRange
+
+	// NestedDecoys, if set, adds decoy digests to every _sd array below
+	// the top level — of an object in the claims (address, say) or in
+	// a disclosed value — with a count drawn afresh for each array, as
+	// credential/sdjwtvc.IssueOptions.NestedDecoys does: it hides how
+	// many of each such object's claims are selectively disclosable,
+	// as Decoys does for the top level's. Nil adds none, beyond any
+	// credential/sdjwtvc.WithDecoys in the claims.
+	NestedDecoys *DecoyRange
 }
 
 // DecoyRange is how many decoy digests SDJWTSigner.Decoys adds: a
 // number from Min to Max, inclusive, drawn afresh for each credential
-// from Dependencies.Random. A fixed count would let a Verifier
+// from Dependencies.Random (for SDJWTSigner.NestedDecoys, for each
+// nested _sd array; for MdocSigner.Decoys, for each namespace). A fixed count would let a Verifier
 // subtract it from the _sd array's length and learn the real number of
 // selectively disclosable claims after all. 0 <= Min <= Max, and Max
-// is at least 1 and at most credential/sdjwtvc.MaxDecoys.
+// is at least 1 and at most credential/sdjwtvc.MaxDecoys
+// (credential/mdoc.MaxDecoys for MdocSigner.Decoys).
 type DecoyRange struct {
 	Min, Max int
 }
 
-func (d *DecoyRange) validate() error {
+// validate checks d, the field named field, against max, the most
+// decoys its format allows.
+func (d *DecoyRange) validate(field string, max int) error {
 	if d == nil {
 		return nil
 	}
-	if d.Min < 0 || d.Max < 1 || d.Min > d.Max || d.Max > sdjwtvc.MaxDecoys {
-		return fmt.Errorf("sdjwt_signer.decoys must have 0 <= min <= max, 1 <= max <= %d; got min %d, max %d", sdjwtvc.MaxDecoys, d.Min, d.Max)
+	if d.Min < 0 || d.Max < 1 || d.Min > d.Max || d.Max > max {
+		return fmt.Errorf("%s must have 0 <= min <= max, 1 <= max <= %d; got min %d, max %d", field, max, d.Min, d.Max)
 	}
 	return nil
 }
@@ -331,7 +344,10 @@ func (s *SDJWTSigner) validate(assurance AssuranceLevel) error {
 	if !jose.IsSupported(s.Alg) {
 		return fmt.Errorf("sdjwt_signer.alg %q is not supported", s.Alg)
 	}
-	if err := s.Decoys.validate(); err != nil {
+	if err := s.Decoys.validate("sdjwt_signer.decoys", sdjwtvc.MaxDecoys); err != nil {
+		return err
+	}
+	if err := s.NestedDecoys.validate("sdjwt_signer.nested_decoys", sdjwtvc.MaxDecoys); err != nil {
 		return err
 	}
 	if s.IssuerCertificate == nil {
@@ -389,6 +405,15 @@ type MdocSigner struct {
 
 	// KeyID optionally sets the COSE "kid" header on issued credentials.
 	KeyID []byte
+
+	// Decoys, if set, adds decoy digests to each namespace's
+	// valueDigests in each issued credential's MSO, a count drawn
+	// afresh for each namespace, on top of any the claims' own
+	// credential/mdoc.Claims.Decoys asks for: the MSO goes to every
+	// reader in full, and they hide how many data elements each
+	// namespace really holds. Max is at most credential/mdoc.MaxDecoys,
+	// which also bounds the two counts together. Nil adds none.
+	Decoys *DecoyRange
 }
 
 func (s *MdocSigner) validate(assurance AssuranceLevel) error {
@@ -403,6 +428,9 @@ func (s *MdocSigner) validate(assurance AssuranceLevel) error {
 	}
 	if !cose.IsSupportedSigningAlg(s.Alg) {
 		return fmt.Errorf("mdoc_signer.alg %d is not supported", s.Alg)
+	}
+	if err := s.Decoys.validate("mdoc_signer.decoys", mdoc.MaxDecoys); err != nil {
+		return err
 	}
 	if len(s.X5Chain) == 0 {
 		return fmt.Errorf("mdoc_signer.x5chain must include at least one certificate")

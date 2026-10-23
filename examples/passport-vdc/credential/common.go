@@ -81,9 +81,12 @@ func ValidUntil(e passport.Evidence, o Options) (time.Time, error) {
 // would become wrong within the credential's validity, and ending
 // validity on that birthday instead would disclose it (see ValidUntil).
 // The trade-off is that a holder close to a threshold can't answer
-// that age_over_NN at all until the next credential, and its absence
-// says the holder reaches that age within the validity period: a
-// year-long window for the date of birth, not the day.
+// that age_over_NN at all until the next credential, and a verifier
+// asking for it and getting nothing may take that to mean the holder
+// reaches that age within the validity period: a year-long window for
+// the date of birth, not the day. A verifier asking for anything else
+// learns nothing of it: both encoders put a decoy digest in place of
+// each left-out claim (ageDecoys).
 func ageClaims(e passport.Evidence, o Options, until time.Time) map[int]bool {
 	youngest := e.Identity.BirthDate.Youngest
 	if youngest.IsZero() {
@@ -99,4 +102,23 @@ func ageClaims(e passport.Evidence, o Options, until time.Time) map[int]bool {
 		out[t] = age >= t
 	}
 	return out
+}
+
+// ageDecoys is how many decoy digests stand in for the age claims
+// ageClaims left out of ages, so every credential carries as many
+// digests for its age claims as o has thresholds. Both formats sign
+// every claim's digest into what every verifier sees — the mdoc's MSO
+// valueDigests, the SD-JWT VC's age_equal_or_over _sd array — so one
+// fewer would say the holder crosses a threshold within the validity
+// period, and with a disclosed age_over_NN narrow a minor's age to
+// about a year. Padding to the full count hides that exactly. Random
+// decoys on top of the real count instead wouldn't: the lowest and
+// highest totals could only come from a credential with, and one
+// without, a left-out claim. 0 when there are no age claims at all,
+// which follows from the birth date, not from the validity period.
+func ageDecoys(o Options, ages map[int]bool) int {
+	if ages == nil {
+		return 0
+	}
+	return len(o.thresholds()) - len(ages)
 }

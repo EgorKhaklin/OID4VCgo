@@ -19,8 +19,37 @@ func SD(value any) any { return sdValue{value} }
 // It has no effect used anywhere else in the claim tree.
 func SDElement(value any) any { return sdElement{value} }
 
+// WithDecoys marks object, a map[string]any (or another map Issue seals
+// the same way), to carry n decoy digests (RFC 9901 §4.2.5) in its _sd
+// array, creating one if it has no selectively disclosable claim: use
+// it in the claim tree passed to Issue wherever the object itself would
+// go, inside SD() too. It pads an object whose number of selectively
+// disclosable claims would otherwise say something — which of a fixed
+// set of claims were left out, say — to a count that doesn't. The top
+// level's own decoys are IssueOptions.Decoys. Issue rejects an n below
+// 0 or above MaxDecoys, and an object that isn't one.
+func WithDecoys(object any, n int) any { return withDecoys{object, n} }
+
 type sdValue struct{ v any }
 type sdElement struct{ v any }
+type withDecoys struct {
+	v any
+	n int
+}
+
+// sealer seals a claims tree under alg. nestedDecoys, if set, is called
+// once for each _sd array below the top level sealing produces, for
+// how many decoys to add to it (IssueOptions.NestedDecoys).
+type sealer struct {
+	alg          HashAlg
+	nestedDecoys func() (int, error)
+}
+
+// sealMap seals m as a top-level claims object, with no decoys at any
+// level.
+func sealMap(m map[string]any, alg HashAlg) (map[string]any, []Disclosure, error) {
+	return sealer{alg: alg}.sealObject(m, 0, false)
+}
 
 // seal walks a claims tree, replacing every SD/SDElement marker with
 // its digest — embedded per RFC 9901 §4.2.4 — and collecting the
@@ -29,25 +58,42 @@ type sdElement struct{ v any }
 // Disclosures" with no special-casing: sealing an outer SD() value
 // first seals its contents, so the outer Disclosure's own value already
 // has any inner digests embedded in it.
-func seal(v any, alg HashAlg) (any, []Disclosure, error) {
+func (s sealer) seal(v any) (any, []Disclosure, error) {
 	switch t := v.(type) {
 	case map[string]any:
-		return sealMap(t, alg)
+		return s.sealObject(t, 0, true)
 	case []any:
-		return sealArray(t, alg)
+		return s.sealArray(t)
+	case withDecoys:
+		return s.sealWithDecoys(t)
 	case sdValue:
 		return nil, nil, fmt.Errorf("sdjwtvc: SD() used outside an object property value")
 	case sdElement:
 		return nil, nil, fmt.Errorf("sdjwtvc: SDElement() used outside an array element")
 	default:
 		if generic, ok := asGeneric(v); ok {
-			return seal(generic, alg)
+			return s.seal(generic)
 		}
 		if hasSDMarker(v) {
-			return nil, nil, fmt.Errorf("sdjwtvc: an SD or SDElement marker inside a %T, which Issue can't seal: use map[string]any and []any around it", v)
+			return nil, nil, fmt.Errorf("sdjwtvc: an SD, SDElement or WithDecoys marker inside a %T, which Issue can't seal: use map[string]any and []any around it", v)
 		}
 		return v, nil, nil
 	}
+}
+
+// sealWithDecoys seals a WithDecoys object, with its decoys.
+func (s sealer) sealWithDecoys(w withDecoys) (any, []Disclosure, error) {
+	if w.n < 0 || w.n > MaxDecoys {
+		return nil, nil, fmt.Errorf("sdjwtvc: WithDecoys count %d is outside 0..%d", w.n, MaxDecoys)
+	}
+	m, ok := w.v.(map[string]any)
+	if !ok {
+		generic, isGeneric := asGeneric(w.v)
+		if m, ok = generic.(map[string]any); !isGeneric || !ok {
+			return nil, nil, fmt.Errorf("sdjwtvc: WithDecoys needs an object, not a %T", w.v)
+		}
+	}
+	return s.sealObject(m, w.n, true)
 }
 
 // asGeneric is v as a map[string]any or []any, when it's another map
@@ -92,9 +138,13 @@ var (
 	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
 	sdValueType       = reflect.TypeFor[sdValue]()
 	sdElementType     = reflect.TypeFor[sdElement]()
+	withDecoysType    = reflect.TypeFor[withDecoys]()
 )
 
-func sealMap(m map[string]any, alg HashAlg) (map[string]any, []Disclosure, error) {
+// sealObject seals the object m, adding decoys decoy digests to its _sd
+// array and, when nested (m isn't the top level), as many more as
+// s.nestedDecoys says if m has an _sd array at all.
+func (s sealer) sealObject(m map[string]any, decoys int, nested bool) (map[string]any, []Disclosure, error) {
 	out := make(map[string]any, len(m))
 	var digests []string
 	var disclosures []Disclosure
@@ -104,7 +154,7 @@ func sealMap(m map[string]any, alg HashAlg) (map[string]any, []Disclosure, error
 			return nil, nil, fmt.Errorf("sdjwtvc: claim name %q is reserved", k)
 		}
 		if sv, ok := v.(sdValue); ok {
-			sealedInner, innerDs, err := seal(sv.v, alg)
+			sealedInner, innerDs, err := s.seal(sv.v)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -112,7 +162,7 @@ func sealMap(m map[string]any, alg HashAlg) (map[string]any, []Disclosure, error
 			if err != nil {
 				return nil, nil, err
 			}
-			digest, err := d.Digest(alg)
+			digest, err := d.Digest(s.alg)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -121,7 +171,7 @@ func sealMap(m map[string]any, alg HashAlg) (map[string]any, []Disclosure, error
 			disclosures = append(disclosures, innerDs...)
 			continue
 		}
-		sealed, ds, err := seal(v, alg)
+		sealed, ds, err := s.seal(v)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -129,11 +179,28 @@ func sealMap(m map[string]any, alg HashAlg) (map[string]any, []Disclosure, error
 		disclosures = append(disclosures, ds...)
 	}
 
+	if nested && s.nestedDecoys != nil && (len(digests) > 0 || decoys > 0) {
+		n, err := s.nestedDecoys()
+		if err != nil {
+			return nil, nil, err
+		}
+		if n < 0 || n > MaxDecoys {
+			return nil, nil, fmt.Errorf("sdjwtvc: nested decoy count %d is outside 0..%d", n, MaxDecoys)
+		}
+		decoys += n
+	}
+	decoyDigests, err := newDecoyDigests(s.alg, decoys)
+	if err != nil {
+		return nil, nil, err
+	}
+	digests = append(digests, decoyDigests...)
+
 	if len(digests) > 0 {
 		// RFC 9901 §4.2.4.1: the Issuer MUST hide the original claim
 		// order. Sorting is a simple, deterministic way to do that —
 		// the spec only requires the method not depend on the
-		// original order, not that it be random.
+		// original order, not that it be random. It mixes any decoys
+		// in among the real digests too.
 		sort.Strings(digests)
 		sd := make([]any, len(digests))
 		for i, dg := range digests {
@@ -144,13 +211,13 @@ func sealMap(m map[string]any, alg HashAlg) (map[string]any, []Disclosure, error
 	return out, disclosures, nil
 }
 
-func sealArray(arr []any, alg HashAlg) ([]any, []Disclosure, error) {
+func (s sealer) sealArray(arr []any) ([]any, []Disclosure, error) {
 	out := make([]any, 0, len(arr))
 	var disclosures []Disclosure
 
 	for _, el := range arr {
 		if se, ok := el.(sdElement); ok {
-			sealedInner, innerDs, err := seal(se.v, alg)
+			sealedInner, innerDs, err := s.seal(se.v)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -158,7 +225,7 @@ func sealArray(arr []any, alg HashAlg) ([]any, []Disclosure, error) {
 			if err != nil {
 				return nil, nil, err
 			}
-			digest, err := d.Digest(alg)
+			digest, err := d.Digest(s.alg)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -167,7 +234,7 @@ func sealArray(arr []any, alg HashAlg) ([]any, []Disclosure, error) {
 			disclosures = append(disclosures, innerDs...)
 			continue
 		}
-		sealed, ds, err := seal(el, alg)
+		sealed, ds, err := s.seal(el)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -177,11 +244,32 @@ func sealArray(arr []any, alg HashAlg) ([]any, []Disclosure, error) {
 	return out, disclosures, nil
 }
 
+// newDecoyDigests is n decoy digests (RFC 9901 §4.2.5) under alg: each
+// the digest of a fresh 128-bit random salt from crypto/rand, so a
+// decoy has no real Disclosure behind it and looks like any other
+// digest.
+func newDecoyDigests(alg HashAlg, n int) ([]string, error) {
+	if n == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, n)
+	for range n {
+		salt, err := newSalt()
+		if err != nil {
+			return nil, err
+		}
+		digest, err := hashString(alg, salt)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, digest)
+	}
+	return out, nil
+}
+
 // addDecoys adds n decoy digests (RFC 9901 §4.2.5) to payload's
-// top-level _sd array, creating it if necessary. Decoys at nested
-// levels aren't supported yet — add them the same way sealMap adds its
-// own _sd array once a real caller needs per-level decoys, rather than
-// speculatively now.
+// top-level _sd array, creating it if necessary. Nested objects get
+// theirs while they're sealed (sealer.sealObject).
 func addDecoys(payload map[string]any, alg HashAlg, n int) error {
 	if n < 0 || n > MaxDecoys {
 		return fmt.Errorf("sdjwtvc: decoy count %d is outside 0..%d", n, MaxDecoys)
@@ -196,19 +284,11 @@ func addDecoys(payload map[string]any, alg HashAlg, n int) error {
 			digests = append(digests, s)
 		}
 	}
-	for i := 0; i < n; i++ {
-		salt, err := newSalt()
-		if err != nil {
-			return err
-		}
-		// Hash arbitrary random data — RFC 9901 §4.2.5: a decoy has no
-		// real Disclosure behind it.
-		digest, err := hashString(alg, salt)
-		if err != nil {
-			return err
-		}
-		digests = append(digests, digest)
+	decoys, err := newDecoyDigests(alg, n)
+	if err != nil {
+		return err
 	}
+	digests = append(digests, decoys...)
 	sort.Strings(digests)
 	sd := make([]any, len(digests))
 	for i, d := range digests {
@@ -218,8 +298,8 @@ func addDecoys(payload map[string]any, alg HashAlg, n int) error {
 	return nil
 }
 
-// hasSDMarker reports whether v holds an SD or SDElement marker at any
-// depth, through maps, slices, arrays, pointers, interfaces and struct
+// hasSDMarker reports whether v holds an SD, SDElement or WithDecoys
+// marker at any depth, through maps, slices, arrays, pointers, interfaces and struct
 // fields.
 func hasSDMarker(v any) bool {
 	return hasSDMarkerValue(reflect.ValueOf(v), 0)
@@ -233,7 +313,7 @@ func hasSDMarkerValue(rv reflect.Value, depth int) bool {
 	if !rv.IsValid() || depth > maxMarkerDepth {
 		return false
 	}
-	if t := rv.Type(); t == sdValueType || t == sdElementType {
+	if t := rv.Type(); t == sdValueType || t == sdElementType || t == withDecoysType {
 		return true
 	}
 	switch rv.Kind() {

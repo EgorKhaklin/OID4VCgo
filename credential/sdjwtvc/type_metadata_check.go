@@ -183,13 +183,18 @@ func pathIndex(step any) (int, bool) {
 }
 
 // unwrapSD is v without an SD or SDElement marker, and whether it had
-// one.
+// one; a WithDecoys object is its object either way, as decoys don't
+// change the claims.
 func unwrapSD(v any) (any, bool) {
+	disclosable := false
 	switch m := v.(type) {
 	case sdValue:
-		return m.v, true
+		v, disclosable = m.v, true
 	case sdElement:
-		return m.v, true
+		v, disclosable = m.v, true
 	}
-	return v, false
+	if w, ok := v.(withDecoys); ok {
+		v = w.v
+	}
+	return v, disclosable
 }

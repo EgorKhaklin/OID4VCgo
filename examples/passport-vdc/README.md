@@ -177,7 +177,10 @@ What the second path does and doesn't give you:
   put that birthday in its always-disclosed `exp` (and the mdoc's
   `validUntil`), so instead a threshold the holder crosses within the
   credential's year of validity gets no age claim at all: a 17-year-old
-  can't answer `age_over_18` until their next credential. Every
+  can't answer `age_over_18` until their next credential. A decoy
+  digest takes the left-out claim's place, in the mdoc's MSO and in the
+  SD-JWT's `age_equal_or_over` object, so the number of signed digests
+  every verifier sees doesn't give it away. Every
   credential issued on a day is valid from that UTC day's start for a
   year, whoever holds it, and the issuer's status page shows only that
   day.

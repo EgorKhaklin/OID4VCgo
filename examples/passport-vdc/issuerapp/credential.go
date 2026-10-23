@@ -81,11 +81,16 @@ func reserveError(err error) error {
 // subject names and fills in the requested format from that passport's
 // Evidence. Each credential gets its own status list index; done
 // releases the reservation and the indexes if issuing fails.
+//
+// The configuration is req.ResolvedConfigurationID, the one the token
+// authorized: a request by credential_identifier (OpenID4VCI §8.2)
+// names no credential_configuration_id at all.
 func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
+	configID := req.ResolvedConfigurationID
 	// Each offered credential is issued once per passport — or again on
 	// each request, for one kept for refresh: reserve it now, release it
 	// if issuing fails.
-	e, review, err := a.transactions.reserve(grant.Subject, req.CredentialConfigurationID)
+	e, review, err := a.transactions.reserve(grant.Subject, configID)
 	if err != nil {
 		return nil, reserveError(err)
 	}
@@ -96,7 +101,7 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 			a.transactions.done(grant.Subject)
 			return
 		}
-		a.transactions.release(grant.Subject, req.CredentialConfigurationID)
+		a.transactions.release(grant.Subject, configID)
 		for _, idx := range statusIdxs {
 			a.statusList.release(idx)
 		}
@@ -109,8 +114,8 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 	// transaction_id to poll, and the review keeps its own copy of the
 	// Evidence until an operator decides (resolveDeferred).
 	if review {
-		if reviewRef, err = a.reviews.add(e, req.CredentialConfigurationID); err != nil {
-			a.transactions.release(grant.Subject, req.CredentialConfigurationID)
+		if reviewRef, err = a.reviews.add(e, configID); err != nil {
+			a.transactions.release(grant.Subject, configID)
 			return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "too many issuances are awaiting review — try again later")
 		}
 		req.Defer = &issuer.Deferral{Reference: reviewRef}
@@ -125,7 +130,7 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 	// Each credential — every one of a batch — gets its own status list
 	// index (HAIP 1.0 §6.1).
 	req.PerCredential = func(_ context.Context, c *issuer.CredentialInstance) error {
-		idx, err := a.statusList.allocate(credentialFormat(req.CredentialConfigurationID), !e.Checks.PassiveAuthentication, a.now())
+		idx, err := a.statusList.allocate(credentialFormat(configID), !e.Checks.PassiveAuthentication, a.now())
 		if err != nil {
 			return err
 		}

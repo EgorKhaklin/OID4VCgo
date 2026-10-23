@@ -94,6 +94,12 @@
 // place — see wallet.PresentMdocSelective for where this feeds into an
 // OID4VP Presentation.
 //
+// The MSO itself always goes in full, so its valueDigests say how many
+// elements each namespace holds, presented or not. Claims.Decoys adds
+// decoy digests with no IssuerSignedItem behind them to hide that
+// count; to a reader, which checks only the items presented, they look
+// like elements left undisclosed.
+//
 // # Verifying
 //
 // Verify expects the Issuer's already-resolved public key, the same
