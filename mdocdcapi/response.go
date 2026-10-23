@@ -118,6 +118,11 @@ type encryptedResponseData struct {
 // Pending describes: one document of the requested type, issued by a
 // trusted issuer, presented by the device it was issued to for this
 // origin and encryption key, disclosing only requested elements.
+//
+// It keeps no state, so it can't tell a response it has verified
+// before: a response verifies as often as it's presented with the same
+// Pending. Remove the Pending atomically before calling it, so each
+// request is answered at most once (see Pending).
 func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 	if p.IssuerKeys == nil {
 		return Verified{}, errors.New("mdocdcapi: IssuerKeys is required")
