@@ -13,10 +13,12 @@ final class OID4VCWalletTests: XCTestCase {
     /// A misspelled key is refused, not dropped before the wallet could
     /// refuse it; the role EKUs round-trip.
     func testConfigurationDecodingIsStrict() throws {
-        let good = #"{"issuer_roots":"","issuer_require_eku":"1.2.3","issuer_metadata_require_eku":"1.2.4"}"#
+        let good = #"{"issuer_roots":"","issuer_require_eku":"1.2.3","issuer_metadata_require_eku":"1.2.4","mdoc_issuer_require_eku":"1.0.18013.5.1.2","mdoc_issuer_roots_by_doctype":{"org.iso.18013.5.1.mDL":""}}"#
         let config = try JSONDecoder().decode(WalletConfiguration.self, from: Data(good.utf8))
         XCTAssertEqual(config.issuerRequireEKU, "1.2.3")
         XCTAssertEqual(config.issuerMetadataRequireEKU, "1.2.4")
+        XCTAssertEqual(config.mdocIssuerRequireEKU, "1.0.18013.5.1.2")
+        XCTAssertEqual(config.mdocIssuerRootsByDocType, ["org.iso.18013.5.1.mDL": ""])
         let typo = #"{"require_trusted_mdoc_readr":true}"#
         XCTAssertThrowsError(try JSONDecoder().decode(WalletConfiguration.self, from: Data(typo.utf8)))
     }

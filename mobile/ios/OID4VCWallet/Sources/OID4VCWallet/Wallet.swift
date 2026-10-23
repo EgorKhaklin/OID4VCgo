@@ -55,6 +55,20 @@ public struct WalletConfiguration: Codable, Sendable {
     /// usage. Outside `development`, required when `issuerMetadataRoots`
     /// may share a trust anchor with another role's roots.
     public var issuerMetadataRequireEKU: String
+    /// PEM certificates: the IACAs a received mdoc must chain to, in place
+    /// of `issuerRoots`, so an `issuerRoots` anchor alone, an SD-JWT VC
+    /// issuer's CA say, can't sign an mDL. Empty: mdocs chain to
+    /// `issuerRoots`.
+    public var mdocIssuerRoots: String
+    /// Each document type's own IACAs, as PEM certificates: an mdoc of a
+    /// type named here must chain to them, not to `mdocIssuerRoots` or
+    /// `issuerRoots`. A type named with an empty string is refused.
+    public var mdocIssuerRootsByDocType: [String: String]
+    /// A dotted object identifier: recognizes only document signer
+    /// certificates with that extended key usage (the mDL's is
+    /// 1.0.18013.5.1.2), in place of `issuerRequireEKU`, so a wallet
+    /// receiving both formats can require each its own.
+    public var mdocIssuerRequireEKU: String
     /// Relaxes what production requires, for a wallet talking to services
     /// on a development machine. Never ship an app with it set. It lets
     /// issuers, Authorization Servers, Verifiers and status lists be on
@@ -174,7 +188,8 @@ public struct WalletConfiguration: Codable, Sendable {
                 issuerRequireEKU: String = "", issuerMetadataRequireEKU: String = "",
                 statusIssuers: [String: [String]] = [:], requireIssuerName: Bool = false,
                 issuerMetadataRoots: String = "", requireSignedIssuerMetadata: Bool = false,
-                requireIssuerMetadataName: Bool = false, maxIssuerMetadataAgeSeconds: Int = 0, allowForeignIss: Bool = false) {
+                requireIssuerMetadataName: Bool = false, maxIssuerMetadataAgeSeconds: Int = 0, allowForeignIss: Bool = false,
+                mdocIssuerRoots: String = "", mdocIssuerRootsByDocType: [String: String] = [:], mdocIssuerRequireEKU: String = "") {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -202,6 +217,9 @@ public struct WalletConfiguration: Codable, Sendable {
         self.requireIssuerMetadataName = requireIssuerMetadataName
         self.maxIssuerMetadataAgeSeconds = maxIssuerMetadataAgeSeconds
         self.allowForeignIss = allowForeignIss
+        self.mdocIssuerRoots = mdocIssuerRoots
+        self.mdocIssuerRootsByDocType = mdocIssuerRootsByDocType
+        self.mdocIssuerRequireEKU = mdocIssuerRequireEKU
     }
 
     enum CodingKeys: String, CodingKey {
@@ -217,6 +235,8 @@ public struct WalletConfiguration: Codable, Sendable {
         case issuerMetadataRoots = "issuer_metadata_roots", requireSignedIssuerMetadata = "require_signed_issuer_metadata"
         case requireIssuerMetadataName = "require_issuer_metadata_name", maxIssuerMetadataAgeSeconds = "max_issuer_metadata_age_seconds"
         case allowForeignIss = "allow_foreign_iss"
+        case mdocIssuerRoots = "mdoc_issuer_roots", mdocIssuerRootsByDocType = "mdoc_issuer_roots_by_doctype"
+        case mdocIssuerRequireEKU = "mdoc_issuer_require_eku"
     }
 
     /// Decodes a configuration, refusing a key it doesn't know: a
@@ -254,7 +274,10 @@ public struct WalletConfiguration: Codable, Sendable {
                   requireSignedIssuerMetadata: try c.decodeIfPresent(Bool.self, forKey: .requireSignedIssuerMetadata) ?? false,
                   requireIssuerMetadataName: try c.decodeIfPresent(Bool.self, forKey: .requireIssuerMetadataName) ?? false,
                   maxIssuerMetadataAgeSeconds: try c.decodeIfPresent(Int.self, forKey: .maxIssuerMetadataAgeSeconds) ?? 0,
-                  allowForeignIss: try c.decodeIfPresent(Bool.self, forKey: .allowForeignIss) ?? false)
+                  allowForeignIss: try c.decodeIfPresent(Bool.self, forKey: .allowForeignIss) ?? false,
+                  mdocIssuerRoots: try c.decodeIfPresent(String.self, forKey: .mdocIssuerRoots) ?? "",
+                  mdocIssuerRootsByDocType: try c.decodeIfPresent([String: String].self, forKey: .mdocIssuerRootsByDocType) ?? [:],
+                  mdocIssuerRequireEKU: try c.decodeIfPresent(String.self, forKey: .mdocIssuerRequireEKU) ?? "")
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
