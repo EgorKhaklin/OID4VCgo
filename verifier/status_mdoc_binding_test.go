@@ -98,3 +98,54 @@ func TestRequireValidStatus_MdocSignerUnderTheDocumentSignersIACA(t *testing.T) 
 		t.Errorf("a Status Issuer the policy accepts: %v", err)
 	}
 }
+
+// Under a root with an intermediate per issuer, the list's signer is
+// bound to the intermediate that signed the document signer: another
+// issuer's, under the same root, can't decide this mdoc's status.
+func TestRequireValidStatus_MdocSignerUnderTheDocumentSignersIntermediate(t *testing.T) {
+	root, rootKey := testcert.CA(t, "national root")
+	caA, caAKey := testcert.Intermediate(t, "issuer A CA", root, rootKey)
+	caB, caBKey := testcert.Intermediate(t, "issuer B CA", root, rootKey)
+	dsA, _ := testcert.Leaf(t, "issuer A document signer", caA, caAKey)
+	signerA, signerAKey := testcert.Leaf(t, "issuer A status signer", caA, caAKey)
+	signerB, signerBKey := testcert.Leaf(t, "issuer B status signer", caB, caBKey)
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+
+	var base string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key, chain := signerAKey, []*x509.Certificate{signerA, caA}
+		if r.URL.Path == "/b" {
+			key, chain = signerBKey, []*x509.Certificate{signerB, caB}
+		}
+		sl, err := statuslist.New(statuslist.Bits1, []uint8{0}, "")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		exp := time.Now().Add(time.Hour).Unix()
+		token, err := statuslist.IssueTokenCWTX5Chain(key, cose.ES256, statuslist.TokenClaims{Sub: base + r.URL.Path, Iat: time.Now().Unix(), Exp: &exp, StatusList: sl}, chain)
+		if err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", statuslist.CWTTokenMediaType)
+		_, _ = w.Write(token)
+	}))
+	defer srv.Close()
+	base = srv.URL
+	// IssuerChain as VerifyResponse reports it: the document signer
+	// first, without the anchor.
+	credential := func(path string) verifier.VerifyResponseResult {
+		return verifier.VerifyResponseResult{Credentials: []verifier.VerifiedCredential{{
+			MdocStatus:  &mdoc.Status{StatusList: &mdoc.StatusListRef{Idx: 0, URI: base + path}},
+			IssuerChain: [][]byte{dsA.Raw, caA.Raw},
+		}}}
+	}
+	strict := verifier.RequireValidStatus(statuslist.Checker{Fetcher: statuslist.Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots})
+	if err := strict(context.Background(), "id", credential("/a")); err != nil {
+		t.Errorf("signed under the document signer's own CA: %v", err)
+	}
+	if err := strict(context.Background(), "id", credential("/b")); err == nil {
+		t.Error("accepted a list signed under another issuer's CA of the same root")
+	}
+}

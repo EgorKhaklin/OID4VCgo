@@ -105,6 +105,59 @@ func TestStatusTrust(t *testing.T) {
 	}
 }
 
+// intermediate is a CA under ca, named name.
+func (ca testCA) intermediate(t *testing.T, name string) testCA {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return testCA{cert: issueTestCert(t, name, true, &key.PublicKey, ca.cert, ca.key), key: key}
+}
+
+// Under intermediates, the status list's signer is bound to the one
+// that signed the document signer, not to the root above it: another
+// intermediate of the same root (another issuer's) can't decide this
+// issuer's status.
+func TestStatusTrust_BindsTheDocumentSignersIssuer(t *testing.T) {
+	root := newTestCA(t, "national root")
+	caA, caB := root.intermediate(t, "issuer A CA"), root.intermediate(t, "issuer B CA")
+	ds := caA.leaf(t, "issuer A document signer")
+	signerA, signerB := caA.leaf(t, "issuer A status signer"), caB.leaf(t, "issuer B status signer")
+	// Issuer A's CA certified again under its key: a cross-certificate.
+	caAAgain := issueTestCert(t, "issuer A CA", true, &caA.key.PublicKey, root.cert, root.key)
+
+	for name, path := range map[string][]*x509.Certificate{
+		"without the anchor": {ds, caA.cert},
+		"with the anchor":    {ds, caA.cert, root.cert},
+	} {
+		trust, err := StatusTrust(nil, path)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for chainName, tc := range map[string]struct {
+			chain []*x509.Certificate
+			ok    bool
+		}{
+			"under the CA that signed the DS":     {[]*x509.Certificate{signerA, caA.cert, root.cert}, true},
+			"under that CA's cross-certificate":   {[]*x509.Certificate{signerA, caAAgain, root.cert}, true},
+			"that CA itself":                      {[]*x509.Certificate{caA.cert, root.cert}, true},
+			"under a sibling CA of the same root": {[]*x509.Certificate{signerB, caB.cert, root.cert}, false},
+			"the root itself, above the DS's CA":  {[]*x509.Certificate{root.cert}, false},
+		} {
+			if err := trust.LeafPolicy(tc.chain[0], [][]*x509.Certificate{tc.chain}); (err == nil) != tc.ok {
+				t.Errorf("%s, %s: %v, want ok = %v", name, chainName, err, tc.ok)
+			}
+		}
+	}
+
+	// A path whose second certificate didn't sign the document signer
+	// isn't one.
+	if _, err := StatusTrust(nil, []*x509.Certificate{ds, caB.cert}); err == nil {
+		t.Error("a path whose second certificate didn't sign the document signer: accepted")
+	}
+}
+
 // IssuerAuthStatus reads an issued mdoc's status and x5chain back.
 func TestIssuerAuthStatus(t *testing.T) {
 	f := newFixture(t)
