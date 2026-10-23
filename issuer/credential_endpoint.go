@@ -684,7 +684,12 @@ func (iss *Issuer) issueSDJWT(claims sdjwtvc.Claims, key resolvedKey, typeMetada
 	}
 	claims.CNF = map[string]any{"jwk": cnfJWK}
 
+	decoys, err := iss.deps.SDJWTSigner.Decoys.count(iss.deps.Random)
+	if err != nil {
+		return "", fmt.Errorf("issuer: issue sd-jwt vc: %w", err)
+	}
 	sdjwt, _, err := sdjwtvc.Issue(iss.deps.SDJWTSigner.Signer, iss.deps.SDJWTSigner.Alg, claims, sdjwtvc.IssueOptions{
+		Decoys:              decoys,
 		KeyID:               iss.deps.SDJWTSigner.KeyID,
 		IssuerCertificate:   iss.deps.SDJWTSigner.IssuerCertificate,
 		IssuerIntermediates: iss.deps.SDJWTSigner.IssuerIntermediates,

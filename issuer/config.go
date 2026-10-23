@@ -3,10 +3,12 @@ package issuer
 import (
 	"context"
 	"crypto"
+	"crypto/rand"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"slices"
 	"strings"
 	"time"
@@ -276,6 +278,44 @@ type SDJWTSigner struct {
 	// IssuerIntermediates), so a Verifier holding only the anchor can
 	// build the path. Requires IssuerCertificate.
 	IssuerIntermediates []*x509.Certificate
+
+	// Decoys, if set, adds decoy digests to each issued credential's
+	// top-level _sd array (RFC 9901 §4.2.5: they hide how many claims
+	// are selectively disclosable), as credential/sdjwtvc.IssueOptions.
+	// Decoys does. Nil adds none.
+	Decoys *DecoyRange
+}
+
+// DecoyRange is how many decoy digests SDJWTSigner.Decoys adds: a
+// number from Min to Max, inclusive, drawn afresh for each credential
+// from Dependencies.Random. A fixed count would let a Verifier
+// subtract it from the _sd array's length and learn the real number of
+// selectively disclosable claims after all. 0 <= Min <= Max, and Max
+// is at least 1 and at most credential/sdjwtvc.MaxDecoys.
+type DecoyRange struct {
+	Min, Max int
+}
+
+func (d *DecoyRange) validate() error {
+	if d == nil {
+		return nil
+	}
+	if d.Min < 0 || d.Max < 1 || d.Min > d.Max || d.Max > sdjwtvc.MaxDecoys {
+		return fmt.Errorf("sdjwt_signer.decoys must have 0 <= min <= max, 1 <= max <= %d; got min %d, max %d", sdjwtvc.MaxDecoys, d.Min, d.Max)
+	}
+	return nil
+}
+
+// count draws how many decoys one credential gets.
+func (d *DecoyRange) count(random io.Reader) (int, error) {
+	if d == nil {
+		return 0, nil
+	}
+	n, err := rand.Int(random, big.NewInt(int64(d.Max-d.Min+1)))
+	if err != nil {
+		return 0, fmt.Errorf("draw decoy count: %w", err)
+	}
+	return d.Min + int(n.Int64()), nil
 }
 
 func (s *SDJWTSigner) validate(assurance AssuranceLevel) error {
@@ -290,6 +330,9 @@ func (s *SDJWTSigner) validate(assurance AssuranceLevel) error {
 	}
 	if !jose.IsSupported(s.Alg) {
 		return fmt.Errorf("sdjwt_signer.alg %q is not supported", s.Alg)
+	}
+	if err := s.Decoys.validate(); err != nil {
+		return err
 	}
 	if s.IssuerCertificate == nil {
 		if len(s.IssuerIntermediates) > 0 {
