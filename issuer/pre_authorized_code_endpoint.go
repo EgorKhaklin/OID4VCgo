@@ -236,6 +236,11 @@ func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
 //	}
 //
 // and lists the grant in fapigo/server's Config.AdditionalGrantTypes.
+// To have fapigo/server issue the access token itself instead, call
+// RedeemPreAuthorizedCode in place of ExchangePreAuthorizedCode and
+// configure the server to accept the authorization_details it mints, as
+// its doc comment says: otherwise a Wallet that sends
+// authorization_details spends its code on an error.
 type VerifiedPreAuthorizedCode struct{}
 
 func (VerifiedPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
@@ -409,6 +414,17 @@ type RedeemedPreAuthorizedCode struct {
 // to the request's DPoP key, and writes the Token Response with the
 // authorization_details in it. A failure to issue after this succeeded
 // leaves the code spent.
+//
+// So the Authorization Server must accept the openid_credential
+// authorization_details this mints whenever req.AuthorizationDetails
+// is set (§6.1.1 lets a Wallet send them). fapigo/server's
+// IssueAccessToken and IssueRefreshToken refuse authorization_details
+// unless Config.RAR registers the openid_credential type (an
+// extension.RARDefinition of oid4vci.AuthorizationDetail does) and the
+// client's registration lists it in AuthorizationDetailsTypes. An
+// embedder that doesn't configure that must refuse a Token Request
+// with authorization_details, with ErrorInvalidAuthorizationDetails,
+// before calling this, since this call is what consumes the code.
 //
 // Every call records an AuditEventRedeemPreAuthorizedCode.
 func (iss *Issuer) RedeemPreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest) (RedeemedPreAuthorizedCode, error) {
