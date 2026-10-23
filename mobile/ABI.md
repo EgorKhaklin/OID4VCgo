@@ -498,8 +498,14 @@ returns a `Presentation`, answered with the same steps, except:
   `{"response": <the encrypted response>}` — for the platform to hand
   back to the page; `Decline`'s is OpenID4VP Appendix A.4's
   `{"error": "access_denied"}`, not encrypted.
-- Presentations are bound to `"origin:" + origin`, and a copy presented
-  counts as shown to it (`shown_to_verifier`, `linkable_here`).
+- Presentations are bound to `"origin:" + origin`. A copy presented
+  counts as shown to that origin for an unsigned request, and for a
+  signed one to its `client_id` at that origin, so two Verifiers whose
+  requests come from one page are two Verifiers
+  (`shown_to_verifier`, `linkable_here`). A copy recorded as shown to
+  the origin alone, over a signed request by an earlier release,
+  counts as another Verifier's: it's `linkable_here`, not
+  `shown_to_verifier`.
 - A request that can't be parsed, or comes with no origin, is
   `invalid_input`: what the platform handed over, not a service's
   refusal. `StartMdocPresentation`'s is too. (Before OID4VCWallet 0.9.0

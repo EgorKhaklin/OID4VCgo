@@ -149,17 +149,11 @@ func (p *Presentation) Queries() string {
 		Queries        []queryJSON         `json:"queries"`
 		CredentialSets []credentialSetJSON `json:"credential_sets"`
 	}{result: result{ABIVersion}, Queries: []queryJSON{}, CredentialSets: []credentialSetJSON{}}
-	// Who copies count as shown to: the client_id, or a DC API request's
-	// origin (walletflow.StartDCAPIPresentation).
-	shownTo := p.p.Verifier().ClientID
-	if origin := p.p.Verifier().Origin; origin != "" {
-		shownTo = "origin:" + origin
-	}
 	for _, q := range p.p.Queries() {
 		candidates := make([]credentialSummary, 0, len(q.Credentials))
 		for _, c := range q.Credentials {
 			s := summaryOf(c)
-			shown, linkable := c.ShownTo(shownTo), p.p.Linkable(c.ID)
+			shown, linkable := p.p.ShownTo(c.ID), p.p.Linkable(c.ID)
 			s.ShownToVerifier, s.LinkableHere = &shown, &linkable
 			candidates = append(candidates, s)
 		}

@@ -29,7 +29,8 @@ type Verifier struct {
 	ResponseURI string
 	// Origin, for a DC API request, is the calling page's or app's
 	// origin as the platform reported it: what identifies the Verifier
-	// of an unsigned request, which has no ClientID or Certificate.
+	// of an unsigned request, which has no ClientID or Certificate, and
+	// with ClientID a signed one's.
 	Origin string
 }
 

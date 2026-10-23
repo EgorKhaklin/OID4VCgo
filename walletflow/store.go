@@ -114,7 +114,9 @@ func VerifierHash(clientID string) string {
 }
 
 // ShownTo reports whether a copy of c has been presented to the Verifier
-// whose client_id is clientID (Presentation.Verifier().ClientID).
+// whose client_id is clientID (Presentation.Verifier().ClientID); over
+// the Digital Credentials API, ask Presentation.ShownTo, which knows
+// how a Verifier there is identified.
 func (c StoredCredential) ShownTo(clientID string) bool {
 	h := VerifierHash(clientID)
 	return slices.ContainsFunc(c.AllCopies(), func(cp CredentialCopy) bool { return slices.Contains(cp.ShownTo, h) })
