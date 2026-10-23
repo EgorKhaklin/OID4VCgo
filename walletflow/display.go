@@ -11,6 +11,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/displaytext"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"math"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"slices"
@@ -22,7 +23,12 @@ import (
 )
 
 // Logo is an image the issuer names for display: its URI, https or a
-// data: image, and alternative text.
+// data: image, and alternative text. An https URI naming an IP address
+// or localhost is dropped: loading it would have the phone reach into
+// its own network for whoever wrote the metadata. The URI is the
+// issuer's: loading it tells the issuer, or whoever serves it, that the
+// holder is looking, so an app should fetch it once — when the holder
+// accepts the credential, not on the offer's preview — and keep it.
 type Logo struct {
 	URI     string
 	AltText string
@@ -120,8 +126,9 @@ func firstIndex(n int, match func(int) bool) int {
 	return -1
 }
 
-// logoOf is l as a Logo, when its URI is one an app may load: https, or
-// a data: image. Anything else — http, a custom scheme — is dropped.
+// logoOf is l as a Logo, when its URI is one an app may load: https
+// from a host name, or a data: image. Anything else — http, a custom
+// scheme, an IP address or localhost — is dropped.
 func logoOf(l *oid4vci.Logo) *Logo {
 	if l == nil {
 		return nil
@@ -130,13 +137,26 @@ func logoOf(l *oid4vci.Logo) *Logo {
 	switch {
 	case err != nil:
 		return nil
-	case u.Scheme == "https" && u.Host != "",
+	case u.Scheme == "https" && u.Host != "" && !localLogoHost(u.Hostname()),
 		// A raster image only: SVG can carry script, which a web view
 		// showing the logo would run.
 		u.Scheme == "data" && strings.HasPrefix(u.Opaque, "image/") && !strings.HasPrefix(strings.ToLower(u.Opaque), "image/svg"):
 		return &Logo{URI: l.URI, AltText: displayText(l.AltText, maxDisplayName)}
 	}
 	return nil
+}
+
+// localLogoHost is whether host, a logo URI's, is an IP address or
+// localhost (RFC 6761 §6.3) rather than a name. A host whose last label
+// is a number is an IPv4 address to a WHATWG URL parser (as 2130706433
+// or 0x7f.1 are 127.0.0.1), so it counts as one.
+func localLogoHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if _, err := netip.ParseAddr(host); err == nil || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	last := host[strings.LastIndex(host, ".")+1:]
+	return last != "" && (strings.Trim(last, "0123456789") == "" || strings.HasPrefix(last, "0x"))
 }
 
 // Credential status values, in CredentialStatus.Value.

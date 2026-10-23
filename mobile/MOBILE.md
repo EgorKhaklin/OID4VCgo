@@ -703,8 +703,13 @@ What a wallet's UI needs to show a credential, from the SDK:
     the same language, then the issuer's entry without a locale.
   - **Logos:** only an https URL or a `data:` image is passed on, since
     an `http`, `javascript:` or custom-scheme logo would be the app's
-    to refuse. The app loads logos itself (`AsyncImage`); Go fetches
-    none.
+    to refuse. An https URL naming an IP address or `localhost` is
+    dropped too: an offer's QR code would otherwise make the phone
+    request hosts on its own network. The app loads logos itself
+    (`AsyncImage`); Go fetches none. Loading one tells whoever serves
+    it that the holder is looking, so fetch it once, when the holder
+    accepts the credential rather than on the offer's preview, and
+    keep it, rather than on every screen that shows it.
 - **Expiry:** an SD-JWT VC's `exp`, or an mdoc's
   `validityInfo.validUntil`, is kept as `valid_until`.
 - **Revocation status:**

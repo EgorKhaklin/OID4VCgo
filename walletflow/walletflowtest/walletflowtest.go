@@ -86,7 +86,8 @@ const (
 
 // The issuer's display metadata (OID4VCI 1.0 §12.2.4): its name, and
 // each credential's name, description and colours, in English, with a
-// German name too; and a logo, served at LogoPath.
+// German name too; and a logo, given as a data: URI and also served at
+// LogoPath.
 const (
 	IssuerName      = "Test Issuer"
 	SDJWTName       = "Test PID"
@@ -325,7 +326,9 @@ func New(opts Options) (env *Env, err error) {
 	if opts.NoNonceEndpoint {
 		issuerEndpoints.Nonce = fapi.URL{}
 	}
-	logo := &oid4vci.Logo{URI: e.IssuerURL + LogoPath, AltText: LogoAltText}
+	// Inline: a wallet drops a logo URI on an IP address, which
+	// IssuerURL is.
+	logo := &oid4vci.Logo{URI: "data:image/png;base64," + base64.StdEncoding.EncodeToString(logoPNG), AltText: LogoAltText}
 	credentialDisplay := func(names ...string) *oid4vci.CredentialMetadata {
 		md := &oid4vci.CredentialMetadata{}
 		for i, name := range names {

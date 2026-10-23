@@ -18,6 +18,19 @@ func TestLogoOf(t *testing.T) {
 		"javascript:alert(1)":                false,
 		"org.example.app:/logo":              false,
 		"https:///no-host":                   false,
+		"https://issuer.example./logo.png":   true,
+		"https://cdn1.issuer.example/l.png":  true,
+		// An IP address or localhost: the phone's own network.
+		"https://127.0.0.1/logo.png":        false,
+		"https://192.168.1.1:8443/logo.png": false,
+		"https://[::1]/logo.png":            false,
+		"https://[fe80::1%25en0]/logo.png":  false,
+		"https://localhost/logo.png":        false,
+		"https://LOCALHOST./logo.png":       false,
+		"https://printer.localhost/l.png":   false,
+		"https://2130706433/logo.png":       false,
+		"https://0x7f.1/logo.png":           false,
+		"https://10.0.0.010/logo.png":       false,
 	} {
 		if got := logoOf(&oid4vci.Logo{URI: uri}) != nil; got != keep {
 			t.Errorf("logoOf(%q) kept = %v, want %v", uri, got, keep)
