@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -223,7 +222,10 @@ func validateDPoPClaims(claims dpopClaims, req VerifyRequest) (time.Time, error)
 	if len(claims.JTI) > MaxJTILength {
 		return time.Time{}, fmt.Errorf("dpop: jti is longer than %d bytes", MaxJTILength)
 	}
-	if !strings.EqualFold(claims.HTM, req.Method) {
+	// HTTP methods are case-sensitive (RFC 9110 §9.1), and htm is "the
+	// value of the HTTP method" (RFC 9449 §4.2): "post" isn't POST. As
+	// FAPIgo's own DPoP verification compares it.
+	if claims.HTM != req.Method {
 		return time.Time{}, fmt.Errorf("dpop: htm does not match")
 	}
 	htu, err := url.Parse(claims.HTU)

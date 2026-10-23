@@ -48,6 +48,10 @@ func TestStoresPruneExpiredEntries(t *testing.T) {
 	txs := NewVerifierTransactionStore()
 	txs.prune.now = func() time.Time { return now }
 	_ = txs.Create(ctx, verifier.Transaction{ID: "live", KeyID: "k-live", ExpiresAt: past})
+	// Past the grace, but its result is still reported until
+	// RetainUntil (a Lifetime longer than the grace).
+	retained := now.Add(-expiryGrace - time.Hour)
+	_ = txs.Create(ctx, verifier.Transaction{ID: "retained", KeyID: "k-retained", ExpiresAt: retained, RetainUntil: future})
 	for i := range n {
 		_ = txs.Create(ctx, verifier.Transaction{ID: fmt.Sprint("old-", i), KeyID: fmt.Sprint("k-", i), ExpiresAt: now.Add(-expiryGrace - time.Second)})
 	}
@@ -57,5 +61,8 @@ func TestStoresPruneExpiredEntries(t *testing.T) {
 	// Expired, but within the grace: a late poll still finds it.
 	if _, err := txs.Get(ctx, "live"); err != nil {
 		t.Errorf("a transaction within the grace: %v", err)
+	}
+	if _, err := txs.Get(ctx, "retained"); err != nil {
+		t.Errorf("a transaction before its RetainUntil: %v", err)
 	}
 }

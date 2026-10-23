@@ -17,8 +17,9 @@ import (
 // in this package it's for development and testing only; it doesn't
 // implement verifier.StoreAssurance, so verifier.NewTransactions refuses
 // it under verifier.AssuranceProduction. An expired transaction is
-// dropped, result and all, once it's expiryGrace (10 minutes) past its
-// ExpiresAt, the next time the store has grown enough to prune. Every slice in a Transaction's Query and its
+// dropped, result and all, once it's both expiryGrace (10 minutes) past
+// its ExpiresAt and past its RetainUntil, the next time the store has
+// grown enough to prune. Every slice in a Transaction's Query and its
 // BrowserBindingHash are copied in and out; its ResponseDecryptionKey
 // and Result are shared, as values nothing modifies once set.
 type VerifierTransactionStore struct {
@@ -57,14 +58,18 @@ func (s *VerifierTransactionStore) Create(_ context.Context, tx verifier.Transac
 	return nil
 }
 
-// dropExpired forgets transactions that expired more than expiryGrace
-// before now, with their indexes.
+// dropExpired forgets transactions past both expiryGrace after their
+// expiry and their RetainUntil, with their indexes: a completed one's
+// result is still reported until RetainUntil, which may be later.
 func (s *VerifierTransactionStore) dropExpired(now time.Time) {
 	pruneMap(s.byID, now, func(tx verifier.Transaction) time.Time {
 		if tx.ExpiresAt.IsZero() {
 			return time.Time{}
 		}
-		return tx.ExpiresAt.Add(expiryGrace)
+		if keep := tx.ExpiresAt.Add(expiryGrace); keep.After(tx.RetainUntil) {
+			return keep
+		}
+		return tx.RetainUntil
 	})
 	for _, index := range []map[string]string{s.byKey, s.byCode} {
 		for k, id := range index {

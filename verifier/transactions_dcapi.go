@@ -81,8 +81,9 @@ func (t *Transactions) BeginDCAPI(ctx context.Context, query dcql.Query, browser
 	// endpoint.
 	tx := Transaction{
 		ID: id, Nonce: built.Nonce, Query: query, ResponseDecryptionKey: built.ResponseDecryptionKey,
-		Origin: origin, ExpiresAt: t.now().Add(t.cfg.Lifetime), Status: TransactionPending,
+		Origin: origin, Status: TransactionPending,
 	}
+	tx.ExpiresAt, tx.RetainUntil = t.expiry()
 	sum := sha256.Sum256([]byte(browserBinding))
 	tx.BrowserBindingHash = sum[:]
 	if err := t.store.Create(ctx, tx); err != nil {

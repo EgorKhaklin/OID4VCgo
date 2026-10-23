@@ -32,6 +32,7 @@ type txFixture struct {
 	t     *testing.T
 	v     *verifier.Verifier
 	txs   *verifier.Transactions
+	store *storage.VerifierTransactionStore
 	query dcql.Query
 	held  wallet.HeldCredential
 	now   time.Time
@@ -78,7 +79,8 @@ func newTxFixture(t *testing.T, tweak func(*verifier.TransactionsConfig)) *txFix
 	if tweak != nil {
 		tweak(&cfg)
 	}
-	if f.txs, err = verifier.NewTransactions(f.v, storage.NewVerifierTransactionStore(), cfg); err != nil {
+	f.store = storage.NewVerifierTransactionStore()
+	if f.txs, err = verifier.NewTransactions(f.v, f.store, cfg); err != nil {
 		t.Fatalf("NewTransactions: %v", err)
 	}
 	return f
@@ -325,6 +327,21 @@ func TestTransactions_ExpiryAndClose(t *testing.T) {
 	}
 	if _, err := f.txs.HandleResponse(ctx, jwe); !errors.Is(err, verifier.ErrTransactionClosed) {
 		t.Errorf("answer after Close: %v, want ErrTransactionClosed", err)
+	}
+}
+
+// A transaction tells its store to keep it as long as Lookup may still
+// report its result: a Lifetime past its expiry.
+func TestTransactions_RetainUntil(t *testing.T) {
+	const lifetime = 30 * time.Minute
+	f := newTxFixture(t, func(c *verifier.TransactionsConfig) { c.Lifetime = lifetime })
+	begun := f.begin("browser-binding-A", false)
+	tx, err := f.store.Get(context.Background(), begun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tx.ExpiresAt.Equal(f.now.Add(lifetime)) || !tx.RetainUntil.Equal(tx.ExpiresAt.Add(lifetime)) {
+		t.Errorf("ExpiresAt %v, RetainUntil %v; want now+%v and ExpiresAt+%v", tx.ExpiresAt, tx.RetainUntil, lifetime, lifetime)
 	}
 }
 

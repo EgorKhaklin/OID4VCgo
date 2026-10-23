@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
@@ -943,6 +945,38 @@ func checkSerializedOrigin(origin string) error {
 		return fmt.Errorf("origin %q needs a scheme and a host", origin)
 	case u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || u.Opaque != "" || u.ForceQuery:
 		return fmt.Errorf("origin %q must be a scheme, host and optional port only (no trailing slash)", origin)
+	case !isCanonicalOrigin(origin, u):
+		return fmt.Errorf("origin %q isn't serialized as a browser gives it: a lowercase scheme and ASCII host, and a port only when it isn't the scheme's default", origin)
 	}
 	return nil
+}
+
+// isCanonicalOrigin reports whether origin, parsed as u, is spelled as
+// the browser serializes an origin: url.Parse accepts an uppercase
+// scheme or host, an empty or zero-padded port, or the scheme's default
+// one, none of which the browser ever gives, so such an origin can never
+// match.
+func isCanonicalOrigin(origin string, u *url.URL) bool {
+	// url.Parse lowercases the scheme it returns.
+	if !strings.HasPrefix(origin, u.Scheme+"://") {
+		return false
+	}
+	for i := 0; i < len(u.Host); i++ {
+		if c := u.Host[i]; c >= utf8.RuneSelf || ('A' <= c && c <= 'Z') {
+			return false
+		}
+	}
+	if strings.HasSuffix(u.Host, ":") {
+		return false
+	}
+	port := u.Port()
+	if port == "" {
+		return true
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || strconv.Itoa(n) != port {
+		return false
+	}
+	defaultPort := map[string]string{"http": "80", "https": "443"}[u.Scheme]
+	return port != defaultPort
 }
