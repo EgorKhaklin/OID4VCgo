@@ -40,6 +40,7 @@ restore. The registry's default matcher is Google's OpenID4VP one, so
 the app writes none.
 
 ```kotlin
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.util.Log
@@ -80,6 +81,15 @@ Declare an exported activity for Credential Manager to launch:
 </activity>
 ```
 
+Being exported, any app on the device can start it, with an intent it
+fills in itself: the request, the calling app's package name and
+certificate, and the page's origin are all extras. So
+`DigitalCredentials.request` takes the activity, and answers only when
+Credential Manager started it: an app signed with the platform's key,
+or Google Play services (by its signing certificate, which
+`credentialManagerApps` can replace). Anything else gets null, so a
+relayed request can't borrow a page's origin.
+
 In it, `DigitalCredentials.request` reads the request and the caller's
 origin. That is a browser's origin for the page when the browser is on
 the privileged-browsers list you give it (Credential Manager's JSON
@@ -90,18 +100,18 @@ be established, and for a request in no protocol the wallet answers.
 
 ```kotlin
 /**
- * Answers the request a provider activity was started with: `intent`
- * is the activity's, and `askTheHolder` shows the holder the Verifier
+ * Answers the request a provider activity was started with: `activity`
+ * is the provider activity, and `askTheHolder` shows the holder the Verifier
  * and the claims asked for, and returns whether they agree. Returns the
  * intent to set as the activity's result.
  */
 suspend fun answerFromChrome(
-    intent: Intent,
+    activity: Activity,
     wallet: Wallet,
     privilegedBrowsers: String,
     askTheHolder: suspend (Presentation) -> Boolean,
 ): Intent {
-    val request = DigitalCredentials.request(intent, privilegedBrowsers) ?: return DigitalCredentials.failure()
+    val request = DigitalCredentials.request(activity, privilegedBrowsers) ?: return DigitalCredentials.failure()
     // org-iso-mdoc is Safari's route: Chrome asks over OpenID4VP.
     if (request.isMdoc) return DigitalCredentials.failure()
     val presentation = request.startPresentation(wallet)
@@ -129,7 +139,8 @@ issuance the app has in progress.
 - A signed request is checked against `WalletConfiguration.verifierRoots`,
   and its `expected_origins` must include the origin: another site
   can't replay it.
-- An unsigned request has only its origin for identity.
+- An unsigned request has only its origin for identity: show it on the
+  consent screen, and a signed request's alongside the Verifier's name.
   `WalletConfiguration.requireSignedDCAPIRequests` refuses those before
   the holder sees them; HAIP requires wallets to support them, so set it
   only where every Verifier must be a known one.

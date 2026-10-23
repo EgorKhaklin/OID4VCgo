@@ -39,8 +39,10 @@ class GetCredentialActivity : ComponentActivity() {
         model.attach(this)
         model.start(null, provider = true)
         val privileged = resources.openRawResource(R.raw.privileged_browsers).bufferedReader().use { it.readText() }
-        // Null for a caller whose origin can't be established, among others.
-        val request = DigitalCredentials.request(intent, privileged)
+        // Null unless Credential Manager started the activity (any app
+        // can start an exported one), and for a caller whose origin can't
+        // be established, among others.
+        val request = DigitalCredentials.request(this, privileged)
         // org-iso-mdoc is Safari's route (iOS's): Chrome asks over OpenID4VP.
         if (request == null || request.isMdoc) return fail()
         if (savedInstanceState == null) {

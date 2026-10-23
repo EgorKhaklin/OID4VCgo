@@ -74,4 +74,12 @@ class DigitalCredentialsTest {
         assertNull(DigitalCredentials.cssColor("#12345"))
         assertNull(DigitalCredentials.cssColor(null))
     }
+
+    @Test
+    fun credentialManagerFingerprint() {
+        val sha256 = DigitalCredentials.GOOGLE_PLAY_SERVICES.certificateSHA256.single()
+        assertEquals(32, sha256.size)
+        assertEquals("f0fd6c5b", sha256.take(4).joinToString("") { "%02x".format(it) })
+        assertEquals("db83", sha256.takeLast(2).joinToString("") { "%02x".format(it) })
+    }
 }

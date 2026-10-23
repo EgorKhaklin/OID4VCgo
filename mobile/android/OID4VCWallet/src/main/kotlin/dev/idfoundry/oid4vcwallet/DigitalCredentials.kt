@@ -1,9 +1,12 @@
 package dev.idfoundry.oid4vcwallet
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.os.Build
 import android.util.Base64
 import androidx.credentials.DigitalCredential
 import androidx.credentials.ExperimentalDigitalCredentialApi
@@ -43,7 +46,9 @@ import kotlinx.serialization.json.Json as KJson
  *    system's chooser offers them for the requests they can answer.
  * 2. Declare an exported activity with an intent filter for
  *    `androidx.credentials.registry.provider.action.GET_CREDENTIAL`.
- *    Credential Manager starts it when the holder picks one.
+ *    Credential Manager starts it when the holder picks one. Being
+ *    exported, any app can start it too: [request] answers only
+ *    Credential Manager.
  * 3. In it, read the [request], show it for the holder's consent with
  *    [Request.startPresentation] (or [Request.startMdocPresentation]),
  *    and finish with `setResult(Activity.RESULT_OK, intent)`, where
@@ -112,7 +117,7 @@ public object DigitalCredentials {
         /** The request's data member, as JSON. */
         public val data: String,
         /**
-         * The caller's origin, as the platform vouches for it: a web
+         * The caller's origin, as Credential Manager vouches for it: a web
          * origin for a browser on the privileged-browsers list, else
          * `android:apk-key-hash:` and the calling app's signing
          * certificate's SHA-256, base64url.
@@ -142,16 +147,78 @@ public object DigitalCredentials {
     }
 
     /**
-     * The Digital Credentials API request in [intent], the one
-     * Credential Manager started the activity with: its first OpenID4VP
-     * request, else its first `org-iso-mdoc` one. Null when there's none, or when the
-     * caller's origin can't be established — a browser not on
-     * [privilegedBrowsers] (Credential Manager's JSON allowlist of
-     * browsers trusted to report a page's origin, such as the one
-     * Google publishes for Chrome), or an app without a signing
-     * certificate. A wallet answers a null with [failure].
+     * An app trusted to start the wallet's provider activity: one that
+     * runs Credential Manager's chooser, and so vouches for the request's
+     * caller and origin.
      */
-    public fun request(intent: Intent, privilegedBrowsers: String): Request? {
+    public class CredentialManagerApp(
+        /** Its package name. */
+        public val packageName: String,
+        /** The SHA-256 of each signing certificate it may be signed with. */
+        public val certificateSHA256: List<ByteArray>,
+    )
+
+    /**
+     * Google Play services, which runs Credential Manager's chooser for
+     * the registry the wallet [register]s with, signed with Google's
+     * release key (the one Google's privileged-browsers list names for
+     * Chrome's release build).
+     */
+    public val GOOGLE_PLAY_SERVICES: CredentialManagerApp = CredentialManagerApp(
+        "com.google.android.gms",
+        listOf(fingerprint("F0:FD:6C:5B:41:0F:25:CB:25:C3:B5:33:46:C8:97:2F:AE:30:F8:EE:74:11:DF:91:04:80:AD:6B:2D:60:DB:83")),
+    )
+
+    /**
+     * The Digital Credentials API request [activity] was started with:
+     * its first OpenID4VP request, else its first `org-iso-mdoc` one.
+     *
+     * Null unless Credential Manager started the activity: an app
+     * signed with the platform's key, or one of [credentialManagerApps].
+     * The request, its caller and the caller's origin all come from the
+     * activity's intent, which any app can fill in when it starts an
+     * exported activity: only Credential Manager's is vouched for. An
+     * activity started without a result expected has no caller to check
+     * either. Null too when the request has none the wallet answers, or
+     * when the caller's origin can't be established — a browser not on
+     * [privilegedBrowsers] (Credential Manager's JSON allowlist of
+     * browsers trusted to report a page's origin, such as the one Google
+     * publishes for Chrome), or an app without a signing certificate. A
+     * wallet answers a null with [failure].
+     */
+    public fun request(
+        activity: Activity,
+        privilegedBrowsers: String,
+        credentialManagerApps: List<CredentialManagerApp> = listOf(GOOGLE_PLAY_SERVICES),
+    ): Request? {
+        val caller = activity.callingPackage ?: return null
+        if (!isCredentialManager(activity.packageManager, caller, credentialManagerApps)) return null
+        return request(activity.intent, privilegedBrowsers)
+    }
+
+    /** Whether [caller] is a platform-signed app or one of [apps], by its signing certificate. */
+    internal fun isCredentialManager(pm: PackageManager, caller: String, apps: List<CredentialManagerApp>): Boolean {
+        if (pm.checkSignatures("android", caller) == PackageManager.SIGNATURE_MATCH) return true
+        return apps.any { app -> app.packageName == caller && app.certificateSHA256.any { signedWith(pm, caller, it) } }
+    }
+
+    private fun signedWith(pm: PackageManager, packageName: String, sha256: ByteArray): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return pm.hasSigningCertificate(packageName, sha256, PackageManager.CERT_INPUT_SHA256)
+        }
+        @Suppress("DEPRECATION")
+        val signatures = runCatching { pm.getPackageInfo(packageName, PackageManager.GET_SIGNATURES).signatures }.getOrNull() ?: return false
+        // An app signed by several keys isn't the one key's.
+        val only = signatures.singleOrNull() ?: return false
+        return MessageDigest.getInstance("SHA-256").digest(only.toByteArray()).contentEquals(sha256)
+    }
+
+    /** A certificate fingerprint written as colon-separated hex, as bytes. */
+    internal fun fingerprint(hex: String): ByteArray =
+        hex.split(':').map { it.toInt(16).toByte() }.toByteArray()
+
+    /** The request in [intent], once its caller is vouched for: see [request]. */
+    internal fun request(intent: Intent, privilegedBrowsers: String): Request? {
         val request = PendingIntentHandler.retrieveProviderGetCredentialRequest(intent) ?: return null
         val option = request.credentialOptions.filterIsInstance<GetDigitalCredentialOption>().firstOrNull() ?: return null
         val (protocol, data) = firstSupported(option.requestJson) ?: return null

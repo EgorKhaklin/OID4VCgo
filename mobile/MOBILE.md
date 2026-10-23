@@ -977,6 +977,21 @@ answer, bound to the page's origin.
   for a browser on the app's privileged list (Chrome's entries from
   Google's published list); an app calling directly is named by its
   signing certificate.
+- **Only Credential Manager may start the provider activity.** It's
+  exported, so any app can start it, and androidx reads the request,
+  the calling app's package and certificate, and the origin from the
+  intent's extras (on API 30–33 plain bundle keys), which that app
+  fills in. Found by review: an app could claim to be Chrome on a
+  Verifier's page, relay the page's own signed request, and replay the
+  holder's answer into its own session there. `DigitalCredentials.request`
+  takes the activity and answers only when `callingPackage` is
+  platform-signed or Google Play services, by its signing certificate.
+- **The consent screen shows the origin:** the page asking, which a
+  signed request's Verifier name doesn't say, and all an unsigned one
+  has.
+- **One Wallet per process:** the provider activity and the app share
+  it. Two over the same store each serialize only their own work: a
+  refresh token could be used twice, or a copy's mark lost.
 - **The provider activity** opens the wallet without the app's launch
   work: the orphaned-key sweep would take the keys of an issuance the app
   has in progress.
