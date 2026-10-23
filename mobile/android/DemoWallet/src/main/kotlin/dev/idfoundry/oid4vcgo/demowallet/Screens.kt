@@ -727,12 +727,20 @@ private fun ShareActions(model: WalletModel, sharing: Boolean, openBrowser: (Uri
 fun VerifierHeader(verifier: Presentation.Verifier) {
     var details by remember { mutableStateOf(false) }
     Column(Modifier.padding(16.dp)) {
-        Text(verifier.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        // A DC API request's origin is the page or app asking: an
+        // unsigned request has no name, and a signed one's name is the
+        // Verifier's, which the page may not be.
+        val origin = verifier.origin?.let(Credentials::host)
+        Text(verifier.name.ifEmpty { origin ?: "A verifier" }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        if (origin != null && verifier.name.isNotEmpty()) Text("through $origin", fontWeight = FontWeight.Bold)
         Text("is asking for your credentials", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
         RegistrationRows(verifier.registration)
         TextButton({ details = !details }) { Text(if (details) "Hide details" else "Details") }
-        if (details) Labeled("Client ID", verifier.clientID)
+        if (details) {
+            verifier.origin?.let { Labeled("Origin", it) }
+            if (verifier.clientID.isNotEmpty()) Labeled("Client ID", verifier.clientID)
+        }
         HorizontalDivider()
     }
 }
