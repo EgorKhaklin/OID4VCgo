@@ -1377,20 +1377,28 @@ var correlatingClaims = []string{"jti", "sub"}
 func copiesCorrelated(format string, copies []CredentialCopy, claims []map[string]any) bool {
 	for i := range copies {
 		for j := range i {
-			a, b := copies[i].StatusList, copies[j].StatusList
-			if a != nil && b != nil && *a == *b {
+			if pairCorrelated(format, copies[i], copies[j], claims[i], claims[j]) {
 				return true
 			}
-			if format != sdjwtvc.CredentialFormat {
-				continue
-			}
-			for _, name := range correlatingClaims {
-				va, okA := claims[i][name]
-				vb, okB := claims[j][name]
-				if okA && okB && reflect.DeepEqual(va, vb) {
-					return true
-				}
-			}
+		}
+	}
+	return false
+}
+
+// pairCorrelated reports whether copies a and b, with claims ca and cb,
+// share what copiesCorrelated looks for.
+func pairCorrelated(format string, a, b CredentialCopy, ca, cb map[string]any) bool {
+	if a.StatusList != nil && b.StatusList != nil && *a.StatusList == *b.StatusList {
+		return true
+	}
+	if format != sdjwtvc.CredentialFormat {
+		return false
+	}
+	for _, name := range correlatingClaims {
+		va, okA := ca[name]
+		vb, okB := cb[name]
+		if okA && okB && reflect.DeepEqual(va, vb) {
+			return true
 		}
 	}
 	return false

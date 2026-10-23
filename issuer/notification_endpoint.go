@@ -15,6 +15,10 @@ import (
 // Deferred Issuance reference entropy choices.
 const notificationIDEntropyBytes = 32
 
+// unknownNotificationID is the one description an unknown, expired or
+// another client's notification_id gets, so they can't be told apart.
+const unknownNotificationID = "unknown notification_id"
+
 // NotificationHandler reacts to a validated Notification Request's
 // event — entirely this deployment's own business logic; this package
 // has none of its own (§11: "These events enable the Credential Issuer
@@ -120,10 +124,10 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 
 	record, err := iss.deps.Notifications.Get(ctx, req.NotificationID)
 	if err != nil {
-		return newError(ErrorInvalidNotificationID, 400, "unknown notification_id", err)
+		return newError(ErrorInvalidNotificationID, 400, unknownNotificationID, err)
 	}
 	if !record.ExpiresAt.IsZero() && !iss.deps.Clock.Now().Before(record.ExpiresAt) {
-		return newError(ErrorInvalidNotificationID, 400, "unknown notification_id", errors.New("notification_id has expired"))
+		return newError(ErrorInvalidNotificationID, 400, unknownNotificationID, errors.New("notification_id has expired"))
 	}
 	// auth.ClientID() == "" here only ever means an explicit
 	// NoClientIdentity (this method's own requireClientIdentityDecision
@@ -133,7 +137,7 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 	if record.ClientID != "" && auth.ClientID() != record.ClientID || record.Subject != "" && auth.Subject != record.Subject {
 		// The same answer as an unknown one: which notification_ids
 		// exist isn't this caller's business.
-		return newError(ErrorInvalidNotificationID, 400, "unknown notification_id", nil)
+		return newError(ErrorInvalidNotificationID, 400, unknownNotificationID, nil)
 	}
 
 	if iss.deps.NotificationHandler == nil {

@@ -283,7 +283,9 @@ final class ProximityTests: XCTestCase {
         do {
             _ = try await q.receive()
             XCTFail("receive returned a dropped message")
-        } catch is ProximityTransportError {}
+        } catch is ProximityTransportError {
+            // Expected: the queue ended with nothing left to receive.
+        }
     }
 
     func testChunks() throws {

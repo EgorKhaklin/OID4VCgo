@@ -444,35 +444,56 @@ func (c Config) validateChoices() error {
 // can't be listed), so only the same pool is caught; the mobile façade,
 // which has the certificates, also catches overlapping ones.
 func checkRoleSeparation(c Config) error {
-	type role struct {
-		name      string
-		pool      *x509.CertPool
-		hasPolicy bool
-	}
-	roles := []role{
+	roles := []trustRole{
 		{"IssuerRoots", c.IssuerRoots, c.IssuerLeafPolicy != nil},
 		{"IssuerMetadataRoots", c.IssuerMetadataRoots, c.IssuerMetadataLeafPolicy != nil},
 		{"RegistrarRoots", c.RegistrarRoots, c.RegistrarLeafPolicy != nil},
 		{"MdocReaderRoots", c.MdocReaderRoots, c.MdocReaderLeafPolicy != nil},
 	}
-	switch v := c.VerifierTrust.(type) {
-	case wallet.X5CVerifierRoots:
-		roles = append(roles, role{"VerifierTrust", v.Roots, v.LeafPolicy != nil})
-	case *wallet.X5CVerifierRoots:
-		if v != nil {
-			roles = append(roles, role{"VerifierTrust", v.Roots, v.LeafPolicy != nil})
-		}
+	if r, ok := verifierTrustRole(c.VerifierTrust); ok {
+		roles = append(roles, r)
 	}
 	for i, a := range roles {
 		for _, b := range roles[i+1:] {
-			if a.pool == nil || b.pool == nil || !a.pool.Equal(b.pool) {
-				continue
+			if err := separated(a, b); err != nil {
+				return err
 			}
-			for _, r := range []role{a, b} {
-				if !r.hasPolicy {
-					return fmt.Errorf("walletflow: %s and %s are the same certificate pool: give %s a leaf policy (an extended key usage) to tell its certificates apart, or use separate pools", a.name, b.name, r.name)
-				}
-			}
+		}
+	}
+	return nil
+}
+
+// trustRole is one of the certificate pools checkRoleSeparation
+// compares, and whether a leaf policy tells its certificates apart.
+type trustRole struct {
+	name      string
+	pool      *x509.CertPool
+	hasPolicy bool
+}
+
+// verifierTrustRole is VerifierTrust's pool, by value or by pointer;
+// false for a VerifierTrust without one.
+func verifierTrustRole(t wallet.VerifierTrust) (trustRole, bool) {
+	switch v := t.(type) {
+	case wallet.X5CVerifierRoots:
+		return trustRole{"VerifierTrust", v.Roots, v.LeafPolicy != nil}, true
+	case *wallet.X5CVerifierRoots:
+		if v != nil {
+			return trustRole{"VerifierTrust", v.Roots, v.LeafPolicy != nil}, true
+		}
+	}
+	return trustRole{}, false
+}
+
+// separated refuses a and b sharing a pool unless both have a leaf
+// policy.
+func separated(a, b trustRole) error {
+	if a.pool == nil || b.pool == nil || !a.pool.Equal(b.pool) {
+		return nil
+	}
+	for _, r := range []trustRole{a, b} {
+		if !r.hasPolicy {
+			return fmt.Errorf("walletflow: %s and %s are the same certificate pool: give %s a leaf policy (an extended key usage) to tell its certificates apart, or use separate pools", a.name, b.name, r.name)
 		}
 	}
 	return nil

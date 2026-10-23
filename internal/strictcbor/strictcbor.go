@@ -284,25 +284,7 @@ func (w *walker) item(depth int) error {
 		if ai != aiIndefinite {
 			return w.chunk(major, arg)
 		}
-		for {
-			done, err := w.atBreak()
-			if err != nil {
-				return err
-			}
-			if done {
-				return nil
-			}
-			cm, cai, carg, err := w.head()
-			if err != nil {
-				return err
-			}
-			if cm != major || cai == aiIndefinite {
-				return errMalformed
-			}
-			if err := w.chunk(major, carg); err != nil {
-				return err
-			}
-		}
+		return w.chunks(major)
 	case majorArray, majorMap:
 		depth++
 		if depth > w.maxNested {
@@ -342,31 +324,77 @@ func (w *walker) chunk(major byte, n uint64) error {
 	return nil
 }
 
+// chunks skips an indefinite-length string's chunks, each a
+// definite-length string of the same major type, up to its break.
+func (w *walker) chunks(major byte) error {
+	for {
+		done, err := w.atBreak()
+		if err != nil || done {
+			return err
+		}
+		cm, cai, carg, err := w.head()
+		if err != nil {
+			return err
+		}
+		if cm != major || cai == aiIndefinite {
+			return errMalformed
+		}
+		if err := w.chunk(major, carg); err != nil {
+			return err
+		}
+	}
+}
+
+// Formats of the errors for a container with more items than allowed,
+// worded as the wrapped mode words them.
+const (
+	tooManyElements = "cbor: exceeded max number of elements %d for CBOR array"
+	tooManyPairs    = "cbor: exceeded max number of key-value pairs %d for CBOR map"
+)
+
+// length is a definite-length container's n items as an int, if they
+// could follow w.off taking at least per bytes each, refused past
+// limit.
+func (w *walker) length(n uint64, per, limit int, tooMany string) (int, error) {
+	l, ok := span(w.data, w.off, n)
+	if !ok || per*l > len(w.data)-w.off {
+		return 0, io.ErrUnexpectedEOF
+	}
+	if l > limit {
+		return 0, fmt.Errorf(tooMany, limit)
+	}
+	return l, nil
+}
+
+// another reports whether a container has an item i: a definite-length
+// one, of count; an indefinite-length one, before its break, refused
+// past limit.
+func (w *walker) another(indefinite bool, i, count, limit int, tooMany string) (bool, error) {
+	if !indefinite {
+		return i < count, nil
+	}
+	done, err := w.atBreak()
+	if err != nil || done {
+		return false, err
+	}
+	if i >= limit {
+		return false, fmt.Errorf(tooMany, limit)
+	}
+	return true, nil
+}
+
 func (w *walker) arrayItems(depth int, indefinite bool, n uint64) error {
 	count := 0
 	if !indefinite {
-		l, ok := span(w.data, w.off, n)
-		if !ok {
-			return io.ErrUnexpectedEOF
-		}
-		if count = l; count > w.maxArray {
-			return fmt.Errorf("cbor: exceeded max number of elements %d for CBOR array", w.maxArray)
+		var err error
+		if count, err = w.length(n, 1, w.maxArray, tooManyElements); err != nil {
+			return err
 		}
 	}
 	for i := 0; ; i++ {
-		if indefinite {
-			done, err := w.atBreak()
-			if err != nil {
-				return err
-			}
-			if done {
-				return nil
-			}
-			if i >= w.maxArray {
-				return fmt.Errorf("cbor: exceeded max number of elements %d for CBOR array", w.maxArray)
-			}
-		} else if i == count {
-			return nil
+		more, err := w.another(indefinite, i, count, w.maxArray, tooManyElements)
+		if err != nil || !more {
+			return err
 		}
 		if err := w.item(depth); err != nil {
 			return err
@@ -377,64 +405,70 @@ func (w *walker) arrayItems(depth int, indefinite bool, n uint64) error {
 func (w *walker) mapItems(depth int, indefinite bool, n uint64) error {
 	count := 0
 	if !indefinite {
-		l, ok := span(w.data, w.off, n)
-		if !ok || 2*l > len(w.data)-w.off {
-			return io.ErrUnexpectedEOF
-		}
-		if count = l; count > w.maxPairs {
-			return fmt.Errorf("cbor: exceeded max number of key-value pairs %d for CBOR map", w.maxPairs)
+		var err error
+		if count, err = w.length(n, 2, w.maxPairs, tooManyPairs); err != nil {
+			return err
 		}
 	}
 	base := len(w.keys)
 	defer func() { w.keys = w.keys[:base] }()
 	var other map[any]struct{}
 	for i := 0; ; i++ {
-		if indefinite {
-			done, err := w.atBreak()
-			if err != nil {
-				return err
-			}
-			if done {
-				break
-			}
-			if i >= w.maxPairs {
-				return fmt.Errorf("cbor: exceeded max number of key-value pairs %d for CBOR map", w.maxPairs)
-			}
-		} else if i == count {
-			break
-		}
-		keyStart := w.off
-		if err := w.item(depth); err != nil {
-			return err
-		}
-		k, err := w.key(keyStart, w.off)
+		more, err := w.another(indefinite, i, count, w.maxPairs, tooManyPairs)
 		if err != nil {
 			return err
 		}
-		if k.kind == kindOther {
-			if other == nil {
-				other = make(map[any]struct{})
-			}
-			if _, dup := other[k.other]; dup {
-				return &cbor.DupMapKeyError{Key: k.other, Index: i}
-			}
-			other[k.other] = struct{}{}
-		} else {
-			k.index = i
-			w.keys = append(w.keys, k)
+		if !more {
+			break
 		}
-		if indefinite {
-			if done, err := w.atBreak(); err != nil {
-				return err
-			} else if done {
-				return errors.New(`cbor: unexpected "break" code`)
-			}
-		}
-		if err := w.item(depth); err != nil {
+		if err := w.pair(depth, indefinite, i, &other); err != nil {
 			return err
 		}
 	}
 	return duplicateKey(w.keys[base:])
+}
+
+// pair walks a map's entry i: its key, recorded to find a duplicate,
+// then its value.
+func (w *walker) pair(depth int, indefinite bool, i int, other *map[any]struct{}) error {
+	keyStart := w.off
+	if err := w.item(depth); err != nil {
+		return err
+	}
+	k, err := w.key(keyStart, w.off)
+	if err != nil {
+		return err
+	}
+	if err := w.record(k, i, other); err != nil {
+		return err
+	}
+	if indefinite {
+		if done, err := w.atBreak(); err != nil {
+			return err
+		} else if done {
+			return errors.New(`cbor: unexpected "break" code`)
+		}
+	}
+	return w.item(depth)
+}
+
+// record keeps key k, of entry i, for duplicateKey; a key only its
+// decoded value identifies is instead checked against, and added to,
+// other.
+func (w *walker) record(k mapKey, i int, other *map[any]struct{}) error {
+	if k.kind != kindOther {
+		k.index = i
+		w.keys = append(w.keys, k)
+		return nil
+	}
+	if *other == nil {
+		*other = make(map[any]struct{})
+	}
+	if _, dup := (*other)[k.other]; dup {
+		return &cbor.DupMapKeyError{Key: k.other, Index: i}
+	}
+	(*other)[k.other] = struct{}{}
+	return nil
 }
 
 // tag walks a chain of tags and their content. start is the first tag's
@@ -566,25 +600,7 @@ func (w *walker) key(start, end int) (mapKey, error) {
 		}
 		return mapKey{kind: kindNint, n: arg}, nil
 	case majorBytes, majorText:
-		kind := kindText
-		if major == majorBytes {
-			if !w.bstrKeys {
-				return mapKey{}, errors.New("cbor: invalid map key type: []uint8")
-			}
-			kind = kindBytes
-		}
-		if ai != aiIndefinite {
-			l, _ := span(w.data, next, arg)
-			return mapKey{kind: kind, s: w.data[next : next+l]}, nil
-		}
-		var s []byte
-		for off = next; w.data[off] != breakCode; {
-			_, _, n, chunk, _ := readHead(w.data, off)
-			l, _ := span(w.data, chunk, n)
-			s = append(s, w.data[chunk:chunk+l]...)
-			off = chunk + l
-		}
-		return mapKey{kind: kind, s: s}, nil
+		return w.stringKey(major, ai, arg, next)
 	case majorArray, majorMap:
 		return mapKey{}, errors.New("cbor: invalid map key type: array or map")
 	case majorSimple:
@@ -604,6 +620,31 @@ func (w *walker) key(start, end int) (mapKey, error) {
 		return mapKey{kind: kindOther, other: k}, nil
 	}
 	return mapKey{}, errMalformed
+}
+
+// stringKey identifies a byte or text string key whose head, of major
+// type major, additional information ai and argument arg, ends at
+// next: item has already walked it.
+func (w *walker) stringKey(major, ai byte, arg uint64, next int) (mapKey, error) {
+	kind := kindText
+	if major == majorBytes {
+		if !w.bstrKeys {
+			return mapKey{}, errors.New("cbor: invalid map key type: []uint8")
+		}
+		kind = kindBytes
+	}
+	if ai != aiIndefinite {
+		l, _ := span(w.data, next, arg)
+		return mapKey{kind: kind, s: w.data[next : next+l]}, nil
+	}
+	var s []byte
+	for off := next; w.data[off] != breakCode; {
+		_, _, n, chunk, _ := readHead(w.data, off)
+		l, _ := span(w.data, chunk, n)
+		s = append(s, w.data[chunk:chunk+l]...)
+		off = chunk + l
+	}
+	return mapKey{kind: kind, s: s}, nil
 }
 
 // simpleKey identifies a simple value or float key from its additional
