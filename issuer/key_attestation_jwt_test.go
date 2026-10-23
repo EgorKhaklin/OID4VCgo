@@ -151,3 +151,31 @@ func TestRequestCredential_JWTProofKeyAttestationNotRequired(t *testing.T) {
 	_, err = request(f, []string{jwtProofWithKeyAttestationFor(t, a, "https://other-issuer.example.com", n, keyAttestationForJWT(t, f.attestationSigner, n, false, &a.PublicKey))})
 	assertIssuerError(t, err, issuer.ErrorInvalidProof)
 }
+
+// batch_size bounds the keys a request resolves, not only its proofs:
+// jwt proofs with and without a key_attestation in one request are
+// refused once together they resolve more keys than batch_size,
+// whichever comes first.
+func TestRequestCredential_JWTProofsMixedKeyAttestationBatchSize(t *testing.T) {
+	a, b, c := testP256Key(t), testP256Key(t), testP256Key(t)
+	for name, proofs := range map[string]func(f credentialEndpointFixture, n string) []string{
+		"key attestation first": func(f credentialEndpointFixture, n string) []string {
+			ka := keyAttestationForJWT(t, f.attestationSigner, n, false, &a.PublicKey, &b.PublicKey)
+			return []string{jwtProofWithKeyAttestation(t, a, n, ka), buildJWTProof(t, c, testIssuer, n)}
+		},
+		"plain proof first": func(f credentialEndpointFixture, n string) []string {
+			ka := keyAttestationForJWT(t, f.attestationSigner, n, false, &a.PublicKey, &b.PublicKey)
+			return []string{buildJWTProof(t, c, testIssuer, n), jwtProofWithKeyAttestation(t, a, n, ka)}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCredentialEndpointFixture(t) // batch_size 2
+			_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+				CredentialConfigurationID: testSDJWTConfigID,
+				Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: proofs(f, f.issueNonce(t))},
+				SDJWTClaims:               testSDJWTClaims(),
+			})
+			assertIssuerError(t, err, issuer.ErrorInvalidProof)
+		})
+	}
+}

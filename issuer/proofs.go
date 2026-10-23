@@ -57,15 +57,19 @@ func (iss *Issuer) resolveJWTProofKeys(
 				return nil, err
 			}
 			keys = appendUniqueKeys(keys, attested)
-			if limit := iss.maxBatchSize(); len(keys) > limit {
-				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: the key attestations attest more keys than this issuer's batch_size (%d)", i, limit), nil)
-			}
 		case ptc.KeyAttestationsRequired != nil:
 			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: this credential_configuration_id requires a key_attestation header", i), nil)
 		default:
 			// Not de-duplicated: checkDistinctKeys refuses one key proved
 			// twice.
 			keys = append(keys, resolvedKey{Public: pub, JWKRaw: jwkRaw})
+		}
+		// The running total, after every proof whatever its kind:
+		// checkBatchSize bounds the number of proofs, not the keys a
+		// key attestation adds, so proofs with and without one together
+		// could otherwise resolve more keys than batch_size.
+		if limit := iss.maxBatchSize(); len(keys) > limit {
+			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: the key attestations attest more keys than this issuer's batch_size (%d)", i, limit), nil)
 		}
 	}
 	return keys, nil
