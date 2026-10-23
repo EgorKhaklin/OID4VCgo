@@ -51,9 +51,10 @@ type X5CIssuerKeyResolver struct {
 	// RequireIssuerName refuses a credential whose iss the leaf doesn't
 	// name: a "dns:" iss must be one of its dNSName subject alternative
 	// names, any other exactly one of its uniformResourceIdentifier
-	// names. It's a relying party's policy, not a requirement of SD-JWT
-	// VC: use it where one root certifies several issuers, so none can
-	// sign in another's name. Without it, IssuerAuthorization.Issuer is
+	// names; a credential without iss is refused. It's a relying
+	// party's policy, not a requirement of SD-JWT VC: use it where one
+	// root certifies several issuers, so none can sign in another's
+	// name. Without it, IssuerAuthorization.Issuer is
 	// empty, and VerifyResponseRequest.IssuerAuthorized decides from the
 	// verified certificate (IssuerChain) instead.
 	RequireIssuerName bool
@@ -89,7 +90,13 @@ func (r X5CIssuerKeyResolver) ResolveIssuerKey(ctx context.Context, header, payl
 	if err != nil {
 		return nil, "", err
 	}
-	if issRaw, present := payload["iss"]; present && r.RequireIssuerName {
+	if r.RequireIssuerName {
+		// Required means present: a credential naming no issuer would
+		// pass a check of the one it names.
+		issRaw, present := payload["iss"]
+		if !present {
+			return nil, "", errors.New("RequireIssuerName: the credential names no issuer (iss)")
+		}
 		iss, ok := issRaw.(string)
 		if !ok {
 			return nil, "", errors.New("iss is not a string")
