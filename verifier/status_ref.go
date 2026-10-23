@@ -59,7 +59,14 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 // VALID (statuslist.NotValidError), when a status can't be read, or
 // when a reference is malformed or uses a mechanism this package can't
 // check. A credential with no status reference passes: it has no
-// status to check.
+// status to check, and nothing here can revoke it. Where every
+// credential accepted must be revocable, wrap it in
+// RequireStatusReference.
+//
+// Only the credential's own status is checked. No certificate's
+// revocation is — the issuer's, a document signer's, a status list
+// signer's: CRLs and OCSP aren't consulted for any certificate role
+// (see the package documentation).
 //
 // A Status List Token must be signed by the credential's issuer, so
 // another issuer's certificate under the same roots can't decide its
@@ -79,6 +86,32 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 // Verifier's assurance level, so it can't refuse one that isn't.
 func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id string, result VerifyResponseResult) error {
 	return RequireValidStatusFrom(checker, nil)
+}
+
+// RequireStatusReference is a TransactionsConfig.Accept that refuses an
+// answer with a credential carrying no status reference (no SD-JWT VC
+// "status" claim, no mdoc MSO status), then runs accept, if set, on it:
+//
+//	Accept: verifier.RequireStatusReference(verifier.RequireValidStatus(checker)),
+//
+// RequireValidStatus alone lets such a credential through, which an
+// issuer can't revoke afterwards: a stolen document signer's or issuer's
+// key, say, could mint them until its certificate expires, since no
+// certificate's revocation is checked either. A reference this package
+// can't check (an mdoc identifier list) is still a reference: accept
+// decides on it, and RequireValidStatus refuses it.
+func RequireStatusReference(accept func(ctx context.Context, id string, result VerifyResponseResult) error) func(ctx context.Context, id string, result VerifyResponseResult) error {
+	return func(ctx context.Context, id string, result VerifyResponseResult) error {
+		for _, vc := range result.Credentials {
+			if _, _, ok, err := vc.StatusListRef(); !ok && err == nil {
+				return fmt.Errorf("verifier: credential status: the credential for credential query %q carries no status reference", vc.CredentialQueryID)
+			}
+		}
+		if accept == nil {
+			return nil
+		}
+		return accept(ctx, id, result)
+	}
 }
 
 // StatusIssuerPolicy decides whether leaf, the chain-verified

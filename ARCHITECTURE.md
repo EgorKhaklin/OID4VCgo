@@ -1219,6 +1219,14 @@ changes whether *every* bullet below is `(done)`.
   from either, for the caller to resolve with `statuslist.Checker`;
   every time check,
   mdoc validity included, uses `VerifyResponseRequest.Now`.
+  `RequireValidStatus` (an `Accept`) passes a credential with no status
+  reference; `RequireStatusReference` refuses one. Certificate
+  revocation isn't checked anywhere in this library, for any
+  certificate role (issuer, document signer, status list signer,
+  attestation signer, reader, or a CA on their paths): no CRL or OCSP
+  responder is consulted, so a certificate is trusted from its chain to
+  the configured roots and its validity period alone, and a credential
+  is revoked only through its own status list.
   `Transactions` runs a whole presentation session over a
   `TransactionStore`: `Begin` creates the signed Request Object and the
   link or QR payload for it, `HandleResponse` routes an encrypted
