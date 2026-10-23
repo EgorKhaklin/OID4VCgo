@@ -1,10 +1,11 @@
 package wallet
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // Endpoint is which of an issuer's endpoints answered with an Error.
@@ -68,7 +69,7 @@ func parseErrorWithHeader(endpoint Endpoint, httpStatus int, header http.Header,
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description"`
 	}
-	_ = json.Unmarshal(body, &wire)
+	_ = strictjson.Unmarshal(body, &wire)
 	if wire.Error == "" {
 		for _, challenge := range header.Values("WWW-Authenticate") {
 			if code := challengeParam(challenge, "error"); code != "" {

@@ -2,7 +2,6 @@ package wallet
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,8 @@ import (
 	"unicode"
 
 	"github.com/idfoundry/fapigo/fapihttp"
+
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // maxDirectPostReplyBytes bounds the Verifier's reply to a direct_post
@@ -135,7 +136,7 @@ func readDirectPostReply(resp *http.Response) (DirectPostResult, error) {
 				Error       string `json:"error"`
 				Description string `json:"error_description"`
 			}
-			if json.Unmarshal(body, &e) == nil {
+			if strictjson.Unmarshal(body, &e) == nil {
 				rejected.Code, rejected.Description = sanitizeReplyText(e.Error), sanitizeReplyText(e.Description)
 			}
 		}
@@ -149,7 +150,7 @@ func readDirectPostReply(resp *http.Response) (DirectPostResult, error) {
 	var reply struct {
 		RedirectURI string `json:"redirect_uri"`
 	}
-	if err := json.Unmarshal(body, &reply); err != nil {
+	if err := strictjson.Unmarshal(body, &reply); err != nil {
 		return DirectPostResult{}, fmt.Errorf("parse reply: %w", err)
 	}
 	if reply.RedirectURI == "" {
