@@ -447,3 +447,15 @@ func TestCopiesCorrelated(t *testing.T) {
 		})
 	}
 }
+
+// An issuer's batch of copies, with their own digests and validity
+// rounded to the day, isn't correlated: neither an SD-JWT VC's nor an
+// mdoc's.
+func TestCopiesCorrelated_DistinctBatch(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 2})
+	for _, c := range receive(t, f, f.w, walletflowtest.SDJWTConfigurationID, walletflowtest.MdocConfigurationID) {
+		if len(c.Copies) != 2 || c.CopiesCorrelated {
+			t.Errorf("%s: %d copies, CopiesCorrelated %v; want 2, false", c.Format, len(c.Copies), c.CopiesCorrelated)
+		}
+	}
+}

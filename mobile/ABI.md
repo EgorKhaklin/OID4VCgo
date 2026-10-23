@@ -136,8 +136,9 @@ A record is JSON the app needn't read: `id`, `credential_issuer`,
 `holder_key_id`, `received_at`, `claims`, `display`, `valid_until`,
 `status_list`, `status_list_cwt`, `status`, `grant_id` and
 `credential_identifier` (the dataset a refresh asks for again),
-`copies_correlated` (the issuer gave two copies the same `jti`, `sub`
-or status list entry; absent when not), and `copies` (each copy's `credential`, `holder_key_id`, `presented`,
+`copies_correlated` (the issuer gave two copies the same `jti`, `sub`,
+status list entry, disclosure digest, or validity timestamp not rounded
+to the day; absent when not), and `copies` (each copy's `credential`, `holder_key_id`, `presented`,
 `shown_to`, and its own `status_list` and `valid_until`). A record
 written before a field was kept lacks it.
 

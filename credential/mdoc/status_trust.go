@@ -66,13 +66,9 @@ func StatusTrust(ref *StatusListRef, documentSignerPath []*x509.Certificate) (St
 // verifying anything: for a credential verified when it was received,
 // to find how its revocation list's signer must be trusted.
 func IssuerAuthStatus(s IssuerSigned) (*Status, []*x509.Certificate, error) {
-	protected, unprotected, payload, err := cose.DecodeUnverified(s.IssuerAuth)
+	protected, unprotected, mso, err := decodeIssuerAuth(s)
 	if err != nil {
-		return nil, nil, fmt.Errorf("mdoc: decode IssuerAuth: %w", err)
-	}
-	var mso MobileSecurityObject
-	if err := unwrapTag24(payload, &mso); err != nil {
-		return nil, nil, fmt.Errorf("mdoc: decode MobileSecurityObject: %w", err)
+		return nil, nil, err
 	}
 	ders := cose.X5ChainOf(protected, unprotected)
 	chain := make([]*x509.Certificate, 0, len(ders))
@@ -84,4 +80,25 @@ func IssuerAuthStatus(s IssuerSigned) (*Status, []*x509.Certificate, error) {
 		chain = append(chain, cert)
 	}
 	return mso.Status, chain, nil
+}
+
+// IssuerAuthMSO reads s's MSO without verifying anything: for a
+// credential verified when it was received, to compare what its MSO
+// discloses to every reader (valueDigests, validityInfo) with another
+// copy's.
+func IssuerAuthMSO(s IssuerSigned) (MobileSecurityObject, error) {
+	_, _, mso, err := decodeIssuerAuth(s)
+	return mso, err
+}
+
+// decodeIssuerAuth decodes s's IssuerAuth and its MSO, unverified.
+func decodeIssuerAuth(s IssuerSigned) (protected, unprotected cose.Headers, mso MobileSecurityObject, err error) {
+	protected, unprotected, payload, err := cose.DecodeUnverified(s.IssuerAuth)
+	if err != nil {
+		return cose.Headers{}, cose.Headers{}, MobileSecurityObject{}, fmt.Errorf("mdoc: decode IssuerAuth: %w", err)
+	}
+	if err := unwrapTag24(payload, &mso); err != nil {
+		return cose.Headers{}, cose.Headers{}, MobileSecurityObject{}, fmt.Errorf("mdoc: decode MobileSecurityObject: %w", err)
+	}
+	return protected, unprotected, mso, nil
 }
