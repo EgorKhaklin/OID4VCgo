@@ -660,7 +660,10 @@ changes whether *every* bullet below is `(done)`.
   is genuinely new code rather than a wrapper. It consumes a
   `PreAuthorizedCodeRecord` via a new `Dependencies.PreAuthorizedCodes`
   (single-use, the same shape `NonceStore` already establishes), checks
-  expiry and a `tx_code` match, verifies the presented DPoP proof via
+  a `tx_code` match, then expiry and the requested
+  `authorization_details` in `Consume`'s `accept` callback — in the
+  store's own atomic step, before the code is consumed, so a request
+  the code doesn't allow leaves it redeemable — verifies the presented DPoP proof via
   `internal/dpop.Verify` (`Config.Limits.MaxDPoPProofAge`/
   `MaxDPoPClockSkew`, a new `Dependencies.DPoPReplay` for jti-replay
   detection), and mints an access token via a new

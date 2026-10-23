@@ -190,6 +190,169 @@ func TestPreAuthorizedCodeStoreContract(t *testing.T, factory func() issuer.PreA
 	t.Run("ConcurrentGuessesAreBoundedByMaxAttempts", func(t *testing.T) { testPACConcurrentGuessesAreBounded(t, factory) })
 	t.Run("MissingTxCodeIsNotAGuess", func(t *testing.T) { testPACMissingTxCodeIsNotAGuess(t, factory) })
 	t.Run("UnexpectedTxCodeLeavesCodeConsumable", func(t *testing.T) { testPACUnexpectedTxCode(t, factory) })
+	t.Run("AcceptSeesTheRecord", func(t *testing.T) { testPACAcceptSeesTheRecord(t, factory) })
+	t.Run("AcceptRefusalLeavesCodeConsumable", func(t *testing.T) { testPACAcceptRefusalLeavesCodeConsumable(t, factory) })
+	t.Run("AcceptRunsOnlyAfterTxCodeCheck", func(t *testing.T) { testPACAcceptRunsOnlyAfterTxCodeCheck(t, factory) })
+	t.Run("ConcurrentRefusalsLeaveCodeConsumable", func(t *testing.T) { testPACConcurrentRefusalsLeaveCodeConsumable(t, factory) })
+	t.Run("ConcurrentConsumeWithRefusalsHasExactlyOneWinner", func(t *testing.T) { testPACConcurrentConsumeWithRefusals(t, factory) })
+}
+
+// errContractRefused is the error the accept callbacks below refuse a
+// record with.
+var errContractRefused = errors.New("issuertest: refused by accept")
+
+// refuse is an accept callback that refuses every record.
+func refuse(issuer.PreAuthorizedCodeRecord) error { return errContractRefused }
+
+// testPACAcceptSeesTheRecord: accept is given the stored record, and
+// Consume returns it once accept accepts it.
+func testPACAcceptSeesTheRecord(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
+	t.Helper()
+	store := factory()
+	ctx := context.Background()
+	want := issuer.PreAuthorizedCodeRecord{
+		TxCode: "1234", Scopes: []string{"identity_credential"}, CredentialConfigurationIDs: []string{"cfg1"},
+		ExpiresAt: time.Now().Add(time.Minute).Truncate(time.Second), Subject: "subject-1",
+	}
+	if err := store.Issue(ctx, "code1", want); err != nil {
+		t.Fatalf(msgIssueFailed, err)
+	}
+	var seen []issuer.PreAuthorizedCodeRecord
+	got, _, err := store.Consume(ctx, "code1", "1234", 0, func(r issuer.PreAuthorizedCodeRecord) error {
+		seen = append(seen, r)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf(msgConsumeFailed, err)
+	}
+	if len(seen) == 0 {
+		t.Fatal("Consume succeeded without calling accept")
+	}
+	for _, r := range append(seen, got) {
+		if r.Subject != want.Subject || len(r.Scopes) != 1 || r.Scopes[0] != "identity_credential" ||
+			len(r.CredentialConfigurationIDs) != 1 || r.CredentialConfigurationIDs[0] != "cfg1" || !r.ExpiresAt.Equal(want.ExpiresAt) {
+			t.Errorf("record = %+v, want %+v", r, want)
+		}
+	}
+}
+
+// testPACAcceptRefusalLeavesCodeConsumable: a record accept refuses is
+// left in place, with accept's error returned and no wrong attempt
+// counted.
+func testPACAcceptRefusalLeavesCodeConsumable(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
+	t.Helper()
+	store := factory()
+	ctx := context.Background()
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatalf(msgIssueFailed, err)
+	}
+	for range 3 {
+		if _, _, err := store.Consume(ctx, "code1", "1234", 2, refuse); !errors.Is(err, errContractRefused) {
+			t.Fatalf("Consume refused by accept: err = %v, want accept's error", err)
+		}
+	}
+	// No wrong attempt was counted: the next wrong guess is the first.
+	if _, attempts, err := store.Consume(ctx, "code1", "0000", 2, nil); !errors.Is(err, issuer.ErrWrongTxCode) || attempts != 1 {
+		t.Fatalf("wrong guess after refusals: wrongAttempts %d, err %v; want 1, ErrWrongTxCode", attempts, err)
+	}
+	if _, _, err := store.Consume(ctx, "code1", "1234", 2, func(issuer.PreAuthorizedCodeRecord) error { return nil }); err != nil {
+		t.Fatalf("Consume accepted after refusals: %v", err)
+	}
+}
+
+// testPACAcceptRunsOnlyAfterTxCodeCheck: accept isn't called for an
+// unknown code or a missing, unexpected or wrong tx_code, so it can't
+// turn a failed guess into something else.
+func testPACAcceptRunsOnlyAfterTxCodeCheck(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
+	t.Helper()
+	store := factory()
+	ctx := context.Background()
+	exp := time.Now().Add(time.Minute)
+	if err := store.Issue(ctx, "with-tx", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: exp}); err != nil {
+		t.Fatalf(msgIssueFailed, err)
+	}
+	if err := store.Issue(ctx, "without-tx", issuer.PreAuthorizedCodeRecord{ExpiresAt: exp}); err != nil {
+		t.Fatalf(msgIssueFailed, err)
+	}
+	called := false
+	accept := func(issuer.PreAuthorizedCodeRecord) error {
+		called = true
+		return errContractRefused
+	}
+	for _, c := range []struct{ name, code, txCode string }{
+		{"unknown code", nonceNeverIssued, ""},
+		{"missing tx_code", "with-tx", ""},
+		{"wrong tx_code", "with-tx", "0000"},
+		{"unexpected tx_code", "without-tx", "1234"},
+	} {
+		called = false
+		if _, _, err := store.Consume(ctx, c.code, c.txCode, 0, accept); err == nil || errors.Is(err, errContractRefused) {
+			t.Errorf("%s: err = %v, want the store's own error", c.name, err)
+		}
+		if called {
+			t.Errorf("%s: accept was called", c.name)
+		}
+	}
+}
+
+// testPACConcurrentRefusalsLeaveCodeConsumable: concurrent redemptions
+// accept refuses all fail, and leave the code for one it accepts.
+func testPACConcurrentRefusalsLeaveCodeConsumable(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
+	t.Helper()
+	store := factory()
+	ctx := context.Background()
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatalf(msgIssueFailed, err)
+	}
+	wins := runConcurrently(contractConcurrentAttempts, func() bool {
+		_, _, err := store.Consume(ctx, "code1", "", 0, refuse)
+		return err == nil
+	})
+	if wins != 0 {
+		t.Errorf("%d redemptions accept refused succeeded, want none", wins)
+	}
+	if _, _, err := store.Consume(ctx, "code1", "", 0, nil); err != nil {
+		t.Fatalf("Consume after concurrent refusals: %v", err)
+	}
+}
+
+// testPACConcurrentConsumeWithRefusals: with accept refusing some
+// concurrent redemptions and accepting the others, exactly one
+// accepted redemption consumes the code — accept and the consumption
+// are one atomic step.
+func testPACConcurrentConsumeWithRefusals(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
+	t.Helper()
+	store := factory()
+	ctx := context.Background()
+	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatalf(msgIssueFailed, err)
+	}
+	var mu sync.Mutex
+	next := 0
+	refusedWins := 0
+	wins := runConcurrently(contractConcurrentAttempts, func() bool {
+		mu.Lock()
+		refusing := next%2 == 0
+		next++
+		mu.Unlock()
+		accept := func(issuer.PreAuthorizedCodeRecord) error { return nil }
+		if refusing {
+			accept = refuse
+		}
+		_, _, err := store.Consume(ctx, "code1", "", 0, accept)
+		if err == nil && refusing {
+			mu.Lock()
+			refusedWins++
+			mu.Unlock()
+		}
+		return err == nil
+	})
+	if wins != 1 || refusedWins != 0 {
+		t.Errorf("concurrent Consume: %d winners (%d of them refused by accept), want exactly 1 accepted", wins, refusedWins)
+	}
+	if _, _, err := store.Consume(ctx, "code1", "", 0, nil); err == nil {
+		t.Error("the code was still consumable after a redemption succeeded")
+	}
 }
 
 // The testPAC* helpers below are TestPreAuthorizedCodeStoreContract's
@@ -210,7 +373,7 @@ func testPACIssueAndConsumeNoTxCode(t *testing.T, factory func() issuer.PreAutho
 	if err := store.Issue(ctx, "code1", want); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
-	got, _, err := store.Consume(ctx, "code1", "", 0)
+	got, _, err := store.Consume(ctx, "code1", "", 0, nil)
 	if err != nil {
 		t.Fatalf(msgConsumeFailed, err)
 	}
@@ -232,10 +395,10 @@ func testPACConsumeIsSingleUse(t *testing.T, factory func() issuer.PreAuthorized
 	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "", 0); err != nil {
+	if _, _, err := store.Consume(ctx, "code1", "", 0, nil); err != nil {
 		t.Fatalf("first Consume: %v", err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "", 0); err == nil {
+	if _, _, err := store.Consume(ctx, "code1", "", 0, nil); err == nil {
 		t.Error("second Consume = nil error, want error (code already consumed)")
 	}
 }
@@ -243,7 +406,7 @@ func testPACConsumeIsSingleUse(t *testing.T, factory func() issuer.PreAuthorized
 func testPACConsumeUnknownFails(t *testing.T, factory func() issuer.PreAuthorizedCodeStore) {
 	t.Helper()
 	store := factory()
-	if _, _, err := store.Consume(context.Background(), nonceNeverIssued, "", 0); err == nil {
+	if _, _, err := store.Consume(context.Background(), nonceNeverIssued, "", 0, nil); err == nil {
 		t.Error("Consume = nil error, want error (unknown code)")
 	}
 }
@@ -255,12 +418,12 @@ func testPACWrongTxCodeLeavesCodeConsumable(t *testing.T, factory func() issuer.
 	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "0000", 0); !errors.Is(err, issuer.ErrWrongTxCode) {
+	if _, _, err := store.Consume(ctx, "code1", "0000", 0, nil); !errors.Is(err, issuer.ErrWrongTxCode) {
 		t.Fatalf("Consume with wrong tx_code: err = %v, want ErrWrongTxCode", err)
 	}
 	// The code must still be redeemable with the correct TxCode — a
 	// wrong guess must not have invalidated it.
-	if _, _, err := store.Consume(ctx, "code1", "1234", 0); err != nil {
+	if _, _, err := store.Consume(ctx, "code1", "1234", 0, nil); err != nil {
 		t.Fatalf("Consume with correct tx_code after a wrong guess: %v", err)
 	}
 }
@@ -273,13 +436,13 @@ func testPACMissingTxCodeIsNotAGuess(t *testing.T, factory func() issuer.PreAuth
 		t.Fatalf(msgIssueFailed, err)
 	}
 	for range 3 {
-		if _, _, err := store.Consume(ctx, "code1", "", 1); !errors.Is(err, issuer.ErrTxCodeRequired) {
+		if _, _, err := store.Consume(ctx, "code1", "", 1, nil); !errors.Is(err, issuer.ErrTxCodeRequired) {
 			t.Fatalf("Consume without a tx_code: err = %v, want ErrTxCodeRequired", err)
 		}
 	}
 	// No attempt was counted: with maxAttempts 1, the right tx_code
 	// still redeems the code.
-	if _, _, err := store.Consume(ctx, "code1", "1234", 1); err != nil {
+	if _, _, err := store.Consume(ctx, "code1", "1234", 1, nil); err != nil {
 		t.Fatalf("Consume with the tx_code after requests without one: %v", err)
 	}
 }
@@ -291,10 +454,10 @@ func testPACUnexpectedTxCode(t *testing.T, factory func() issuer.PreAuthorizedCo
 	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "1234", 0); !errors.Is(err, issuer.ErrTxCodeUnexpected) {
+	if _, _, err := store.Consume(ctx, "code1", "1234", 0, nil); !errors.Is(err, issuer.ErrTxCodeUnexpected) {
 		t.Fatalf("Consume with a tx_code the record doesn't have: err = %v, want ErrTxCodeUnexpected", err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "", 0); err != nil {
+	if _, _, err := store.Consume(ctx, "code1", "", 0, nil); err != nil {
 		t.Fatalf("Consume without a tx_code after an unexpected one: %v", err)
 	}
 }
@@ -306,7 +469,7 @@ func testPACCorrectTxCodeConsumes(t *testing.T, factory func() issuer.PreAuthori
 	if err := store.Issue(ctx, "code1", issuer.PreAuthorizedCodeRecord{TxCode: "1234", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf(msgIssueFailed, err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "1234", 0); err != nil {
+	if _, _, err := store.Consume(ctx, "code1", "1234", 0, nil); err != nil {
 		t.Fatalf(msgConsumeFailed, err)
 	}
 }
@@ -319,7 +482,7 @@ func testPACWrongTxCodeIncrementsAttempts(t *testing.T, factory func() issuer.Pr
 		t.Fatalf(msgIssueFailed, err)
 	}
 	for want := 1; want <= 3; want++ {
-		_, attempts, err := store.Consume(ctx, "code1", "0000", 0)
+		_, attempts, err := store.Consume(ctx, "code1", "0000", 0, nil)
 		if !errors.Is(err, issuer.ErrWrongTxCode) {
 			t.Fatalf("Consume with wrong tx_code (attempt %d): err = %v, want ErrWrongTxCode", want, err)
 		}
@@ -339,7 +502,7 @@ func testPACInvalidateThenConsumeFails(t *testing.T, factory func() issuer.PreAu
 	if err := store.Invalidate(ctx, "code1"); err != nil {
 		t.Fatalf("Invalidate: %v", err)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "", 0); err == nil {
+	if _, _, err := store.Consume(ctx, "code1", "", 0, nil); err == nil {
 		t.Error("Consume after Invalidate = nil error, want error")
 	}
 }
@@ -362,7 +525,7 @@ func testPACConcurrentWrongAttemptsAreCountedExactly(t *testing.T, factory func(
 	var mu sync.Mutex
 	seen := make(map[int]int, contractConcurrentAttempts)
 	runConcurrently(contractConcurrentAttempts, func() bool {
-		_, attempts, err := store.Consume(ctx, "code1", "0000", 0)
+		_, attempts, err := store.Consume(ctx, "code1", "0000", 0, nil)
 		if !errors.Is(err, issuer.ErrWrongTxCode) {
 			return false
 		}
@@ -399,7 +562,7 @@ func testPACConcurrentGuessesAreBounded(t *testing.T, factory func() issuer.PreA
 	var mu sync.Mutex
 	compared := 0
 	runConcurrently(contractConcurrentAttempts, func() bool {
-		_, _, err := store.Consume(ctx, "code1", "0000", maxAttempts)
+		_, _, err := store.Consume(ctx, "code1", "0000", maxAttempts, nil)
 		if errors.Is(err, issuer.ErrWrongTxCode) {
 			mu.Lock()
 			compared++
@@ -410,7 +573,7 @@ func testPACConcurrentGuessesAreBounded(t *testing.T, factory func() issuer.PreA
 	if compared > maxAttempts {
 		t.Errorf("%d concurrent wrong guesses were compared, want at most %d", compared, maxAttempts)
 	}
-	if _, _, err := store.Consume(ctx, "code1", "1234", maxAttempts); err == nil {
+	if _, _, err := store.Consume(ctx, "code1", "1234", maxAttempts, nil); err == nil {
 		t.Error("the right tx_code redeemed the code after too many wrong guesses")
 	}
 }
@@ -423,7 +586,7 @@ func testPACConcurrentConsumeHasExactlyOneWinner(t *testing.T, factory func() is
 		t.Fatalf(msgIssueFailed, err)
 	}
 	wins := runConcurrently(contractConcurrentAttempts, func() bool {
-		_, _, err := store.Consume(ctx, "code1", "", 0)
+		_, _, err := store.Consume(ctx, "code1", "", 0, nil)
 		return err == nil
 	})
 	if wins != 1 {
