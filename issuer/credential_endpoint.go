@@ -736,6 +736,9 @@ func (iss *Issuer) issueSDJWT(claims sdjwtvc.Claims, key resolvedKey, typeMetada
 // then encodes the result per Appendix A.2.4: base64url(CBOR(IssuerSigned)).
 func (iss *Issuer) issueMdoc(claims mdoc.Claims, key resolvedKey) (string, error) {
 	claims.DeviceKey = key.Public
+	if err := iss.addMdocDecoys(&claims); err != nil {
+		return "", fmt.Errorf("issuer: issue mdoc: %w", err)
+	}
 	signed, err := mdoc.Issue(iss.deps.MdocSigner.Signer, iss.deps.MdocSigner.Alg, claims, mdoc.IssueOptions{
 		X5Chain: iss.deps.MdocSigner.X5Chain,
 		KeyID:   iss.deps.MdocSigner.KeyID,
@@ -748,6 +751,29 @@ func (iss *Issuer) issueMdoc(claims mdoc.Claims, key resolvedKey) (string, error
 		return "", fmt.Errorf("issuer: marshal IssuerSigned: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(wire), nil
+}
+
+// addMdocDecoys adds MdocSigner.Decoys' decoy counts, one drawn for
+// each namespace, to claims.Decoys — a copy, as the map may be shared
+// with the rest of the batch.
+func (iss *Issuer) addMdocDecoys(claims *mdoc.Claims) error {
+	d := iss.deps.MdocSigner.Decoys
+	if d == nil {
+		return nil
+	}
+	decoys := make(map[string]int, len(claims.NameSpaces))
+	for namespace, n := range claims.Decoys {
+		decoys[namespace] = n
+	}
+	for namespace := range claims.NameSpaces {
+		n, err := d.count(iss.deps.Random)
+		if err != nil {
+			return err
+		}
+		decoys[namespace] += n
+	}
+	claims.Decoys = decoys
+	return nil
 }
 
 // jwkHeaderKey extracts the JSON bytes of a jwt proof's "jwk" header

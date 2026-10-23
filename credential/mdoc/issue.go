@@ -24,6 +24,12 @@ const CredentialFormat = "mso_mdoc" //nolint:gosec // an OID4VCI format identifi
 // maxDigestID is §12.3.4's bound: "The value shall be smaller than 2^31."
 const maxDigestID = 1 << 31
 
+// MaxDecoys bounds Claims.Decoys for one namespace. Decoys only need to
+// obscure how many data elements a namespace really holds — a handful
+// does that — and an unbounded count turns a misconfiguration into
+// memory exhaustion instead of an error.
+const MaxDecoys = 1000
+
 // Claims is the input to Issue.
 type Claims struct {
 	// DocType identifies the mdoc document type (§8.1), e.g.
@@ -69,6 +75,21 @@ type Claims struct {
 	// own doc comment (in mso.go) for why this package enforces that as
 	// its own conservative default rather than a literal §12.3.6 MUST.
 	IdentifierList *IdentifierListRef
+
+	// Decoys optionally adds, for each namespace it names, that many
+	// decoy digests to the namespace's valueDigests in the MSO: random
+	// values of the digest algorithm's length under random DigestIDs
+	// unused by the namespace's data elements, with no IssuerSignedItem
+	// behind them. The MSO goes to every reader in full, so without
+	// them its number of digests says how many data elements each
+	// namespace holds, even those the holder doesn't present — which of
+	// a fixed set of elements an issuer left out, say. A reader checks
+	// only the digests of the items presented, as Verify does, and a
+	// decoy looks like the digest of an element left undisclosed. Each
+	// namespace named must be in NameSpaces; Issue rejects a count
+	// below 0 or above MaxDecoys, or one that takes a namespace's
+	// digests past MaxCBORContainerItems.
+	Decoys map[string]int
 }
 
 // IssueOptions configures Issue.
@@ -142,8 +163,30 @@ func validateClaims(claims Claims) error {
 	if claims.Status != nil && claims.IdentifierList != nil {
 		return fmt.Errorf("mdoc: Claims.Status and Claims.IdentifierList must not both be set")
 	}
+	if err := validateDecoys(claims); err != nil {
+		return err
+	}
 	if claims.KeyAuthorizations != nil {
 		return claims.KeyAuthorizations.validate()
+	}
+	return nil
+}
+
+// validateDecoys checks claims.Decoys: each for a namespace claims
+// has, within MaxDecoys, and leaving the namespace's valueDigests
+// decodable.
+func validateDecoys(claims Claims) error {
+	for namespace, n := range claims.Decoys {
+		elements, ok := claims.NameSpaces[namespace]
+		if !ok {
+			return fmt.Errorf("mdoc: Claims.Decoys names namespace %q, which Claims.NameSpaces hasn't", namespace)
+		}
+		if n < 0 || n > MaxDecoys {
+			return fmt.Errorf("mdoc: Claims.Decoys[%q] is %d, outside 0..%d", namespace, n, MaxDecoys)
+		}
+		if len(elements)+n > MaxCBORContainerItems {
+			return fmt.Errorf("mdoc: namespace %q would have %d digests, over the %d a reader of this package decodes", namespace, len(elements)+n, MaxCBORContainerItems)
+		}
 	}
 	return nil
 }
@@ -194,7 +237,7 @@ func Issue(signer crypto.Signer, alg oid4vci.COSEAlg, claims Claims, opts IssueO
 		digestAlg = SHA256
 	}
 
-	nameSpaces, rawItems, valueDigests, err := issueNameSpaces(claims.NameSpaces, digestAlg)
+	nameSpaces, rawItems, valueDigests, err := issueNameSpaces(claims.NameSpaces, claims.Decoys, digestAlg)
 	if err != nil {
 		return IssuerSigned{}, err
 	}
@@ -247,7 +290,7 @@ func Issue(signer crypto.Signer, alg oid4vci.COSEAlg, claims Claims, opts IssueO
 }
 
 func issueNameSpaces(
-	claimed map[string]map[string]interface{}, digestAlg DigestAlg,
+	claimed map[string]map[string]interface{}, decoys map[string]int, digestAlg DigestAlg,
 ) (nameSpaces map[string][]IssuerSignedItem, rawItems map[string][]cbor.RawMessage, valueDigests map[string]DigestIDs, err error) {
 	nameSpaces = make(map[string][]IssuerSignedItem, len(claimed))
 	rawItems = make(map[string][]cbor.RawMessage, len(claimed))
@@ -262,10 +305,10 @@ func issueNameSpaces(
 		if len(elements) == 0 {
 			return nil, nil, nil, fmt.Errorf("mdoc: namespace %q has no data elements", namespace)
 		}
-		usedIDs := make(map[uint64]bool, len(elements))
+		usedIDs := make(map[uint64]bool, len(elements)+decoys[namespace])
 		items := make([]IssuerSignedItem, 0, len(elements))
 		itemBytesList := make([]cbor.RawMessage, 0, len(elements))
-		digests := make(DigestIDs, len(elements))
+		digests := make(DigestIDs, len(elements)+decoys[namespace])
 		for identifier, value := range elements {
 			if identifier == "" {
 				return nil, nil, nil, fmt.Errorf("mdoc: namespace %q: element identifier must not be an empty string", namespace)
@@ -277,6 +320,9 @@ func issueNameSpaces(
 			items = append(items, item)
 			itemBytesList = append(itemBytesList, itemBytes)
 			digests[item.DigestID] = d
+		}
+		if err := addDecoyDigests(digests, decoys[namespace], digestAlg, usedIDs); err != nil {
+			return nil, nil, nil, err
 		}
 		nameSpaces[namespace] = items
 		rawItems[namespace] = itemBytesList
@@ -315,6 +361,29 @@ func issueItem(
 		return IssuerSignedItem{}, nil, nil, err
 	}
 	return item, itemBytes, digestOut, nil
+}
+
+// addDecoyDigests adds n decoy digests to digests (Claims.Decoys):
+// each under a DigestID drawn as a data element's is, so it collides
+// with none in used, and the digest of fresh crypto/rand bytes under
+// digestAlg, so it has a real digest's length and looks like one.
+func addDecoyDigests(digests DigestIDs, n int, digestAlg DigestAlg, used map[uint64]bool) error {
+	for range n {
+		digestID, err := randomDigestID(used)
+		if err != nil {
+			return err
+		}
+		random := make([]byte, randomMinLength)
+		if _, err := rand.Read(random); err != nil {
+			return fmt.Errorf("mdoc: generate decoy digest: %w", err)
+		}
+		d, err := digest(digestAlg, random)
+		if err != nil {
+			return err
+		}
+		digests[digestID] = d
+	}
+	return nil
 }
 
 // randomDigestID draws a DigestID smaller than 2^31 (§12.3.4) not
