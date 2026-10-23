@@ -154,7 +154,9 @@
 // Config.CopyPolicy CopyPerVerifier, a Verifier is shown the copy it has
 // seen before, and only a new Verifier a new copy. Each copy records
 // which Verifiers saw it, as hashes of their client_ids
-// (StoredCredential.ShownTo). Once every copy has been presented, a
+// (StoredCredential.ShownTo) — over the Digital Credentials API, of the
+// origin, and the client_id with it for a signed request
+// (StartDCAPIPresentation). Once every copy has been presented, a
 // copy only the same Verifier has seen is reused, if there is one, else
 // the one shown to the fewest Verifiers, which those Verifiers can
 // link. With Config.RequestRefresh, the authorization code

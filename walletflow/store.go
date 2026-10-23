@@ -75,7 +75,13 @@ type StoredCredential struct {
 	GrantID string
 
 	// CopiesCorrelated is whether the issuer gave two of its copies the
-	// same jti, sub or status list entry: Verifiers shown different
+	// same jti, sub, status list entry, disclosure digest (an SD-JWT
+	// VC's _sd or array element digest, an mdoc's valueDigests entry)
+	// or validity timestamp to the second (an SD-JWT VC's iat, nbf or
+	// exp, an mdoc's validityInfo; one rounded to a UTC day, as
+	// sdjwtvc.RoundedExp and mdoc.RoundedValidity do, is shared with
+	// every credential the issuer issued that day, so it doesn't
+	// count): Verifiers shown different
 	// copies can link them all the same, so a copy another Verifier has
 	// seen of any of them makes a presentation linkable (Linkable). False
 	// for a credential stored before this was kept.
@@ -114,7 +120,9 @@ func VerifierHash(clientID string) string {
 }
 
 // ShownTo reports whether a copy of c has been presented to the Verifier
-// whose client_id is clientID (Presentation.Verifier().ClientID).
+// whose client_id is clientID (Presentation.Verifier().ClientID); over
+// the Digital Credentials API, ask Presentation.ShownTo, which knows
+// how a Verifier there is identified.
 func (c StoredCredential) ShownTo(clientID string) bool {
 	h := VerifierHash(clientID)
 	return slices.ContainsFunc(c.AllCopies(), func(cp CredentialCopy) bool { return slices.Contains(cp.ShownTo, h) })

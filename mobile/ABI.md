@@ -136,8 +136,9 @@ A record is JSON the app needn't read: `id`, `credential_issuer`,
 `holder_key_id`, `received_at`, `claims`, `display`, `valid_until`,
 `status_list`, `status_list_cwt`, `status`, `grant_id` and
 `credential_identifier` (the dataset a refresh asks for again),
-`copies_correlated` (the issuer gave two copies the same `jti`, `sub`
-or status list entry; absent when not), and `copies` (each copy's `credential`, `holder_key_id`, `presented`,
+`copies_correlated` (the issuer gave two copies the same `jti`, `sub`,
+status list entry, disclosure digest, or validity timestamp not rounded
+to the day; absent when not), and `copies` (each copy's `credential`, `holder_key_id`, `presented`,
 `shown_to`, and its own `status_list` and `valid_until`). A record
 written before a field was kept lacks it.
 
@@ -436,9 +437,9 @@ Steps: `Verifier` and `Queries`; choose a selection (or start from
 | Method | Result |
 |---|---|
 | `Verifier()` | `{"client_id", "name", "response_uri", "registration": {"status", "name", "purpose", "privacy_policy", "registrar", "claims", "credentials", "expires"}}`: the registration is the Verifier's, from its request's `verifier_info`, checked against `registrar_roots` — `status` `"verified"` (with the rest: `claims` are the claims paths it's registered to request from any type of credential, and `credentials`, added within ABI version 12, those it's registered to request from given types: `[{"vct_values" or "doctype_value", "claims"}]`), `"invalid"` (it didn't verify, so isn't relied on), or `"none"` (none, or no `registrar_roots`) |
-| `Queries()` | `{"queries": [{"query_id", "multiple", "credentials": [summary], "unregistered": [path], "unregistered_all"}], "credential_sets": [{"options": [[query ID]], "required"}]}`: the request's credential queries in its order, each with the credentials that can answer it (none when nothing can), and its sets of alternatives (none: every query must be answered). For a Verifier with a verified registration, `unregistered` are the claims paths a query asks for beyond it, and `unregistered_all` whether it asks for every claim; nothing is refused for them — the holder decides |
+| `Queries()` | `{"queries": [{"query_id", "multiple", "credentials": [summary], "unregistered": [path], "unregistered_all"}], "credential_sets": [{"options": [[query ID]], "required"}]}`: the request's credential queries in its order, each with the credentials that can answer it (none when nothing can), and its sets of alternatives (none: every query must be answered). For a Verifier with a verified registration, `unregistered` are the claims paths a query asks for beyond it, then those its credentials would disclose along with them beyond it (the rest of an array disclosed as one, say), and `unregistered_all` whether it asks for every claim; nothing is refused for them — the holder decides |
 | `DefaultSelection()` | `{"selection": {query ID: [credential ID]}}`: what the wallet would choose itself, the first answerable option of each set and each query's first credential, even when it takes several (`multiple`): the holder adds the others. `no_matching_credential` when the request can't be answered |
-| `Preview(selectionJSON)` | `{"disclosures": [{"query_id", "credential_id", "claims": [path], "always_disclosed": [path], "retained": [path]}]}`: `always_disclosed` are the SD-JWT VC claims the Verifier receives beyond `claims`: those its issuer didn't make selectively disclosable, and the plaintext members of a disclosed object a claim sits within; show them with `claims` (added within ABI 12). `retained` are the claims the Verifier says it will keep (an mdoc query's `intent_to_retain`, OpenID4VP Appendix B.2.4): show that with them (added within ABI 12, later) |
+| `Preview(selectionJSON)` | `{"disclosures": [{"query_id", "credential_id", "claims": [path], "always_disclosed": [path], "retained": [path]}]}`: `always_disclosed` are the SD-JWT VC claims the Verifier receives beyond `claims`: those its issuer didn't make selectively disclosable, and what shares a Disclosure with a claim: the plaintext members of a disclosed object or array element a claim sits within, and the other elements of an array disclosed as one, each as a leaf (an index counts the credential's elements); show them with `claims` (added within ABI 12). `retained` are the claims the Verifier says it will keep (an mdoc query's `intent_to_retain`, OpenID4VP Appendix B.2.4): show that with them (added within ABI 12, later) |
 | `Respond(op, selectionJSON)` | `{"query_ids", "redirect_uri"}`. A failure in transit, or a Verifier's server error, is `delivery_unknown`, and the presentation is then answered |
 | `Decline(op)` | `{"query_ids": [], "redirect_uri"}`. The refusal stands from the first call. If sending it failed in transit, call `Decline` again to send the same refusal |
 
@@ -498,8 +499,14 @@ returns a `Presentation`, answered with the same steps, except:
   `{"response": <the encrypted response>}` — for the platform to hand
   back to the page; `Decline`'s is OpenID4VP Appendix A.4's
   `{"error": "access_denied"}`, not encrypted.
-- Presentations are bound to `"origin:" + origin`, and a copy presented
-  counts as shown to it (`shown_to_verifier`, `linkable_here`).
+- Presentations are bound to `"origin:" + origin`. A copy presented
+  counts as shown to that origin for an unsigned request, and for a
+  signed one to its `client_id` at that origin, so two Verifiers whose
+  requests come from one page are two Verifiers
+  (`shown_to_verifier`, `linkable_here`). A copy recorded as shown to
+  the origin alone, over a signed request by an earlier release,
+  counts as another Verifier's: it's `linkable_here`, not
+  `shown_to_verifier`.
 - A request that can't be parsed, or comes with no origin, is
   `invalid_input`: what the platform handed over, not a service's
   refusal. `StartMdocPresentation`'s is too. (Before OID4VCWallet 0.9.0

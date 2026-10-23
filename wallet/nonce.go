@@ -2,12 +2,13 @@ package wallet
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 
 	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/fapihttp"
+
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // NonceResult is returned by a successful RequestNonce.
@@ -53,7 +54,7 @@ func (w *Wallet) RequestNonce(ctx context.Context, endpoint fapi.URL) (NonceResu
 	var body struct {
 		CNonce string `json:"c_nonce"`
 	}
-	if err := json.Unmarshal(res.Body, &body); err != nil {
+	if err := strictjson.Unmarshal(res.Body, &body); err != nil {
 		return NonceResult{}, fmt.Errorf("wallet: request nonce: decode response: %w", err)
 	}
 	if body.CNonce == "" {

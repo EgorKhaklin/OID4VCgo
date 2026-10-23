@@ -697,11 +697,12 @@ func (e *Env) claims() (*sdjwtvc.Claims, *mdoc.Claims) {
 	for k, v := range e.plainClaims {
 		sdjwtClaims.Additional[k] = v
 	}
-	// Within the document signer certificate's validity (newLeaf: an
-	// hour back, a day ahead).
-	signed := time.Now().UTC().Truncate(time.Second)
+	// Rounded to the day, as exp is, so a batch's copies don't share a
+	// timestamp to the second; within the document signer certificate's
+	// validity (newLeaf: a day and an hour back, three days ahead).
+	signed, validFrom, validUntil := mdoc.RoundedValidity(time.Now(), 48*time.Hour)
 	mdocClaims := &mdoc.Claims{
-		DocType: DocType, Signed: signed, ValidFrom: signed, ValidUntil: signed.Add(12 * time.Hour),
+		DocType: DocType, Signed: signed, ValidFrom: validFrom, ValidUntil: validUntil,
 		NameSpaces: map[string]map[string]any{NameSpace: {"family_name": FamilyName, "given_name": GivenName, "portrait": Portrait}},
 	}
 	return sdjwtClaims, mdocClaims
@@ -1045,7 +1046,7 @@ func newProvider() *Provider {
 	now := time.Now()
 	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "walletflowtest Wallet Provider"},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+		NotBefore: now.Add(-25 * time.Hour), NotAfter: now.Add(72 * time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, URIs: []*url.URL{issuerURI},
 	}, caCert, &key.PublicKey, caKey)
 	must(err)
@@ -1126,7 +1127,7 @@ func newCA(commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
 	now := time.Now()
 	return newCertificate(&x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: commonName, Country: []string{"US"}},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+		NotBefore: now.Add(-25 * time.Hour), NotAfter: now.Add(72 * time.Hour),
 		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true,
 	}, nil, &key.PublicKey, key), key
 }
@@ -1139,7 +1140,7 @@ func newLeaf(commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (
 	now := time.Now()
 	return newCertificate(&x509.Certificate{
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: commonName, Country: []string{"US"}},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+		NotBefore: now.Add(-25 * time.Hour), NotAfter: now.Add(72 * time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature,
 	}, ca, &key.PublicKey, caKey), key
 }

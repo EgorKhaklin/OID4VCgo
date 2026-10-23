@@ -1,8 +1,15 @@
 package walletflow
 
 import (
+	"encoding/base64"
 	"testing"
+	"time"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
+	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
@@ -56,6 +63,62 @@ func TestCopiesCorrelated_Detection(t *testing.T) {
 		"one copy":           {"dc+sd-jwt", []CredentialCopy{{StatusList: ref(1)}}, []map[string]any{{"jti": "a"}}, false},
 	} {
 		if got := copiesCorrelated(tc.format, tc.copies, tc.claims); got != tc.want {
+			t.Errorf("%s: copiesCorrelated = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+// Copies sharing a disclosure digest, or a validity timestamp to the
+// second, are correlated: every Verifier receives those. A timestamp
+// rounded to the day isn't counted, nor are copies differing in both.
+func TestCopiesCorrelated_DigestsAndTimestamps(t *testing.T) {
+	ca, caKey := testcert.CA(t, "correlation test CA")
+	leaf, leafKey := testcert.Leaf(t, "correlation test issuer", ca, caKey)
+	now := time.Now()
+	sdjwt := func(nbf, exp int64) string {
+		t.Helper()
+		c, _, err := sdjwtvc.Issue(leafKey, jose.ES256, sdjwtvc.Claims{
+			VCT: "urn:x", Nbf: &nbf, Exp: &exp,
+			Additional: map[string]any{"given_name": sdjwtvc.SD("Alice"), "nationalities": []any{sdjwtvc.SDElement("DE")}},
+		}, sdjwtvc.IssueOptions{IssuerCertificate: leaf})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	day := now.UTC().Truncate(24 * time.Hour).Unix()
+	exp := sdjwtvc.RoundedExp(now, 48*time.Hour)
+	precise := now.Unix()
+	reused := sdjwt(day, exp)
+	mdocCopy := func(signed time.Time) string {
+		t.Helper()
+		f := testmdoc.IssueWith(t, func(c *mdoc.Claims) {
+			c.Signed, c.ValidFrom, c.ValidUntil = signed, signed, signed.Add(time.Hour)
+		})
+		raw, err := f.IssuerSigned.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return base64.RawURLEncoding.EncodeToString(raw)
+	}
+	at := now.Truncate(time.Second)
+	sharedMdoc := mdocCopy(at.Add(time.Second))
+	for name, tc := range map[string]struct {
+		format string
+		a, b   string
+		want   bool
+	}{
+		"sd-jwt, rounded to the day": {"dc+sd-jwt", sdjwt(day, exp), sdjwt(day, exp), false},
+		"sd-jwt, one precise nbf":    {"dc+sd-jwt", sdjwt(precise, exp), sdjwt(precise, exp), true},
+		"sd-jwt, distinct precise":   {"dc+sd-jwt", sdjwt(precise, exp), sdjwt(precise+1, exp), false},
+		"sd-jwt, reused disclosures": {"dc+sd-jwt", reused, reused, true},
+		"mdoc, one precise signed":   {"mso_mdoc", mdocCopy(at), mdocCopy(at), true},
+		"mdoc, distinct precise":     {"mso_mdoc", mdocCopy(at), mdocCopy(at.Add(-time.Second)), false},
+		"mdoc, reused value digests": {"mso_mdoc", sharedMdoc, sharedMdoc, true},
+		"unreadable copies":          {"dc+sd-jwt", "x", "x", false},
+	} {
+		copies := []CredentialCopy{{Credential: tc.a}, {Credential: tc.b}}
+		if got := copiesCorrelated(tc.format, copies, []map[string]any{{}, {}}); got != tc.want {
 			t.Errorf("%s: copiesCorrelated = %v, want %v", name, got, tc.want)
 		}
 	}

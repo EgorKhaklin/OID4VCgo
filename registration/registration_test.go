@@ -193,6 +193,23 @@ func TestUnregistered(t *testing.T) {
 	}
 }
 
+// TestUnregisteredRevealed judges what a presentation discloses along
+// with the claims asked for: a registered path covers itself and what
+// sits within it, never a sibling element or member.
+func TestUnregisteredRevealed(t *testing.T) {
+	k, i, w := dcql.PathKey, dcql.PathIndex, dcql.Wildcard
+	r := registration.Registration{Claims: []dcql.Path{{k("nationalities"), i(0)}, {k("degrees"), w, k("type")}, {k("address")}}}
+	revealed := []dcql.Path{
+		{k("nationalities"), i(1)},
+		{k("degrees"), i(0), k("university")},
+		{k("address"), k("country")},
+	}
+	got := r.UnregisteredRevealed(dcql.CredentialQuery{ID: "q"}, revealed)
+	if len(got) != 2 || !slicesEqual(got[0], revealed[0]) || !slicesEqual(got[1], revealed[1]) {
+		t.Errorf("UnregisteredRevealed = %v, want %v", got, revealed[:2])
+	}
+}
+
 func slicesEqual(a, b dcql.Path) bool {
 	if len(a) != len(b) {
 		return false

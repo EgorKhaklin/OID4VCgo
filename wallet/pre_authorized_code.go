@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // PreAuthorizedCodeGrantType is the Token Request's own "grant_type"
@@ -277,7 +277,7 @@ func (w *Wallet) postTokenOnce(ctx context.Context, p tokenPost, nonce string) (
 
 func decodeTokenResponse(body []byte) (PreAuthorizedCodeTokenResult, error) {
 	var wire tokenResponseBody
-	if err := json.Unmarshal(body, &wire); err != nil {
+	if err := strictjson.Unmarshal(body, &wire); err != nil {
 		return PreAuthorizedCodeTokenResult{}, fmt.Errorf("wallet: request pre-authorized code token: decode response: %w", err)
 	}
 	result := PreAuthorizedCodeTokenResult{

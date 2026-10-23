@@ -1371,9 +1371,11 @@ var correlatingClaims = []string{"jti", "sub"}
 
 // copiesCorrelated reports whether two of a batch's copies, in format,
 // with claims each, share what should set them apart — an SD-JWT VC's
-// jti or sub (correlatingClaims), or a status list entry, an mdoc's
-// too — so presenting different copies doesn't keep presentations
-// unlinkable. The copies are kept all the same: they're still valid.
+// jti or sub (correlatingClaims), a status list entry (an mdoc's too),
+// a disclosure digest or a validity timestamp not rounded to the day
+// (copyMarks) — so presenting different copies doesn't keep
+// presentations unlinkable. The copies are kept all the same: they're
+// still valid.
 func copiesCorrelated(format string, copies []CredentialCopy, claims []map[string]any) bool {
 	for i := range copies {
 		for j := range i {
@@ -1382,7 +1384,14 @@ func copiesCorrelated(format string, copies []CredentialCopy, claims []map[strin
 			}
 		}
 	}
-	return false
+	if len(copies) < 2 {
+		return false
+	}
+	marks := make([]copyMarks, len(copies))
+	for i, cp := range copies {
+		marks[i] = marksOf(format, cp.Credential)
+	}
+	return marksShared(marks)
 }
 
 // pairCorrelated reports whether copies a and b, with claims ca and cb,

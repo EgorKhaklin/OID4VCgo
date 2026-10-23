@@ -2,7 +2,6 @@ package wallet
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -10,6 +9,7 @@ import (
 	"github.com/idfoundry/fapigo/fapihttp"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // ResolveCredentialOffer parses uri's own query parameters (§4.1.2/
@@ -68,7 +68,7 @@ func (w *Wallet) fetchCredentialOffer(ctx context.Context, offerURI string) (oid
 
 func decodeCredentialOffer(raw []byte) (oid4vci.CredentialOffer, error) {
 	var offer oid4vci.CredentialOffer
-	if err := json.Unmarshal(raw, &offer); err != nil {
+	if err := strictjson.Unmarshal(raw, &offer); err != nil {
 		return oid4vci.CredentialOffer{}, fmt.Errorf("wallet: resolve credential offer: decode: %w", err)
 	}
 	if err := offer.Validate(); err != nil {
