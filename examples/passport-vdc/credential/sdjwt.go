@@ -13,7 +13,8 @@ import (
 // SDJWTClaims encodes e as dc+sd-jwt content under vct (the URL this
 // demo serves its SD-JWT VC type metadata at). Every claim except the
 // registered ones (vct, exp) is selectively disclosable; each age
-// threshold is its own disclosure, and the passport file is one. CNF is left
+// threshold is its own disclosure, with a decoy digest for each one
+// left out (ageDecoys), and the passport file is one. CNF is left
 // unset: issuer.RequestCredential binds each issued instance to the
 // Wallet's own key.
 //
@@ -56,12 +57,12 @@ func SDJWTClaims(e passport.Evidence, vct string, o Options) (*sdjwtvc.Claims, e
 	if len(e.Portrait) > 0 {
 		claims[SDJWTPicture] = sdjwtvc.SD(portraitDataURI(e.Portrait))
 	}
-	if ages := ageClaims(e, o, validUntil); len(ages) > 0 {
+	if ages := ageClaims(e, o, validUntil); ages != nil {
 		over := make(map[string]any, len(ages))
 		for threshold, v := range ages {
 			over[strconv.Itoa(threshold)] = sdjwtvc.SD(v)
 		}
-		claims[SDJWTAgeEqualOrOver] = over
+		claims[SDJWTAgeEqualOrOver] = sdjwtvc.WithDecoys(over, ageDecoys(o, ages))
 	}
 
 	exp := validUntil.Unix()

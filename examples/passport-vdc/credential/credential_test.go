@@ -208,6 +208,14 @@ func TestAgeClaimsOmitThresholdsCrossedWithinValidity(t *testing.T) {
 // verifies the result, returning the verified namespaces.
 func issueAndVerifyMdoc(t *testing.T, claims *mdoc.Claims) map[string]map[string]interface{} {
 	t.Helper()
+	_, nameSpaces := issueAndVerifyMdocSigned(t, claims)
+	return nameSpaces
+}
+
+// issueAndVerifyMdocSigned is issueAndVerifyMdoc, also returning the
+// IssuerSigned as a holder receives it.
+func issueAndVerifyMdocSigned(t *testing.T, claims *mdoc.Claims) (mdoc.IssuerSigned, map[string]map[string]interface{}) {
+	t.Helper()
 	issuerKey, cert := testIssuer(t)
 	deviceKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -233,7 +241,7 @@ func issueAndVerifyMdoc(t *testing.T, claims *mdoc.Claims) map[string]map[string
 	if err != nil {
 		t.Fatalf("mdoc.Verify: %v", err)
 	}
-	return verified.NameSpaces
+	return parsed, verified.NameSpaces
 }
 
 func TestMdocClaims_Adult(t *testing.T) {
@@ -310,6 +318,14 @@ func TestMdocClaims_ChildMasksTheCentury(t *testing.T) {
 // verifies the result, returning the fully disclosed payload.
 func issueAndVerifySDJWT(t *testing.T, claims *sdjwtvc.Claims) map[string]any {
 	t.Helper()
+	_, payload := issueAndVerifySDJWTSigned(t, claims)
+	return payload
+}
+
+// issueAndVerifySDJWTSigned is issueAndVerifySDJWT, also returning the
+// issued SD-JWT.
+func issueAndVerifySDJWTSigned(t *testing.T, claims *sdjwtvc.Claims) (string, map[string]any) {
+	t.Helper()
 	issuerKey, _ := testIssuer(t)
 	sdjwt, _, err := sdjwtvc.Issue(issuerKey, oid4vci.ES256, *claims, sdjwtvc.IssueOptions{})
 	if err != nil {
@@ -321,7 +337,7 @@ func issueAndVerifySDJWT(t *testing.T, claims *sdjwtvc.Claims) map[string]any {
 	if err != nil {
 		t.Fatalf("sdjwtvc.Verify: %v", err)
 	}
-	return payload
+	return sdjwt, payload
 }
 
 func TestSDJWTClaims_Adult(t *testing.T) {
