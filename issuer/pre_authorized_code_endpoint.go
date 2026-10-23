@@ -20,7 +20,10 @@ import (
 // §11.1) for ExchangePreAuthorizedCode's own Token Request — the same
 // interface shape internal/dpop.ReplayChecker declares, restated here
 // so a caller can satisfy it without reaching past this package's own
-// public API into an internal one.
+// public API into an internal one. The jti UseOnce receives is the
+// proof's own jti hashed (base64url SHA-256, 43 characters), so a
+// store holds a fixed-size key per proof whatever the client sent; a
+// jti over 256 bytes is refused before it gets here.
 type DPoPReplayChecker interface {
 	UseOnce(ctx context.Context, jti string, expiresAt time.Time) error
 }
@@ -67,7 +70,11 @@ type ExchangePreAuthorizedCodeRequest struct {
 	// authorization_details parameter is used in ... the Token Request").
 	// Their form is checked before the code is consumed; whether the
 	// code grants them, after, so a request for more than it grants
-	// spends it.
+	// spends it: what a code grants is in its PreAuthorizedCodeRecord,
+	// which PreAuthorizedCodeStore hands over only by consuming the code
+	// (Consume), the single atomic step that also keeps it single-use.
+	// A Wallet that names only the offer's credential_configuration_ids
+	// never meets this.
 	AuthorizationDetails []oid4vci.AuthorizationDetail
 }
 
@@ -194,19 +201,39 @@ func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
 // itself. With fapigo/server, the Token Endpoint handler reads the
 // request once and does both checks first:
 //
-//	tr, _ := server.TokenEndpointRequestFromHTTP(r)
-//	params, _ := tr.Parameters()
+//	tr, err := server.TokenEndpointRequestFromHTTP(r)
+//	if err != nil {
+//		return err // answer with the token error
+//	}
+//	params, err := tr.Parameters()
+//	if err != nil {
+//		return err
+//	}
 //	// Also refuses a client_id parameter naming another client.
 //	c, err := srv.AuthenticateAttestedClient(ctx, tr.AttestedClientAuthentication())
+//	if err != nil {
+//		return err
+//	}
 //	b, err := srv.VerifyTokenRequestBinding(ctx, c.Client, tr)
-//	// require b.SenderConstrain to be storage.SenderConstrainDPoP
+//	if err != nil {
+//		return err
+//	}
+//	if b.SenderConstrain != storage.SenderConstrainDPoP {
+//		return errDPoPRequired // the token must be DPoP-bound
+//	}
 //	details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
+//	if err != nil {
+//		return err
+//	}
 //	res, err := iss.ExchangePreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
 //		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
 //		Verified: &issuer.VerifiedTokenRequest{
 //			ClientID: c.Client.ID().String(), DPoPThumbprint: b.Thumbprint, NextDPoPNonce: b.NextDPoPNonce,
 //		},
 //	})
+//	if err != nil {
+//		return err // an *issuer.Error writes itself (WriteJSON)
+//	}
 //
 // and lists the grant in fapigo/server's Config.AdditionalGrantTypes.
 type VerifiedPreAuthorizedCode struct{}
@@ -475,18 +502,27 @@ func (iss *Issuer) preAuthorizedBinding(ctx context.Context, req ExchangePreAuth
 		return VerifiedTokenRequest{}, fmt.Errorf("issuer: exchange pre-authorized code: token_endpoint is required")
 	}
 	target := req.TokenEndpoint.URL()
-	verified, err := dpop.Verify(ctx, dpop.VerifyRequest{
+	verifyReq := dpop.VerifyRequest{
 		Proof: req.DPoPProof, Method: http.MethodPost, URL: target.String(),
 		Now: now, MaxProofAge: iss.cfg.Limits.MaxDPoPProofAge, MaxClockSkew: iss.cfg.Limits.MaxDPoPClockSkew,
 		Replay: iss.deps.DPoPReplay,
-	})
+	}
+	// The nonce is checked before the proof's jti is recorded, so a
+	// nonce-less first attempt (or any proof the nonce policy refuses)
+	// leaves no replay entry behind.
+	var nonceErr error
+	if iss.deps.DPoPNonces != nil {
+		verifyReq.CheckNonce = func(ctx context.Context, nonce string) error {
+			nonceErr = iss.checkDPoPNonce(ctx, nonce, now)
+			return nonceErr
+		}
+	}
+	verified, err := dpop.Verify(ctx, verifyReq)
+	if nonceErr != nil {
+		return VerifiedTokenRequest{}, nonceErr
+	}
 	if err != nil {
 		return VerifiedTokenRequest{}, newError(ErrorInvalidDPoPProof, 400, "invalid DPoP proof", err)
-	}
-	if iss.deps.DPoPNonces != nil {
-		if challenge := iss.checkDPoPNonce(ctx, verified.Nonce, now); challenge != nil {
-			return VerifiedTokenRequest{}, challenge
-		}
 	}
 	return VerifiedTokenRequest{DPoPThumbprint: verified.Thumbprint}, nil
 }

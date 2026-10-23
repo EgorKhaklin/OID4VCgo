@@ -330,6 +330,26 @@ func TestNewHoldsDPoPClockSkewToFAPIUnderProduction(t *testing.T) {
 	}
 }
 
+// TestNewCapsTxCodeAttemptsUnderProduction: a production issuer
+// tolerates at most MaxProductionTxCodeAttempts wrong Transaction Codes
+// per pre-authorized code, so a six-digit code stays hard to guess;
+// development assurance takes any positive number.
+func TestNewCapsTxCodeAttemptsUnderProduction(t *testing.T) {
+	cfg, deps := preAuthorizedCodeProductionConfig(t)
+	cfg.Limits.MaxTxCodeAttempts = issuer.MaxProductionTxCodeAttempts
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New with max_tx_code_attempts %d: %v", cfg.Limits.MaxTxCodeAttempts, err)
+	}
+	cfg.Limits.MaxTxCodeAttempts = issuer.MaxProductionTxCodeAttempts + 1
+	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "max_tx_code_attempts") {
+		t.Fatalf("New with max_tx_code_attempts %d = %v, want it refused", cfg.Limits.MaxTxCodeAttempts, err)
+	}
+	cfg.Assurance = issuer.AssuranceDevelopment
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New under AssuranceDevelopment: %v", err)
+	}
+}
+
 // preAuthorizedCodeProductionConfig is a production configuration with
 // every store assured and the pre-authorized_code flow wired in, its
 // client authentication choice made.

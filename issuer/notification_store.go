@@ -1,6 +1,9 @@
 package issuer
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // NotificationRecord is what NotificationStore.Get returns for one
 // notification_id — see IssueNotificationID's own doc comment for how
@@ -17,6 +20,13 @@ type NotificationRecord struct {
 	// installation, so the client alone doesn't say whose credential
 	// it is.
 	Subject string
+
+	// ExpiresAt is when this notification_id stops being accepted:
+	// IssueNotificationID sets it from Limits.NotificationLifetime, and
+	// leaves it zero, never expiring, when that's zero. RequestNotification
+	// answers an expired one as unknown, so a store may drop a record
+	// past its ExpiresAt; the store never judges expiry itself.
+	ExpiresAt time.Time
 }
 
 // NotificationStore persists notification_id values this issuer has

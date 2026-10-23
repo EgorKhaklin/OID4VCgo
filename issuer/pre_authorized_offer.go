@@ -135,9 +135,14 @@ func txCodeFor(txCode, description string) *oid4vci.TxCode {
 // Transaction Code is guessed within Limits.MaxTxCodeAttempts too
 // often (a one-digit code, half the time in 5 tries), and a code meant
 // to be short-lived (OpenID4VCI §3.5) shouldn't outlast a week.
+// MaxProductionTxCodeAttempts bounds Limits.MaxTxCodeAttempts under
+// AssuranceProduction, so the shortest code allowed stays hard to
+// guess: at most 10 tries against a six-digit code succeed one time in
+// 100,000.
 const (
 	MinProductionTxCodeLength          = 6
 	MaxProductionPreAuthorizedLifetime = 7 * 24 * time.Hour
+	MaxProductionTxCodeAttempts        = 10
 )
 
 // checkPreAuthorizedGrant refuses a pre-authorized offer whose code's

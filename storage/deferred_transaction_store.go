@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
@@ -13,11 +14,13 @@ import (
 // See the package doc comment for why this is development/testing only.
 // One lock serializes every Update. Put, beyond the interface, creates
 // or replaces a record directly, for a test or a business process that
-// manages transactions itself.
+// manages transactions itself. Transactions past their ExpiresAt,
+// which the issuer answers as unknown, are dropped as the store grows.
 type DeferredTransactionStore struct {
 	mu          sync.Mutex
 	records     map[string]issuer.DeferredTransactionRecord
 	invalidated map[string]bool
+	prune       pruner
 }
 
 // NewDeferredTransactionStore builds an empty DeferredTransactionStore.
@@ -37,9 +40,26 @@ func (s *DeferredTransactionStore) Put(_ context.Context, transactionID string, 
 	record = cloneDeferredRecord(record)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpired()
 	s.records[transactionID] = record
 	delete(s.invalidated, transactionID)
 	return nil
+}
+
+// pruneExpired drops expired transactions, invalidated or not, once
+// the store has grown enough to look. s.mu must be held.
+func (s *DeferredTransactionStore) pruneExpired() {
+	now, ok := s.prune.due(len(s.records))
+	if !ok {
+		return
+	}
+	pruneMap(s.records, now, func(r issuer.DeferredTransactionRecord) time.Time { return r.ExpiresAt })
+	for id := range s.invalidated {
+		if _, kept := s.records[id]; !kept {
+			delete(s.invalidated, id)
+		}
+	}
+	s.prune.pruned(len(s.records))
 }
 
 // Get implements issuer.DeferredTransactionStore.
@@ -63,6 +83,7 @@ func (s *DeferredTransactionStore) Create(_ context.Context, transactionID strin
 	if transactionID == "" {
 		return fmt.Errorf("storage: transaction_id is required")
 	}
+	s.pruneExpired()
 	if _, used := s.records[transactionID]; used || s.invalidated[transactionID] {
 		return fmt.Errorf("storage: transaction_id is already in use")
 	}
@@ -100,13 +121,18 @@ func cloneDeferredRecord(r issuer.DeferredTransactionRecord) issuer.DeferredTran
 	return r
 }
 
-// Invalidate implements issuer.DeferredTransactionStore.
+// Invalidate implements issuer.DeferredTransactionStore. It drops the
+// record's Credentials, which the Wallet now holds; the rest is kept
+// so the transaction_id stays used.
 func (s *DeferredTransactionStore) Invalidate(_ context.Context, transactionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.records[transactionID]; !ok || s.invalidated[transactionID] {
+	record, ok := s.records[transactionID]
+	if !ok || s.invalidated[transactionID] {
 		return fmt.Errorf("storage: unknown or already-invalidated transaction_id")
 	}
+	record.Credentials = nil
+	s.records[transactionID] = record
 	s.invalidated[transactionID] = true
 	return nil
 }

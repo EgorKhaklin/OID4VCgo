@@ -229,7 +229,10 @@ type CredentialRequest struct {
 	SDJWTClaims *sdjwtvc.Claims
 
 	// MdocClaims is SDJWTClaims' mso_mdoc counterpart. Leave DeviceKey
-	// unset — RequestCredential overwrites it per issued instance.
+	// unset — RequestCredential overwrites it per issued instance. Set
+	// Signed, ValidFrom and ValidUntil with mdoc.RoundedValidity, as
+	// sdjwtvc.RoundedExp for an SD-JWT VC's exp, so the MSO's validity
+	// doesn't date each issuance to the second.
 	MdocClaims *mdoc.Claims
 
 	// PerCredential, if set, is called once for each Credential
@@ -288,7 +291,8 @@ type CredentialInstance struct {
 	// CredentialRequest's claims. Assign its fields (Status, Exp, …) to
 	// change this Credential alone. Its maps (Additional, NameSpaces)
 	// are still shared with the rest of the batch: replace one rather
-	// than modify it in place.
+	// than modify it in place. A validity changed here should stay
+	// rounded too (sdjwtvc.RoundedExp, mdoc.RoundedValidity).
 	SDJWTClaims *sdjwtvc.Claims
 	MdocClaims  *mdoc.Claims
 }
@@ -680,7 +684,12 @@ func (iss *Issuer) issueSDJWT(claims sdjwtvc.Claims, key resolvedKey, typeMetada
 	}
 	claims.CNF = map[string]any{"jwk": cnfJWK}
 
+	decoys, err := iss.deps.SDJWTSigner.Decoys.count(iss.deps.Random)
+	if err != nil {
+		return "", fmt.Errorf("issuer: issue sd-jwt vc: %w", err)
+	}
 	sdjwt, _, err := sdjwtvc.Issue(iss.deps.SDJWTSigner.Signer, iss.deps.SDJWTSigner.Alg, claims, sdjwtvc.IssueOptions{
+		Decoys:              decoys,
 		KeyID:               iss.deps.SDJWTSigner.KeyID,
 		IssuerCertificate:   iss.deps.SDJWTSigner.IssuerCertificate,
 		IssuerIntermediates: iss.deps.SDJWTSigner.IssuerIntermediates,

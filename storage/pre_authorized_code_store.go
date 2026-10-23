@@ -5,17 +5,20 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
 // PreAuthorizedCodeStore is an in-memory issuer.PreAuthorizedCodeStore.
 // See the package doc comment for why this is development/testing
-// only.
+// only. Codes past their ExpiresAt, and their wrong tx_code counts,
+// are dropped as the store grows.
 type PreAuthorizedCodeStore struct {
 	mu       sync.Mutex
 	issued   map[string]issuer.PreAuthorizedCodeRecord
 	attempts map[string]int
+	prune    pruner
 }
 
 // NewPreAuthorizedCodeStore builds an empty PreAuthorizedCodeStore.
@@ -31,6 +34,15 @@ func (s *PreAuthorizedCodeStore) Issue(_ context.Context, code string, record is
 	record.Scopes = cloneStrings(record.Scopes)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if now, ok := s.prune.due(len(s.issued)); ok {
+		pruneMap(s.issued, now, func(r issuer.PreAuthorizedCodeRecord) time.Time { return r.ExpiresAt })
+		for c := range s.attempts {
+			if _, live := s.issued[c]; !live {
+				delete(s.attempts, c)
+			}
+		}
+		s.prune.pruned(len(s.issued))
+	}
 	s.issued[code] = record
 	return nil
 }

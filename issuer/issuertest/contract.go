@@ -645,6 +645,29 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 		if err := store.Update(ctx, "txn1", func(*issuer.DeferredTransactionRecord) error { return nil }); err == nil {
 			t.Error("Update after Invalidate = nil error, want error")
 		}
+		if err := store.Invalidate(ctx, "txn1"); err == nil {
+			t.Error("second Invalidate = nil error, want error (only one request may get the Credentials)")
+		}
+		if err := store.Invalidate(ctx, "never-seeded"); err == nil {
+			t.Error("Invalidate of an unknown transaction = nil error, want error")
+		}
+	})
+
+	// Invalidate is RequestDeferredCredential's single-use gate: of
+	// concurrent requests for one transaction_id, exactly one gets the
+	// Credentials. (That Invalidate also drops the stored Credentials
+	// isn't observable through the interface; check it in the store's
+	// own tests.)
+	t.Run("InvalidateIsAtomic", func(t *testing.T) {
+		store := seed(t, "txn1", issuer.DeferredTransactionRecord{
+			Status: issuer.DeferredTransactionIssued, Credentials: []oid4vci.IssuedCredential{{Credential: "c"}},
+		})
+		wins := runConcurrently(contractConcurrentAttempts, func() bool {
+			return store.Invalidate(context.Background(), "txn1") == nil
+		})
+		if wins != 1 {
+			t.Errorf("%d concurrent Invalidates succeeded, want exactly 1", wins)
+		}
 	})
 
 	t.Run("CreateThenGet", func(t *testing.T) {

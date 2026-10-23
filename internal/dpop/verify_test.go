@@ -5,7 +5,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -347,5 +349,91 @@ func TestVerifyRejectsMalformedProof(t *testing.T) {
 				t.Fatalf("Verify(%s) = nil error, want error", name)
 			}
 		})
+	}
+}
+
+// signedProof signs a DPoP proof whose payload carries jti and nonce
+// (omitted when "") for testHTU, issued at now.
+func signedProof(t *testing.T, key *ecdsa.PrivateKey, jti, nonce string, now time.Time) string {
+	t.Helper()
+	claims := map[string]any{"jti": jti, "htm": "POST", "htu": testHTU, "iat": now.Unix()}
+	if nonce != "" {
+		claims["nonce"] = nonce
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("marshal claims: %v", err)
+	}
+	proof, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "dpop+jwt", "jwk": mustJWK(t, key)}, payload)
+	if err != nil {
+		t.Fatalf("jose.Sign: %v", err)
+	}
+	return proof
+}
+
+// TestVerifyBoundsWhatReplayRemembers: a jti over MaxJTILength is
+// refused before the replay check, and an accepted one reaches it only
+// as its fixed-size digest, so a client can't make the replay record
+// keep tens of kilobytes per proof.
+func TestVerifyBoundsWhatReplayRemembers(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := testP256Key(t)
+	replay := newFakeReplayChecker()
+	req := dpop.VerifyRequest{Method: "POST", URL: testHTU, Now: now, MaxProofAge: time.Minute, Replay: replay}
+
+	for _, n := range []int{47000, dpop.MaxJTILength + 1} {
+		req.Proof = signedProof(t, key, strings.Repeat("A", n), "", now)
+		if _, err := dpop.Verify(context.Background(), req); err == nil {
+			t.Fatalf("Verify with a %d-byte jti = nil error, want it refused", n)
+		}
+	}
+	if len(replay.seen) != 0 {
+		t.Fatalf("replay record holds %d entries after refused proofs, want 0", len(replay.seen))
+	}
+
+	jti := strings.Repeat("B", dpop.MaxJTILength)
+	req.Proof = signedProof(t, key, jti, "", now)
+	if _, err := dpop.Verify(context.Background(), req); err != nil {
+		t.Fatalf("Verify with a %d-byte jti: %v", dpop.MaxJTILength, err)
+	}
+	if !replay.seen[dpop.JTIDigest(jti)] || len(replay.seen) != 1 {
+		t.Fatalf("replay record = %v, want only the jti's digest", replay.seen)
+	}
+	if got := len(dpop.JTIDigest(jti)); got != 43 {
+		t.Fatalf("len(JTIDigest) = %d, want 43", got)
+	}
+}
+
+// TestVerifyChecksNonceBeforeReplay: CheckNonce sees the proof's nonce,
+// and a proof it refuses is never recorded, so it can't use up the jti.
+func TestVerifyChecksNonceBeforeReplay(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	key := testP256Key(t)
+	replay := newFakeReplayChecker()
+	var seen string
+	refuse := true
+	req := dpop.VerifyRequest{
+		Proof: signedProof(t, key, "j1", "n1", now), Method: "POST", URL: testHTU,
+		Now: now, MaxProofAge: time.Minute, Replay: replay,
+		CheckNonce: func(_ context.Context, nonce string) error {
+			seen = nonce
+			if refuse {
+				return fakeErr("use a fresh nonce")
+			}
+			return nil
+		},
+	}
+	if _, err := dpop.Verify(context.Background(), req); err == nil {
+		t.Fatal("Verify with a refused nonce = nil error, want error")
+	}
+	if seen != "n1" {
+		t.Fatalf("CheckNonce saw %q, want %q", seen, "n1")
+	}
+	if len(replay.seen) != 0 {
+		t.Fatalf("replay record holds %d entries after a refused nonce, want 0", len(replay.seen))
+	}
+	refuse = false
+	if _, err := dpop.Verify(context.Background(), req); err != nil {
+		t.Fatalf("Verify of the same proof once the nonce is accepted: %v", err)
 	}
 }

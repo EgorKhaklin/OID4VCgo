@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	fapi "github.com/idfoundry/fapigo"
 
@@ -188,6 +189,62 @@ func TestRequestNotification_RejectsInvalidRequest(t *testing.T) {
 			err := iss.RequestNotification(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}, req)
 			assertIssuerError(t, err, issuer.ErrorInvalidNotificationRequest)
 		})
+	}
+}
+
+// TestRequestNotification_Expiry: with Limits.NotificationLifetime, a
+// notification_id carries an ExpiresAt and is answered as unknown once
+// past it; without, it never expires.
+func TestRequestNotification_Expiry(t *testing.T) {
+	ctx := context.Background()
+	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")}
+	notify := func(iss *issuer.Issuer, id string) error {
+		return iss.RequestNotification(ctx, auth, issuer.NotificationRequest{NotificationID: id, Event: oid4vci.NotificationEventCredentialAccepted})
+	}
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	for _, lifetime := range []time.Duration{0, time.Hour} {
+		store := newFakeNotificationStore()
+		cfg := validConfig(t)
+		cfg.Limits.NotificationLifetime = lifetime
+		deps := validDependencies(t)
+		deps.Notifications = store
+		clock := now
+		deps.Clock = issuer.ClockFunc(func() time.Time { return clock })
+		iss := newTestIssuer(t, cfg, deps)
+
+		id, err := iss.IssueNotificationID(ctx, auth)
+		if err != nil {
+			t.Fatalf("IssueNotificationID: %v", err)
+		}
+		record, err := store.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		var want time.Time
+		if lifetime > 0 {
+			want = now.Add(lifetime)
+		}
+		if !record.ExpiresAt.Equal(want) {
+			t.Errorf("lifetime %s: ExpiresAt = %v, want %v", lifetime, record.ExpiresAt, want)
+		}
+		clock = now.Add(lifetime - time.Second)
+		if err := notify(iss, id); err != nil {
+			t.Errorf("lifetime %s: notification before expiry: %v", lifetime, err)
+		}
+		clock = now.Add(lifetime + 24*time.Hour)
+		err = notify(iss, id)
+		if lifetime == 0 && err != nil {
+			t.Errorf("no lifetime: notification a day later: %v", err)
+		}
+		if lifetime > 0 {
+			assertIssuerError(t, err, issuer.ErrorInvalidNotificationID)
+		}
+	}
+
+	cfg := validConfig(t)
+	cfg.Limits.NotificationLifetime = -time.Second
+	if _, err := issuer.New(cfg, validDependencies(t)); err == nil || !strings.Contains(err.Error(), "notification_lifetime") {
+		t.Errorf("New with a negative notification_lifetime = %v, want it refused", err)
 	}
 }
 

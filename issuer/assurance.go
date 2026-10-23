@@ -183,6 +183,9 @@ func checkProductionAssurance(cfg Config, deps Dependencies) error {
 	if err := checkProductionDPoPClockSkew(cfg, deps); err != nil {
 		return err
 	}
+	if deps.PreAuthorizedCodes != nil && cfg.Limits.MaxTxCodeAttempts > MaxProductionTxCodeAttempts {
+		return fmt.Errorf("config: limits.max_tx_code_attempts is %d; under AssuranceProduction it must be at most %d", cfg.Limits.MaxTxCodeAttempts, MaxProductionTxCodeAttempts)
+	}
 	// Each store a configured feature uses, and whether consuming from
 	// it must be atomic.
 	stores := []struct {
