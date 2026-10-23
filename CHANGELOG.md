@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.52.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.51.0...v0.52.0) (2026-10-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* **verifier:** X5CIssuerKeyResolver with RequireIssuerName set now refuses an SD-JWT VC without an iss claim.
+* **proximity:** RequireReaderAuthenticationEKU (proximity, mdocdcapi), proximity.RequireMDLDocumentSignerEKU and the mobile wallet's *_require_eku settings now refuse a certificate whose every verified path has an intermediate CA whose extended key usage extension lists neither the role's usage nor anyExtendedKeyUsage.
+* **verifier:** X5ChainIssuerKeyResolver with no LeafPolicy, and wallet.VerifyIssuedCredential with no IssuerLeafPolicy, now refuse an mdoc whose document signer certificate is an OCSP signer's or has a key usage extension without digitalSignature. Set a LeafPolicy (or IssuerLeafPolicy) to replace the check.
+* **issuer:** under AssuranceProduction, issuer.New refuses Limits.MaxTxCodeAttempts above issuer.MaxProductionTxCodeAttempts (10) when Dependencies.PreAuthorizedCodes is set. Lower it to 10 or less.
+
+### Features
+
+* **issuer:** let notification_ids expire, and prune the in-memory stores ([d47e1fe](https://github.com/IDFoundry/OID4VCgo/commit/d47e1fec2852e3c1092fbf22b129c5cd8ae16474))
+* **issuer:** optionally add decoy digests to issued SD-JWT VCs ([5e41cd5](https://github.com/IDFoundry/OID4VCgo/commit/5e41cd5ff4e3209a7c9407c3053bdf50aa7c1ba7))
+* **mdoc:** add RoundedValidity for an MSO's validityInfo ([b8779b3](https://github.com/IDFoundry/OID4VCgo/commit/b8779b3a1b14780074c23248931b4db0a7aa9ff5))
+* **statuslist:** report whether a Fetcher keeps its full address policy ([d318fda](https://github.com/IDFoundry/OID4VCgo/commit/d318fdadd628159b76310483346698be21906750))
+* **wallet:** fetch a request_uri by POST through the Wallet's hardened fetcher ([ffbf733](https://github.com/IDFoundry/OID4VCgo/commit/ffbf733667b647bcea2714468d1ed08434df8adc))
+* **wallet:** send OpenID4VP responses through the Wallet's own HTTP client ([274ce31](https://github.com/IDFoundry/OID4VCgo/commit/274ce31b09e4024e730fff964af3c623c169da75))
+
+
+### Bug Fixes
+
+* bound the total data items in a CBOR message ([5571d00](https://github.com/IDFoundry/OID4VCgo/commit/5571d0098b74fec3e6256d995bdf6ad927488eda))
+* **certchain:** bound a presented chain's length, and refuse a self-issued anchor without a signature check ([cf38ca5](https://github.com/IDFoundry/OID4VCgo/commit/cf38ca56fe37918ad409c5fd9184c8de3e8e0305))
+* **certchain:** refuse a leaf certificate with a small-order Ed25519 key ([7ad2dc6](https://github.com/IDFoundry/OID4VCgo/commit/7ad2dc67c25b51f780c38307bac05972b05707ff))
+* **dcql:** bound claim_sets entries, trusted_authorities and vct_values ([40c3349](https://github.com/IDFoundry/OID4VCgo/commit/40c3349be9dce2f53e4ede10e2497008d90f45ff))
+* **issuer:** bound the DPoP jti the replay record keeps ([6043a8d](https://github.com/IDFoundry/OID4VCgo/commit/6043a8d930c39e82e59b5b2986bb6a60ffdc2417))
+* **issuer:** cap Limits.MaxTxCodeAttempts under AssuranceProduction ([c733b81](https://github.com/IDFoundry/OID4VCgo/commit/c733b81d854373d8883a4c530c77e57d27100b55))
+* **mdoc:** share one item budget across an IssuerSigned's items ([221c871](https://github.com/IDFoundry/OID4VCgo/commit/221c8710b781e75fc8f9d242893f2bdbb0d5013b))
+* **proximity:** decode within credential/mdoc's CBOR bounds ([7b1d4eb](https://github.com/IDFoundry/OID4VCgo/commit/7b1d4eb8c6686fa4eb6c17c9fbf2b8cdba4c6171))
+* **proximity:** drop session secrets when a session closes ([055d946](https://github.com/IDFoundry/OID4VCgo/commit/055d946a0b0d47e3bdefb1a63375b07504c9a231))
+* **proximity:** hold a role's extended key usage to the verified path, not just the leaf ([1c751bb](https://github.com/IDFoundry/OID4VCgo/commit/1c751bb7fbf8d62946c423f3e99234120ee23edf))
+* **storage:** drop a deferred transaction's Credentials on Invalidate ([113d30d](https://github.com/IDFoundry/OID4VCgo/commit/113d30df304a100ca104736be0153e71cbb03a7f))
+* **verifier:** refuse a credential without iss under RequireIssuerName ([2591640](https://github.com/IDFoundry/OID4VCgo/commit/2591640ecd6fee86cee0768c76cdbe5677605c67))
+* **verifier:** refuse an IACA's OCSP signer as an mdoc document signer ([99bb345](https://github.com/IDFoundry/OID4VCgo/commit/99bb3451f757429dd99dd09a69b66b18da0156fa))
+* **verifier:** stop reporting a completed transaction's result indefinitely ([0c583c9](https://github.com/IDFoundry/OID4VCgo/commit/0c583c95d4ed6a87b3f3eccdaf7cd179002b3fb9))
+* **wallet:** decode each held credential once when matching a DCQL query ([fd8aebf](https://github.com/IDFoundry/OID4VCgo/commit/fd8aebf3f076002e25baacc9001b4c24b436bfc7))
+* **wallet:** default to one credential for a query that takes several ([1691796](https://github.com/IDFoundry/OID4VCgo/commit/1691796935ecc506afb5e8434bc9e86c9255ffe5))
+* **walletflow:** bound the Credential Requests one issuance makes ([17dcff0](https://github.com/IDFoundry/OID4VCgo/commit/17dcff0230997bee2bd49f0eeebfe3fd4d822f7f))
+* **walletflow:** check role separation for VerifierTrust given by pointer ([cfa78f9](https://github.com/IDFoundry/OID4VCgo/commit/cfa78f996875a96d6f10741a15498bc0f2cab6ec))
+* **walletflow:** don't hand out a deferred credential settled while listing ([cb769d7](https://github.com/IDFoundry/OID4VCgo/commit/cb769d78734c58145f7bea01839f2c0afd95baf3))
+* **walletflow:** drop issuer logos on IP addresses and localhost ([bd7d41a](https://github.com/IDFoundry/OID4VCgo/commit/bd7d41adf1f6d72b8d879e66a5a70e11861c6348))
+* **walletflow:** keep a copy marked when a later presentation reserved it ([c884b43](https://github.com/IDFoundry/OID4VCgo/commit/c884b43ccbedbd454e20896371124c4f52f91146))
+* **walletflow:** report copies an issuer correlated as linkable ([d1971a9](https://github.com/IDFoundry/OID4VCgo/commit/d1971a9a868d3ebb616706af410d146eee22851f))
+* **walletflow:** reuse a copy only the returning Verifier has seen ([7311bb6](https://github.com/IDFoundry/OID4VCgo/commit/7311bb6d2b94f99e026ecd7fdfa2db28cdf79dd3))
+* **wallet:** refuse an encrypted Credential Response with another enc than requested ([8c382c0](https://github.com/IDFoundry/OID4VCgo/commit/8c382c0c3b2e54a0f11233636edbce9676dc65b4))
+* **wallet:** refuse Fetch.AllowedLoopbackHosts under AssuranceProduction ([cee9c88](https://github.com/IDFoundry/OID4VCgo/commit/cee9c88b80dfdccfc26793ebf38f365be4ce0944))
+* **wallet:** require crypto/rand.Reader as Random under AssuranceProduction ([773dbc0](https://github.com/IDFoundry/OID4VCgo/commit/773dbc0b00874efad25eb57e02ad9a33a6515ad7))
+* **wallet:** time out requests through a given HTTP client without a Timeout ([580096b](https://github.com/IDFoundry/OID4VCgo/commit/580096b21def8f4f6d7ba941e8424402ed3e78f0))
+
 ## [0.51.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.50.0...v0.51.0) (2026-10-22)
 
 
