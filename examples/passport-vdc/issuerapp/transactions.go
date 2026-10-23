@@ -205,9 +205,9 @@ func (t *transactions) claim(id, code string) error {
 
 // reserve returns the Evidence of a claimed transaction for issuing
 // configID, and whether it was uploaded for review, marking it issued so
-// no other request can issue it again — unless it's kept for refresh,
-// whose keepFor deadline the first credential starts. Call release if
-// issuing then fails, or done if it succeeds.
+// no other request can issue it again — unless it's kept for refresh.
+// Call release if issuing then fails, which undoes it, or done if it
+// succeeds.
 func (t *transactions) reserve(id, configID string) (passport.Evidence, bool, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -225,9 +225,6 @@ func (t *transactions) reserve(id, configID string) (passport.Evidence, bool, er
 		return passport.Evidence{}, false, errIssuanceLimit
 	}
 	v.pending[configID] = false
-	if v.keep && !v.kept {
-		v.kept, v.expiresAt = true, t.now().Add(t.keepFor+keepMargin)
-	}
 	return v.evidence, v.review, nil
 }
 
@@ -242,7 +239,8 @@ func (t *transactions) release(id, configID string) {
 
 // done records a credential issued, and drops the transaction — and its
 // passport data — once every offered credential has been, unless it's
-// kept for refresh.
+// kept for refresh, whose keepFor deadline the first credential issued
+// starts.
 func (t *transactions) done(id string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -251,6 +249,9 @@ func (t *transactions) done(id string) {
 		return
 	}
 	if v.issued++; v.keep {
+		if !v.kept {
+			v.kept, v.expiresAt = true, t.now().Add(t.keepFor+keepMargin)
+		}
 		return
 	}
 	for _, pending := range v.pending {

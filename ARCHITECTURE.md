@@ -613,7 +613,8 @@ changes whether *every* bullet below is `(done)`.
   actually gets checked — into `RequestCredential`'s own
   `AuthorizedRequest`. `CredentialHandler` serves the whole Credential
   Endpoint (token check, parse and decrypt, issue, encrypt, errors)
-  with the caller deciding only what to issue, in `Prepare`; it checks
+  with the caller deciding only what to issue, in `Prepare`, which runs
+  only once the request is authorized and its proofs verified; it checks
   tokens through the `AccessTokenVerifier` interface, which
   `issuer/fapiresource` implements with a `fapigo/resource.Verifier`,
   so `issuer` itself still doesn't import `fapigo/resource`. With the

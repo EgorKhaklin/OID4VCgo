@@ -141,6 +141,14 @@ func TestTransactions_KeepForRefresh(t *testing.T) {
 	if len(tx.kept()) != 0 {
 		t.Error("listed as kept before its first credential")
 	}
+	// A credential that isn't issued after all starts no deadline.
+	if _, _, err := tx.reserve(id, MdocConfigurationID); err != nil {
+		t.Fatalf("reserve a kept credential: %v", err)
+	}
+	tx.release(id, MdocConfigurationID)
+	if len(tx.kept()) != 0 {
+		t.Error("listed as kept after a released reservation")
+	}
 	now = now.Add(30 * time.Second) // within the transaction lifetime
 	for range 3 {
 		if _, _, err := tx.reserve(id, MdocConfigurationID); err != nil {

@@ -325,12 +325,23 @@ type resolvedKey struct {
 // into credential/sdjwtvc.Issue or credential/mdoc.Issue. See
 // CredentialRequest's own doc comment for what's out of scope.
 func (iss *Issuer) RequestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (oid4vci.CredentialResponse, error) {
-	resp, err := iss.requestCredential(ctx, auth, req)
+	return iss.requestCredentialAudited(ctx, auth, req, nil)
+}
+
+// preparer fills in what to issue for a checked Credential Request —
+// CredentialHandlerConfig.Prepare, for CredentialHandler: its claims,
+// PerCredential or Defer, given its ResolvedConfigurationID.
+type preparer func(ctx context.Context, req *CredentialRequest) error
+
+// requestCredentialAudited is RequestCredential, calling prepare, if
+// not nil, once req is authorized and its proofs verified.
+func (iss *Issuer) requestCredentialAudited(ctx context.Context, auth AuthorizedRequest, req CredentialRequest, prepare preparer) (oid4vci.CredentialResponse, error) {
+	resp, err := iss.requestCredential(ctx, auth, req, prepare)
 	iss.audit(ctx, AuditEventRequestCredential, auth.ClientID(), err)
 	return resp, err
 }
 
-func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest) (oid4vci.CredentialResponse, error) {
+func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest, prepare preparer) (oid4vci.CredentialResponse, error) {
 	if err := requireClientIdentityDecision(auth); err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
@@ -367,6 +378,17 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	keys, err := iss.resolveProofKeys(ctx, auth, proofType, values, ptc)
 	if err != nil {
 		return oid4vci.CredentialResponse{}, err
+	}
+	if prepare != nil {
+		req.ResolvedConfigurationID = configID
+		if err := prepare(ctx, &req); err != nil {
+			return oid4vci.CredentialResponse{}, err
+		}
+		if req.Defer != nil {
+			if err := iss.requireDeferral(auth); err != nil {
+				return oid4vci.CredentialResponse{}, err
+			}
+		}
 	}
 	if req.Defer != nil {
 		return iss.startDeferral(ctx, auth, configID, keys, *req.Defer)
