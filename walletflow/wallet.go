@@ -241,7 +241,10 @@ type Dependencies struct {
 	// that, outside Development, is fapihttp's hardened one: it dials
 	// only public addresses and follows no redirect. One set here should
 	// be as careful: issuers' and Verifiers' endpoints come from offers
-	// and requests anyone can make.
+	// and requests anyone can make. One without a Timeout is used
+	// through a copy with the 10 s one, its Transport and CheckRedirect
+	// kept, so a server that never answers can't hold a request until
+	// its context ends.
 	HTTP *http.Client
 	// Clock returns the current time. nil means time.Now.
 	Clock func() time.Time
@@ -373,17 +376,27 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 
 // withDefaultDependencies is deps with the wallet's own HTTP client,
 // pinned to cfg.TLSPins, and in-memory stores and the system clock and
-// randomness for those deps leaves nil. It refuses TLSPins alongside a
-// caller's HTTP client, which they wouldn't apply to.
+// randomness for those deps leaves nil, and a caller's HTTP client
+// without a Timeout as a copy with httpTimeout. It refuses TLSPins
+// alongside a caller's HTTP client, which they wouldn't apply to.
 func withDefaultDependencies(cfg Config, deps Dependencies) (Dependencies, error) {
-	if deps.HTTP == nil {
+	switch {
+	case deps.HTTP == nil:
 		client, err := defaultHTTPClient(cfg.Development, cfg.TLSPins)
 		if err != nil {
 			return deps, err
 		}
 		deps.HTTP = client
-	} else if len(cfg.TLSPins) > 0 {
+	case len(cfg.TLSPins) > 0:
 		return deps, errors.New("walletflow: Config.TLSPins applies to the wallet's own HTTP client, not Dependencies.HTTP: set TLSPins.VerifyConnection on that client's TLS configuration instead")
+	case deps.HTTP.Timeout <= 0:
+		// The direct_post responses and refusals, and fapigo/client's
+		// token and Credential Requests, go through this client
+		// directly: without a Timeout, a stalled server holds them
+		// until ctx ends.
+		timed := *deps.HTTP
+		timed.Timeout = httpTimeout
+		deps.HTTP = &timed
 	}
 	if deps.Clock == nil {
 		deps.Clock = time.Now
