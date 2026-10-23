@@ -3,6 +3,7 @@
 package mobile
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -122,10 +123,11 @@ func TestSessions_MdocPresentation(t *testing.T) {
 		Retain                bool
 	}
 	req := decode[struct {
-		ABI       int
-		Origin    string
-		Reader    string
-		Documents []struct {
+		ABI               int
+		Origin            string
+		Reader            string
+		ReaderCertificate []byte `json:"reader_certificate"`
+		Documents         []struct {
 			DocType     string `json:"doctype"`
 			Elements    []element
 			Credentials []struct {
@@ -137,6 +139,9 @@ func TestSessions_MdocPresentation(t *testing.T) {
 	}](t, p.Request())
 	if req.ABI != ABIVersion || req.Origin != readerOrigin || req.Reader != "Test Shop" || len(req.Documents) != 1 {
 		t.Fatalf("Request = %s", p.Request())
+	}
+	if !bytes.Equal(req.ReaderCertificate, reader.key.Chain[0].Raw) {
+		t.Errorf("reader_certificate isn't the reader's leaf")
 	}
 	d := req.Documents[0]
 	if d.DocType != walletflowtest.DocType || len(d.Elements) != 2 ||
@@ -219,8 +224,11 @@ func TestSessions_MdocPresentationUnrecognizedReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req := decode[struct{ Reader string }](t, p.Request()); req.Reader != "" {
-		t.Errorf("Reader = %q, want none", req.Reader)
+	if req := decode[struct {
+		Reader            string
+		ReaderCertificate []byte `json:"reader_certificate"`
+	}](t, p.Request()); req.Reader != "" || req.ReaderCertificate != nil {
+		t.Errorf("Reader = %q with a certificate %t, want none", req.Reader, req.ReaderCertificate != nil)
 	}
 	if _, err := h.w.StartMdocPresentation(NewOperation(0), []byte("{}"), readerOrigin); code(err) == "" {
 		t.Error("an empty request parsed")

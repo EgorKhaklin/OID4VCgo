@@ -58,12 +58,14 @@ type mdocDocumentJSON struct {
 func (p *MdocPresentation) Request() string {
 	out := struct {
 		result
-		Origin    string             `json:"origin"`
-		Reader    string             `json:"reader"`
-		Documents []mdocDocumentJSON `json:"documents"`
+		Origin            string             `json:"origin"`
+		Reader            string             `json:"reader"`
+		ReaderCertificate []byte             `json:"reader_certificate,omitempty"`
+		Documents         []mdocDocumentJSON `json:"documents"`
 	}{result: result{ABIVersion}, Origin: p.p.Origin(), Documents: []mdocDocumentJSON{}}
 	if r := p.p.Reader(); r != nil {
-		out.Reader = r.Subject.CommonName
+		out.Reader = displayName(r.Subject.CommonName)
+		out.ReaderCertificate = r.Raw
 	}
 	for _, r := range p.p.Requests() {
 		d := mdocDocumentJSON{DocType: r.DocType, Elements: []mdocElementJSON{}, Credentials: []credentialSummary{}}
