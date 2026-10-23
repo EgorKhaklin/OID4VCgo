@@ -2,11 +2,12 @@ package wallet
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/fapihttp"
+
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // maxAttestationChallengeLen bounds an Attestation Challenge: it goes
@@ -35,7 +36,7 @@ func (w *Wallet) RequestAttestationChallenge(ctx context.Context, endpoint fapi.
 	var body struct {
 		AttestationChallenge string `json:"attestation_challenge"`
 	}
-	if err := json.Unmarshal(res.Body, &body); err != nil {
+	if err := strictjson.Unmarshal(res.Body, &body); err != nil {
 		return "", fmt.Errorf("wallet: request attestation challenge: decode response: %w", err)
 	}
 	switch n := len(body.AttestationChallenge); {

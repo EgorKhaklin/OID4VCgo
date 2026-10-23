@@ -205,6 +205,30 @@ func selectIndex(index int, selection []any) ([]any, error) {
 	return next, nil
 }
 
+// Covers reports whether p selects everything q does, in any credential
+// (§7.1.1): p is no longer than q, and each of p's components selects
+// what q's does — the same member, the same index, or, a Wildcard,
+// any index or every one. Selecting a value selects everything within
+// it, so ["address"] covers ["address", "street_address"], and
+// ["degrees", null] covers ["degrees", 1, "type"]; the reverse doesn't
+// hold.
+func (p Path) Covers(q Path) bool {
+	if len(p) == 0 || len(p) > len(q) {
+		return false
+	}
+	for i, a := range p {
+		b := q[i]
+		switch {
+		case a.IsWildcard() && (b.IsWildcard() || b.IsIndex()):
+		case a.IsKey() && b.IsKey() && a.Key() == b.Key():
+		case a.IsIndex() && b.IsIndex() && a.Index() == b.Index():
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // MdocNamespaceAndElement reports p's own two mdoc-specific
 // components — the ISO 18013-5 namespace and data element identifier —
 // when p is a valid mdoc-format Claims Path Pointer (§7.2: exactly two

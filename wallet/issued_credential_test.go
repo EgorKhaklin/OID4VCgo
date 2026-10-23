@@ -214,3 +214,25 @@ func TestVerifyIssuedCredential_Rejects(t *testing.T) {
 		}
 	}
 }
+
+// An issued SD-JWT VC ends with "~" (RFC 9901 §4): one whose last
+// Disclosure lacks it, or that carries a Key Binding JWT or anything
+// else after the last "~", is refused, not accepted with what follows
+// dropped.
+func TestVerifyIssuedCredential_RejectsAFinalSegment(t *testing.T) {
+	f := caIssuedFixture(t)
+	if !strings.HasSuffix(f.sdjwt, "~") || strings.Count(f.sdjwt, "~") < 2 {
+		t.Fatalf("fixture: %q isn't an SD-JWT with a Disclosure", f.sdjwt)
+	}
+	for name, credential := range map[string]string{
+		"an unterminated last Disclosure": strings.TrimSuffix(f.sdjwt, "~"),
+		"a trailing segment":              f.sdjwt + "eyJhbGciOiJFUzI1NiJ9.e30.c2ln",
+	} {
+		_, err := wallet.VerifyIssuedCredential(context.Background(), wallet.VerifyIssuedCredentialParams{
+			Configuration: f.sdjwtConf, Credential: credential, HolderKey: &f.holder.PublicKey, IssuerRoots: f.roots,
+		})
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

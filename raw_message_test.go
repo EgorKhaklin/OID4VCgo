@@ -21,6 +21,7 @@ import (
 // its member names can only be checked against the type it's decoded
 // into, so encoding/json.Unmarshal mustn't decode one: it would take
 // {"nonce": "a", "Nonce": "b"} as "b". Decode it with strictjson.
+// The packages in strictPackages decode nothing with encoding/json.
 func TestRawMessagesDecodeStrictly(t *testing.T) {
 	if testing.Short() {
 		t.Skip("type-checks the module")
@@ -73,6 +74,14 @@ func exportData(t *testing.T) map[string]string {
 	return exports
 }
 
+// strictPackages decode JSON only from the parties they talk to — a
+// wallet's from Credential Issuers, Authorization Servers and
+// Verifiers — so all of it with strictjson, which refuses what
+// parsers disagree on.
+var strictPackages = map[string]bool{
+	"github.com/idfoundry/oid4vcgo/wallet": true,
+}
+
 func checkRawMessageDecodes(t *testing.T, fset *token.FileSet, imp types.Importer, raw types.Type, path, dir string, names []string) {
 	t.Helper()
 	files := make([]*ast.File, 0, len(names))
@@ -90,7 +99,14 @@ func checkRawMessageDecodes(t *testing.T, fset *token.FileSet, imp types.Importe
 	for _, f := range files {
 		ast.Inspect(f, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) == 0 || !isJSONUnmarshal(info, call.Fun) {
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			if strictPackages[path] && (isJSONFunc(info, call.Fun, "Unmarshal") || isJSONFunc(info, call.Fun, "NewDecoder")) {
+				t.Errorf("%s: %s decodes with encoding/json: use strictjson.Unmarshal", fset.Position(call.Pos()), path)
+				return true
+			}
+			if !isJSONFunc(info, call.Fun, "Unmarshal") {
 				return true
 			}
 			if isRawMessage(info, raw, call.Args[0]) {
@@ -101,13 +117,14 @@ func checkRawMessageDecodes(t *testing.T, fset *token.FileSet, imp types.Importe
 	}
 }
 
-func isJSONUnmarshal(info *types.Info, fun ast.Expr) bool {
+// isJSONFunc reports whether fun is encoding/json's function name.
+func isJSONFunc(info *types.Info, fun ast.Expr, name string) bool {
 	sel, ok := fun.(*ast.SelectorExpr)
 	if !ok {
 		return false
 	}
 	obj, ok := info.Uses[sel.Sel].(*types.Func)
-	return ok && obj.Pkg() != nil && obj.Pkg().Path() == "encoding/json" && obj.Name() == "Unmarshal"
+	return ok && obj.Pkg() != nil && obj.Pkg().Path() == "encoding/json" && obj.Name() == name
 }
 
 // isRawMessage reports whether arg is a json.RawMessage, possibly

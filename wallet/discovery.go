@@ -2,7 +2,6 @@ package wallet
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"slices"
@@ -12,6 +11,7 @@ import (
 	"github.com/idfoundry/fapigo/fapihttp"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // Media types of metadata responses: JSON, and signed metadata's JWT
@@ -68,7 +68,7 @@ func (w *Wallet) FetchCredentialIssuerMetadata(ctx context.Context, issuerURL st
 	var identity struct {
 		CredentialIssuer string `json:"credential_issuer"`
 	}
-	if err := json.Unmarshal(body, &identity); err != nil {
+	if err := strictjson.Unmarshal(body, &identity); err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("wallet: fetch credential issuer metadata: decode: %w", err)
 	}
 	if identity.CredentialIssuer != issuerURL {
@@ -173,7 +173,7 @@ func (w *Wallet) FetchAuthorizationServerMetadata(ctx context.Context, issuerURL
 		return AuthorizationServerMetadata{}, fmt.Errorf("wallet: fetch authorization server metadata: %w", err)
 	}
 	var meta AuthorizationServerMetadata
-	if err := json.Unmarshal(res.Body, &meta); err != nil {
+	if err := strictjson.Unmarshal(res.Body, &meta); err != nil {
 		return AuthorizationServerMetadata{}, fmt.Errorf("wallet: fetch authorization server metadata: decode: %w", err)
 	}
 	if meta.Issuer != issuerURL {

@@ -1,9 +1,11 @@
 package walletflow
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -37,8 +39,13 @@ type Registration struct {
 	registration.Registration
 	// Unregistered is, for each Credential Query ID, the claims the
 	// request asks for beyond what this Verifier is registered for — a
-	// nil path is every claim of the credential (Status verified).
-	// Nothing is refused for it: the holder decides.
+	// nil path is every claim of the credential — then those answering
+	// it with a held credential would disclose along with what it asks
+	// for, beyond the registration: the plaintext members of a disclosed
+	// object or array element, the other elements of an array disclosed
+	// as one (wallet.PreviewedCredential.DisclosedAlong), for any of the
+	// query's credentials (Status verified). Nothing is refused for it:
+	// the holder decides.
 	Unregistered map[string][]dcql.Path
 }
 
@@ -46,8 +53,11 @@ type Registration struct {
 // library's format (registration.Recognize), against RegistrarRoots,
 // for this Verifier. Attestations in other formats are ignored
 // (OpenID4VP 1.0 §5.11). A Credential Query no verified registration
-// applies to is unregistered in full.
-func (p *Presentation) checkRegistration(now time.Time) Registration {
+// applies to is unregistered in full. It judges what the query's
+// credentials (p.queries) would disclose too, not only the paths asked
+// for: a registered path within a Disclosure doesn't cover the rest of
+// it.
+func (p *Presentation) checkRegistration(ctx context.Context, now time.Time) Registration {
 	if p.w.cfg.RegistrarRoots == nil {
 		return Registration{Status: RegistrationNone}
 	}
@@ -56,16 +66,37 @@ func (p *Presentation) checkRegistration(now time.Time) Registration {
 		return out
 	}
 	out.Unregistered = map[string][]dcql.Path{}
-	for _, cq := range p.req.Query.Credentials {
+	for i, cq := range p.req.Query.Credentials {
 		reg := applies[cq.ID]
 		if reg == nil {
 			reg = &registration.Registration{}
 		}
-		if over := reg.Unregistered(dcql.Query{Credentials: []dcql.CredentialQuery{cq}})[cq.ID]; len(over) > 0 {
+		over := reg.Unregistered(dcql.Query{Credentials: []dcql.CredentialQuery{cq}})[cq.ID]
+		if !slices.ContainsFunc(over, func(path dcql.Path) bool { return path == nil }) {
+			for _, c := range p.queries[i].Credentials {
+				for _, leaf := range reg.UnregisteredRevealed(cq, disclosedAlong(ctx, cq, c)) {
+					if !slices.ContainsFunc(over, func(path dcql.Path) bool { return slices.Equal(path, leaf) }) {
+						over = append(over, leaf)
+					}
+				}
+			}
+		}
+		if len(over) > 0 {
 			out.Unregistered[cq.ID] = over
 		}
 	}
 	return out
+}
+
+// disclosedAlong is what answering cq with c would disclose along with
+// the claims cq asks for (wallet.PreviewedCredential.DisclosedAlong):
+// nothing for an mdoc, or a credential the preview can't read.
+func disclosedAlong(ctx context.Context, cq dcql.CredentialQuery, c StoredCredential) []dcql.Path {
+	preview, err := wallet.PreviewPresentation(ctx, dcql.Query{Credentials: []dcql.CredentialQuery{cq}}, []wallet.HeldCredential{heldCredential(c, nil)}, trustedAuthorities)
+	if err != nil || len(preview) != 1 {
+		return nil
+	}
+	return preview[0].DisclosedAlong
 }
 
 // verifyRegistrations verifies the request's registrations in this

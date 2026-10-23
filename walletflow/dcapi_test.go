@@ -2,6 +2,7 @@ package walletflow_test
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -78,17 +79,104 @@ func TestDCAPIPresentation_Signed(t *testing.T) {
 			}
 		})
 	}
-	// Each presentation used a copy, recorded as shown to the origin.
+	// Each presentation used a copy, recorded as shown to this Verifier
+	// at the origin, not to the origin alone.
+	r := v.BeginDCAPI(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name"), mdocQuery(t, "mdoc", "given_name")}}, dcapiOrigin)
+	again, err := w.StartDCAPIPresentation(ctx, r.Protocol, r.Data, r.Origin)
+	if err != nil {
+		t.Fatal(err)
+	}
 	all, err := w.Credentials(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range all {
-		if !c.ShownTo("origin:" + dcapiOrigin) {
-			t.Errorf("credential %s isn't recorded as shown to the origin", c.ID)
+		if !again.ShownTo(c.ID) {
+			t.Errorf("credential %s isn't recorded as shown to the Verifier", c.ID)
+		}
+		if c.ShownTo("origin:" + dcapiOrigin) {
+			t.Errorf("credential %s is recorded as shown to the origin alone", c.ID)
 		}
 	}
 	_ = held
+}
+
+// Two Verifiers whose signed requests come from one page are two
+// Verifiers: the copy one has seen goes to the other only as linkable,
+// as it would over the redirect flow.
+func TestDCAPIPresentation_SharedOrigin(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	v1, v2 := f.env.StartVerifier(t), f.env.StartVerifier(t)
+	roots := x509.NewCertPool()
+	roots.AddCert(v1.CA)
+	roots.AddCert(v2.CA)
+	w := f.newWalletTrusting(t, f.env.IssuerRoots, wallet.X5CVerifierRoots{Roots: roots})
+	held := receive(t, f, w, walletflowtest.SDJWTConfigurationID)
+	ctx := context.Background()
+	q := dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}}
+	present := func(v testVerifier) (shown, linkable bool, presented walletflow.Presented) {
+		t.Helper()
+		r := v.BeginDCAPI(t, q, dcapiOrigin)
+		p, err := w.StartDCAPIPresentation(ctx, r.Protocol, r.Data, r.Origin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shown, linkable = p.ShownTo(held[0].ID), p.Linkable(held[0].ID)
+		presented, err = p.Respond(ctx, walletflow.Selection{"pid": {held[0].ID}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := v.VerifyDCAPIResponse(ctx, r, presented.DCAPIResponse); err != nil {
+			t.Fatal(err)
+		}
+		return shown, linkable, presented
+	}
+	if shown, linkable, _ := present(v1); shown || linkable {
+		t.Fatalf("first presentation: shown %v, linkable %v", shown, linkable)
+	}
+	shown, linkable, presented := present(v2)
+	if shown || !linkable || len(presented.Linkable) != 1 {
+		t.Errorf("the second Verifier at the origin: shown %v, linkable %v, Presented.Linkable %v; want unseen and linkable", shown, linkable, presented.Linkable)
+	}
+	if shown, linkable, _ := present(v1); !shown {
+		t.Errorf("the first Verifier again: shown %v, linkable %v; want shown", shown, linkable)
+	}
+}
+
+// A copy recorded as shown to an origin alone, as a signed request's
+// presentation once was, counts as another Verifier's: a signed
+// Verifier at that origin isn't told it has seen it, and presenting it
+// is linkable.
+func TestDCAPIPresentation_OriginOnlyRecord(t *testing.T) {
+	f, v, w := presentationFixture(t)
+	held := receive(t, f, w, walletflowtest.SDJWTConfigurationID)
+	ctx := context.Background()
+	c := held[0]
+	copies := c.AllCopies()
+	for i := range copies {
+		copies[i].Presented, copies[i].ShownTo = true, []string{walletflow.VerifierHash("origin:" + dcapiOrigin)}
+	}
+	c.Copies = copies
+	if err := f.store.Put(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	r := v.BeginDCAPI(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}}, dcapiOrigin)
+	p, err := w.StartDCAPIPresentation(ctx, r.Protocol, r.Data, r.Origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ShownTo(c.ID) || !p.Linkable(c.ID) {
+		t.Errorf("shown %v, linkable %v; want unseen and linkable", p.ShownTo(c.ID), p.Linkable(c.ID))
+	}
+	// An unsigned request from the origin is that origin's.
+	unsigned := unsignedOf(t, r)
+	u, err := w.StartDCAPIPresentation(ctx, unsigned.Protocol, unsigned.Data, unsigned.Origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !u.ShownTo(c.ID) || u.Linkable(c.ID) {
+		t.Errorf("unsigned: shown %v, linkable %v; want shown and not linkable", u.ShownTo(c.ID), u.Linkable(c.ID))
+	}
 }
 
 // An unsigned request names no Verifier but its origin, and is answered

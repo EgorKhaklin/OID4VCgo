@@ -29,7 +29,8 @@ type Verifier struct {
 	ResponseURI string
 	// Origin, for a DC API request, is the calling page's or app's
 	// origin as the platform reported it: what identifies the Verifier
-	// of an unsigned request, which has no ClientID or Certificate.
+	// of an unsigned request, which has no ClientID or Certificate, and
+	// with ClientID a signed one's.
 	Origin string
 }
 
@@ -77,8 +78,10 @@ type Disclosure struct {
 	// SD-JWT VC, [namespace, element] for an mdoc.
 	Claims []dcql.Path
 	// AlwaysDisclosed are the SD-JWT VC claims disclosed beyond Claims:
-	// those the issuer didn't make selectively disclosable, and the
-	// plaintext members of a disclosed object a claim sits within
+	// those the issuer didn't make selectively disclosable, and what
+	// shares a Disclosure with a claim — the plaintext members of a
+	// disclosed object or array element a claim sits within, the other
+	// elements of an array disclosed as one
 	// (wallet.PreviewedCredential.AlwaysDisclosed). Show them with
 	// Claims.
 	AlwaysDisclosed []dcql.Path
@@ -186,7 +189,6 @@ func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRe
 		return nil, fmt.Errorf("walletflow: list credentials: %w", err)
 	}
 	p := &Presentation{w: w, req: req, byID: make(map[string]StoredCredential, len(stored))}
-	p.registration = p.checkRegistration(w.deps.Clock())
 	held := make([]wallet.HeldCredential, 0, len(stored))
 	byCredential := make(map[string]StoredCredential, len(stored))
 	for _, c := range stored {
@@ -216,6 +218,7 @@ func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRe
 		}
 		p.queries = append(p.queries, q)
 	}
+	p.registration = p.checkRegistration(ctx, w.deps.Clock())
 	return p, nil
 }
 

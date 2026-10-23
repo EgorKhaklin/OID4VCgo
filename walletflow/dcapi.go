@@ -24,8 +24,10 @@ import (
 // Decline. Neither sends anything: each returns, in
 // Presented.DCAPIResponse, the encrypted response to hand back to the
 // platform, which delivers it. Presentations are bound to
-// "origin:" + origin, and a copy presented counts as shown to that
-// origin.
+// "origin:" + origin. A copy presented counts as shown to that origin,
+// for an unsigned request, or for a signed one to its client_id at that
+// origin: two Verifiers whose requests come from one page are two
+// Verifiers (Presentation.ShownTo).
 func (w *Wallet) StartDCAPIPresentation(ctx context.Context, protocol string, data []byte, origin string) (*Presentation, error) {
 	if protocol != wallet.DCAPIProtocolUnsigned && w.cfg.VerifierTrust == nil {
 		return nil, errors.New("walletflow: Config.VerifierTrust is required to answer a signed request")
@@ -51,14 +53,40 @@ func (w *Wallet) StartDCAPIPresentation(ctx context.Context, protocol string, da
 	return w.newPresentation(ctx, req)
 }
 
-// verifier is who a copy presented here counts as shown to: the
-// client_id's hash, or for a DC API request the origin's, which every
-// form of it has — an unsigned one has no client_id.
-func (p *Presentation) verifier() string {
-	if p.req.Origin != "" {
-		return originVerifier(p.req.Origin)
+// verifier is who a copy presented here counts as shown to (its
+// VerifierHash, of verifierName).
+func (p *Presentation) verifier() string { return VerifierHash(p.verifierName()) }
+
+// verifierName is who a copy presented here counts as shown to: the
+// client_id; for an unsigned DC API request, which has none, the
+// origin; and for a signed one, the client_id at the origin. Either
+// alone isn't enough there: one page may make the requests of several
+// Verifiers, each signing with its own key, and a client_id is bound to
+// that key, not to the page. A copy stored as shown to the origin alone,
+// as one presented over a signed request before this was kept, counts
+// as shown to another Verifier: a Verifier at that origin isn't shown
+// it again as its own, and presenting it is Linkable — it may have been
+// another Verifier's.
+func (p *Presentation) verifierName() string {
+	switch {
+	case p.req.Origin == "":
+		return p.req.ClientID
+	case p.req.ClientID == "":
+		return "origin:" + p.req.Origin
+	default:
+		// The origin, which has no space, first: unambiguous.
+		return "origin:" + p.req.Origin + " client_id:" + p.req.ClientID
 	}
-	return VerifierHash(p.req.ClientID)
+}
+
+// ShownTo reports whether the credential id names has been shown to
+// this Verifier before: as StoredCredential.ShownTo, for the Verifier
+// a DC API request identifies as walletflow does (StartDCAPIPresentation)
+// — not, for a signed one, by its client_id or origin alone. False for
+// a credential not held.
+func (p *Presentation) ShownTo(id string) bool {
+	c, ok := p.byID[id]
+	return ok && c.ShownTo(p.verifierName())
 }
 
 // answerDCAPI presents held, bound to the request's origin and nonce,

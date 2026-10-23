@@ -915,8 +915,9 @@ public final class Presentation: @unchecked Sendable {
         /// The held credentials that can answer it.
         public let credentials: [CredentialSummary]
         /// For a Verifier with a verified registration: the claims paths
-        /// this query asks for beyond it, and whether it asks for every
-        /// claim. Nothing is refused for them: the holder decides.
+        /// this query asks for beyond it, then those its credentials would
+        /// disclose along with them beyond it (the rest of an array
+        /// disclosed as one, say). Nothing is refused for them: the holder decides.
         public let unregistered: [[PathElement]]
         /// Whether it asks for every claim, beyond a verified registration.
         public let unregisteredAll: Bool
@@ -958,9 +959,11 @@ public final class Presentation: @unchecked Sendable {
         /// The claims it would disclose, as paths.
         public let claims: [[PathElement]]
         /// The SD-JWT VC claims the Verifier receives beyond `claims`:
-        /// those its issuer didn't make selectively disclosable, and the
-        /// plaintext members of a disclosed object a claim sits within.
-        /// Show them with `claims`.
+        /// those its issuer didn't make selectively disclosable, and what
+        /// shares a Disclosure with a claim: the plaintext members of a
+        /// disclosed object or array element a claim sits within, and the
+        /// other elements of an array disclosed as one. Show them with
+        /// `claims`.
         public let alwaysDisclosed: [[PathElement]]
         /// The claims the Verifier says it will keep (an mdoc query's
         /// `intent_to_retain`): show that with them.

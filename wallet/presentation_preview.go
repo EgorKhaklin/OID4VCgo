@@ -3,9 +3,9 @@ package wallet
 import (
 	"context"
 	"fmt"
-	"maps"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -28,13 +28,24 @@ type PreviewedCredential struct {
 
 	// AlwaysDisclosed are the SD-JWT VC claims this presentation
 	// discloses beyond Claims, which the Verifier receives whatever the
-	// selection: the claims the issuer didn't make selectively
-	// disclosable, and the plaintext members of a disclosed object a
-	// claim in Claims sits within. The registered JWT and SD-JWT VC
-	// claims (iss, vct, cnf, iat, nbf, exp, status, jti) aside. Show
-	// them with Claims. None for an mdoc, whose every element is
-	// selectively disclosed.
+	// selection: every claim it receives that no path in Claims
+	// selects. That's the claims the issuer didn't make selectively
+	// disclosable, and what shares a Disclosure with a claim in Claims:
+	// the plaintext members of a disclosed object or array element a
+	// claim sits within, and the other elements of an array the issuer
+	// disclosed as one. Each is a leaf, walked into objects and arrays;
+	// an index counts the elements the holder's credential has. The
+	// registered JWT and SD-JWT VC claims (iss, vct, cnf, iat, nbf, exp,
+	// status, jti) aside. Show them with Claims. None for an mdoc, whose
+	// every element is selectively disclosed.
 	AlwaysDisclosed []dcql.Path
+
+	// DisclosedAlong are the AlwaysDisclosed claims sent only because a
+	// claim in Claims is: those sharing its Disclosure, not those every
+	// presentation of the credential reveals. What a Verifier asks for
+	// brings them, so it's judged on them as on Claims (a registration's
+	// coverage, for one).
+	DisclosedAlong []dcql.Path
 
 	// Retained are the Claims the Verifier says it intends to keep: an
 	// mdoc's elements its query marks intent_to_retain (OpenID4VP
@@ -87,10 +98,16 @@ func PreviewPresentation(ctx context.Context, query dcql.Query, candidates []Hel
 			if err != nil {
 				return nil, fmt.Errorf("wallet: preview presentation: credential query %q: %w", id, err)
 			}
-			preview = append(preview, PreviewedCredential{QueryID: id, Credential: held, Claims: paths, AlwaysDisclosed: alwaysDisclosed(held, paths), Retained: retainedClaims(byID[id], paths)})
+			preview = append(preview, previewedCredential(id, held, byID[id], paths))
 		}
 	}
 	return preview, nil
+}
+
+// previewedCredential is held, answering cq (whose ID is id) with paths.
+func previewedCredential(id string, held HeldCredential, cq dcql.CredentialQuery, paths []dcql.Path) PreviewedCredential {
+	always, along := alwaysDisclosed(held, paths)
+	return PreviewedCredential{QueryID: id, Credential: held, Claims: paths, AlwaysDisclosed: always, DisclosedAlong: along, Retained: retainedClaims(cq, paths)}
 }
 
 // registeredClaims are an SD-JWT VC's registered members: about the
@@ -102,89 +119,180 @@ var registeredClaims = map[string]bool{
 }
 
 // alwaysDisclosed is what presenting held for paths discloses beyond
-// paths themselves, for an SD-JWT VC: every claim the Verifier would
-// receive, from the Disclosures a presentation for paths sends resolved
-// against the payload, that no path covers. That's the claims the
-// issuer didn't make selectively disclosable, and the plaintext
-// members of a disclosed object a path selects within (RFC 9901 lets an
-// issuer mix the two: selecting address.street sends the address
-// Disclosure, and with it address.country).
-func alwaysDisclosed(held HeldCredential, paths []dcql.Path) []dcql.Path {
+// paths themselves, for an SD-JWT VC: every leaf of the credential that
+// the Disclosures a presentation for paths sends (as
+// sdjwtvc.SelectDisclosuresAt picks them, the same as Respond) reveal,
+// and that no path covers (dcql.Path.Covers). That's the claims the
+// issuer didn't make selectively disclosable, and what shares a
+// Disclosure with a path's claim (RFC 9901 lets an issuer mix the two):
+// the plaintext members of a disclosed object or array element
+// (selecting address.street sends the address Disclosure, and with it
+// address.country), and the other elements of an array disclosed as
+// one (selecting nationalities[0] sends them all). along is the part of
+// always a presentation selecting nothing wouldn't reveal. Leaves are
+// paths into the holder's credential: an index counts the elements it
+// has, as SelectDisclosuresAt's do.
+func alwaysDisclosed(held HeldCredential, paths []dcql.Path) (always, along []dcql.Path) {
 	if held.Format != sdjwtvc.CredentialFormat {
-		return nil
+		return nil, nil
 	}
 	pres, hashAlg, _, err := resolveHeldSDJWTVC(held.Credential)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	payload, err := rawSDJWTVCPayload(pres)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	selected, err := sdjwtvc.SelectDisclosuresAt(payload, hashAlg, pres.Disclosures, sdjwtvcDisclosurePaths(paths))
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	revealed, err := sdjwtvc.ResolveDisclosures(payload, hashAlg, selected)
+	byDigest, err := disclosuresByDigest(pres.Disclosures, hashAlg)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	var out []dcql.Path
-	for _, k := range slices.Sorted(maps.Keys(revealed)) {
-		if registeredClaims[k] {
+	sent := make(map[string]bool, len(selected))
+	for _, d := range selected {
+		digest, err := d.Digest(hashAlg)
+		if err != nil {
+			return nil, nil
+		}
+		sent[digest] = true
+	}
+	plaintext := revealedLeaves(payload, byDigest, nil)
+	for _, leaf := range revealedLeaves(payload, byDigest, sent) {
+		if slices.ContainsFunc(paths, func(p dcql.Path) bool { return p.Covers(leaf) }) {
 			continue
 		}
-		for _, leaf := range plaintextPaths(dcql.Path{dcql.PathKey(k)}, revealed[k]) {
-			if !coveredBy(leaf, paths) {
-				out = append(out, leaf)
+		always = append(always, leaf)
+		if !slices.ContainsFunc(plaintext, func(p dcql.Path) bool { return slices.Equal(p, leaf) }) {
+			along = append(along, leaf)
+		}
+	}
+	return always, along
+}
+
+// disclosuresByDigest indexes disclosures by their digest under alg.
+func disclosuresByDigest(disclosures []sdjwtvc.Disclosure, alg sdjwtvc.HashAlg) (map[string]sdjwtvc.Disclosure, error) {
+	out := make(map[string]sdjwtvc.Disclosure, len(disclosures))
+	for _, d := range disclosures {
+		digest, err := d.Digest(alg)
+		if err != nil {
+			return nil, err
+		}
+		out[digest] = d
+	}
+	return out, nil
+}
+
+// revealedLeaves are the leaves of payload, an Issuer JWT's raw payload,
+// that a presentation sending the Disclosures whose digests are in sent
+// reveals, its registered members aside, in member order.
+func revealedLeaves(payload map[string]any, byDigest map[string]sdjwtvc.Disclosure, sent map[string]bool) []dcql.Path {
+	var out []dcql.Path
+	for _, m := range revealedMembers(payload, byDigest, sent) {
+		if registeredClaims[m.name] {
+			continue
+		}
+		out = appendRevealedLeaves(out, dcql.Path{dcql.PathKey(m.name)}, m.value, byDigest, sent, 1)
+	}
+	return out
+}
+
+// revealedMember is one member of a raw SD-JWT object a presentation
+// reveals.
+type revealedMember struct {
+	name  string
+	value any
+}
+
+// revealedMembers are obj's members a presentation sending sent
+// reveals, by name: its plaintext ones, and those whose Disclosure is
+// sent. A digest the holder has no Disclosure for (a decoy) reveals
+// nothing.
+func revealedMembers(obj map[string]any, byDigest map[string]sdjwtvc.Disclosure, sent map[string]bool) []revealedMember {
+	var out []revealedMember
+	for k, v := range obj {
+		if k != "_sd" && k != "_sd_alg" {
+			out = append(out, revealedMember{k, v})
+		}
+	}
+	for _, digest := range sdDigests(obj) {
+		if d, ok := byDigest[digest]; ok && sent[digest] && !d.IsArrayElement() {
+			out = append(out, revealedMember{d.Name, d.Value})
+		}
+	}
+	slices.SortFunc(out, func(a, b revealedMember) int { return strings.Compare(a.name, b.name) })
+	return out
+}
+
+// appendRevealedLeaves appends to out the leaves of v, at path, a
+// presentation sending sent reveals: the members of an object and the
+// elements of an array it reveals, walked down to their values. An
+// element's index counts the elements the holder's credential has (a
+// decoy isn't one), revealed or not. An empty object or array is a leaf
+// itself.
+func appendRevealedLeaves(out []dcql.Path, path dcql.Path, v any, byDigest map[string]sdjwtvc.Disclosure, sent map[string]bool, depth int) []dcql.Path {
+	if depth > sdjwtvc.MaxResolveDepth {
+		return append(out, path)
+	}
+	child := func(elem dcql.PathElement) dcql.Path { return append(slices.Clone(path), elem) }
+	switch t := v.(type) {
+	case map[string]any:
+		if len(t) == 0 {
+			return append(out, path)
+		}
+		for _, m := range revealedMembers(t, byDigest, sent) {
+			out = appendRevealedLeaves(out, child(dcql.PathKey(m.name)), m.value, byDigest, sent, depth+1)
+		}
+	case []any:
+		if len(t) == 0 {
+			return append(out, path)
+		}
+		i := 0
+		for _, el := range t {
+			value := el
+			if digest, isRef := arrayElementDigest(el); isRef {
+				d, held := byDigest[digest]
+				if !held {
+					continue
+				}
+				if !sent[digest] {
+					i++
+					continue
+				}
+				value = d.Value
 			}
+			out = appendRevealedLeaves(out, child(dcql.PathIndex(i)), value, byDigest, sent, depth+1)
+			i++
+		}
+	default:
+		out = append(out, path)
+	}
+	return out
+}
+
+// sdDigests are obj's "_sd" digests that are strings (RFC 9901 §4.1.1).
+func sdDigests(obj map[string]any) []string {
+	raw, _ := obj["_sd"].([]any)
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if digest, ok := item.(string); ok {
+			out = append(out, digest)
 		}
 	}
 	return out
 }
 
-// coveredBy reports whether one of paths selects leaf, or something
-// within it: one is a prefix of the other, a wildcard matching any
-// element.
-func coveredBy(leaf dcql.Path, paths []dcql.Path) bool {
-	for _, p := range paths {
-		n := min(len(p), len(leaf))
-		match := true
-		for i := range n {
-			a, b := p[i], leaf[i]
-			switch {
-			case a.IsWildcard() || b.IsWildcard():
-			case a.IsKey() && b.IsKey() && a.Key() == b.Key():
-			case a.IsIndex() && b.IsIndex() && a.Index() == b.Index():
-			default:
-				match = false
-			}
-			if !match {
-				break
-			}
-		}
-		if match {
-			return true
-		}
+// arrayElementDigest reports whether el is a selectively disclosable
+// array element's placeholder, {"...": digest} (RFC 9901 §4.2.4.2), and
+// its digest.
+func arrayElementDigest(el any) (string, bool) {
+	obj, ok := el.(map[string]any)
+	if !ok || len(obj) != 1 {
+		return "", false
 	}
-	return false
-}
-
-// plaintextPaths are the plaintext leaves of v, at path: a nested object
-// contributes its own plaintext members (its _sd digests are disclosed
-// only when selected), anything else is disclosed whole.
-func plaintextPaths(path dcql.Path, v any) []dcql.Path {
-	obj, ok := v.(map[string]any)
-	if !ok {
-		return []dcql.Path{path}
-	}
-	var out []dcql.Path
-	for _, k := range slices.Sorted(maps.Keys(obj)) {
-		if k == "_sd" {
-			continue
-		}
-		child := append(slices.Clone(path), dcql.PathKey(k))
-		out = append(out, plaintextPaths(child, obj[k])...)
-	}
-	return out
+	digest, ok := obj["..."].(string)
+	return digest, ok
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // maxCredentialResponseBytes bounds how much of a Credential/Deferred
@@ -80,7 +80,7 @@ func parseCredentialResult(statusCode int, header http.Header, body []byte) (Cre
 	switch statusCode {
 	case http.StatusOK, http.StatusAccepted:
 		var wire credentialResponseBody
-		if err := json.Unmarshal(body, &wire); err != nil {
+		if err := strictjson.Unmarshal(body, &wire); err != nil {
 			return CredentialResult{}, fmt.Errorf("decode response: %w", err)
 		}
 		// §8.3: credentials "MUST NOT be used if the transaction_id

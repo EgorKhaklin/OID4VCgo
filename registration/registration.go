@@ -315,6 +315,31 @@ func (r Registration) PermitsFor(cq dcql.CredentialQuery, path dcql.Path) bool {
 	})
 }
 
+// UnregisteredRevealed is what answering cq with a credential would
+// reveal beyond r, of revealed — the claims a presentation for cq sends
+// along with those it asks for, such as the plaintext members of a
+// disclosed object or array element, or the other elements of an array
+// disclosed as one (wallet.PreviewedCredential.DisclosedAlong): each
+// that no path r registers for cq's type of credential covers
+// (dcql.Path.Covers: the claim itself, or one it sits within), in
+// revealed's order. Unregistered judges the request; this, what a
+// presentation of a given credential actually discloses for it.
+func (r Registration) UnregisteredRevealed(cq dcql.CredentialQuery, revealed []dcql.Path) []dcql.Path {
+	registered := slices.Clone(r.Claims)
+	for _, rc := range r.Credentials {
+		if rc.covers(cq) {
+			registered = append(registered, rc.Claims...)
+		}
+	}
+	var out []dcql.Path
+	for _, leaf := range revealed {
+		if !slices.ContainsFunc(registered, func(p dcql.Path) bool { return p.Covers(leaf) }) {
+			out = append(out, leaf)
+		}
+	}
+	return out
+}
+
 // Unregistered is what q requests beyond r, by credential query ID: each
 // claims path r doesn't register for that query's type of credential
 // (PermitsFor), in query order. A credential query

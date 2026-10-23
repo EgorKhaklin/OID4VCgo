@@ -171,3 +171,27 @@ func TestPathMdocNamespaceAndElement(t *testing.T) {
 		}
 	}
 }
+
+// A path covers what it selects and everything within it: never a
+// shorter path, another member or another index.
+func TestPathCovers(t *testing.T) {
+	k, i, w := dcql.PathKey, dcql.PathIndex, dcql.Wildcard
+	for _, tc := range []struct {
+		p, q dcql.Path
+		want bool
+	}{
+		{dcql.Path{k("address")}, dcql.Path{k("address"), k("street_address")}, true},
+		{dcql.Path{k("address"), k("street_address")}, dcql.Path{k("address")}, false},
+		{dcql.Path{k("degrees"), w}, dcql.Path{k("degrees"), i(1), k("type")}, true},
+		{dcql.Path{k("degrees"), w, k("type")}, dcql.Path{k("degrees"), i(0), k("university")}, false},
+		{dcql.Path{k("nationalities"), i(0)}, dcql.Path{k("nationalities"), i(1)}, false},
+		{dcql.Path{k("nationalities"), i(0)}, dcql.Path{k("nationalities"), w}, false},
+		{dcql.Path{k("nationalities"), w}, dcql.Path{k("nationalities"), w}, true},
+		{dcql.Path{k("name")}, dcql.Path{k("family_name")}, false},
+		{nil, dcql.Path{k("name")}, false},
+	} {
+		if got := tc.p.Covers(tc.q); got != tc.want {
+			t.Errorf("%v.Covers(%v) = %v, want %v", tc.p, tc.q, got, tc.want)
+		}
+	}
+}

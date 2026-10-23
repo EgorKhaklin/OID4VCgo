@@ -136,6 +136,25 @@ func TestResolveCredentialOffer_RejectsInvalidJSON(t *testing.T) {
 	}
 }
 
+// An offer parsers would read differently is refused: a member given
+// twice (encoding/json keeps the last, other parsers the first), or
+// named in another case than the specification's.
+func TestResolveCredentialOffer_RejectsAmbiguousJSON(t *testing.T) {
+	w := newTestWallet(t, func(*http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected HTTP call")
+		return nil, nil
+	})
+	for name, offer := range map[string]string{
+		"duplicate member": `{"credential_issuer":"https://issuer.example.com","credential_issuer":"https://other.example.com","credential_configuration_ids":["IdentityCredential"]}`,
+		"case variant":     `{"credential_issuer":"https://issuer.example.com","Credential_Issuer":"https://other.example.com","credential_configuration_ids":["IdentityCredential"]}`,
+	} {
+		uri := "openid-credential-offer://?credential_offer=" + url.QueryEscape(offer)
+		if _, err := w.ResolveCredentialOffer(context.Background(), uri); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
 func TestResolveCredentialOffer_RejectsStructurallyInvalidOffer(t *testing.T) {
 	w := newTestWallet(t, func(*http.Request) (*http.Response, error) {
 		t.Fatalf("unexpected HTTP call")

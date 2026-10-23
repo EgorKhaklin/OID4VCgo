@@ -61,7 +61,7 @@ func TestDCAPIPresentation(t *testing.T) {
 			}
 		})
 	}
-	// The origin has now been shown the SD-JWT VC.
+	// The Verifier at the origin has now been shown the SD-JWT VC.
 	r := decode[dcapiRequest](t, mustText(t)(h.env.DCAPIRequest("dc+sd-jwt", dcapiOrigin, true)))
 	p, err := h.w.StartDCAPIPresentation(NewOperation(0), r.Protocol, []byte(r.Data), r.Origin)
 	if err != nil {
@@ -75,7 +75,7 @@ func TestDCAPIPresentation(t *testing.T) {
 		}
 	}](t, p.Queries())
 	if len(q.Queries) != 1 || len(q.Queries[0].Credentials) != 1 || !q.Queries[0].Credentials[0].ShownToVerifier {
-		t.Errorf("Queries = %s, want the credential shown to the origin before", p.Queries())
+		t.Errorf("Queries = %s, want the credential shown to the Verifier before", p.Queries())
 	}
 	declined := decode[struct {
 		DCAPIResponse string `json:"dcapi_response"`
