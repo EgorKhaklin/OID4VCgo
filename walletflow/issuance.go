@@ -286,6 +286,9 @@ func (s *Issuance) planGrant(ctx context.Context, grant Grant) error {
 // holder authenticates or enters a code, not once the credential is
 // issued.
 func (w *Wallet) checkOffered(metadata oid4vci.Metadata, ids []string) error {
+	if n := len(distinct(ids)); n > MaxCredentialRequests {
+		return fmt.Errorf("walletflow: the offer names %d credentials, more than the %d one issuance requests", n, MaxCredentialRequests)
+	}
 	for _, id := range ids {
 		conf, ok := metadata.CredentialConfigurationsSupported[id]
 		if !ok {
@@ -779,6 +782,14 @@ const (
 	maxIdentifiers                 = 32
 )
 
+// MaxCredentialRequests is the most Credential Requests one issuance
+// makes, each with its own nonce, holder keys and key attestation: an
+// offer, which anyone can make, mustn't make the wallet generate keys
+// without bound. An offer naming more credentials is refused, and so
+// is an issuance whose token grants more credential_identifiers than
+// fit, before requesting any.
+const MaxCredentialRequests = 32
+
 // maxConsecutiveRefusals is how many Credential Requests in a row an
 // issuer may refuse for good before RequestCredentials stops asking:
 // each costs holder keys and a key attestation.
@@ -811,8 +822,12 @@ func (s *Issuance) RequestCredentials(ctx context.Context) (IssuanceResult, erro
 	if s.handled == nil {
 		s.handled = map[string]bool{}
 	}
+	units := s.requestUnits()
+	if len(units) > MaxCredentialRequests {
+		return s.obtained, fmt.Errorf("walletflow: the issuance would make %d Credential Requests, more than %d", len(units), MaxCredentialRequests)
+	}
 	refusals := 0
-	for _, u := range s.requestUnits() {
+	for _, u := range units {
 		if s.handled[u.key()] {
 			continue
 		}
@@ -862,7 +877,7 @@ func (u requestUnit) key() string { return u.configID + "\x00" + u.identifier }
 // Credential Dataset (OpenID4VCI 1.0 §3.3, §6.2), else one by its ID.
 func (s *Issuance) requestUnits() []requestUnit {
 	var out []requestUnit
-	for _, id := range s.offer.CredentialConfigurationIDs {
+	for _, id := range distinct(s.offer.CredentialConfigurationIDs) {
 		ids := s.identifiers[id]
 		if len(ids) == 0 {
 			out = append(out, requestUnit{configID: id})
@@ -870,6 +885,19 @@ func (s *Issuance) requestUnits() []requestUnit {
 		}
 		for _, identifier := range ids {
 			out = append(out, requestUnit{configID: id, identifier: identifier})
+		}
+	}
+	return out
+}
+
+// distinct is ids without repeats, in order.
+func distinct(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
 		}
 	}
 	return out
