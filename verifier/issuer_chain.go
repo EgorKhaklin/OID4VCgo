@@ -29,6 +29,10 @@ type MdocIssuerChainResolver interface {
 // IssuerAuthorized (VerifiedCredential.IssuerChain) the verified path,
 // without its trust anchor, rather than the x5c header, which can carry
 // certificates that aren't on it. X5CIssuerKeyResolver is one.
+//
+// For both, the paths are the ones the resolver's own role policy
+// approves each on its own, not every path the chain verifies on: the
+// first is the issuer chain the rest of the verification decides on.
 type SDJWTVCIssuerChainResolver interface {
 	SDJWTVCIssuerKeyResolver
 	ResolveIssuerChains(ctx context.Context, header map[string]any) ([][]*x509.Certificate, error)

@@ -259,6 +259,12 @@ func TestVerifyRejects(t *testing.T) {
 			r.Method = "GET"
 			return r
 		},
+		// HTTP methods are case-sensitive.
+		"method differing in case": func() dpop.VerifyRequest {
+			r := base()
+			r.Method = "post"
+			return r
+		},
 		"url mismatch": func() dpop.VerifyRequest {
 			r := base()
 			r.URL = "https://issuer.example.com/other"

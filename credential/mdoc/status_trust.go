@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
@@ -23,14 +24,18 @@ type StatusSignerTrust struct {
 	Roots *x509.CertPool
 
 	// LeafPolicy, when it doesn't, requires the list's verified path to
-	// end at the CA that signed the document signer's path, for a
-	// statuslist.VerifyOptions.LeafPolicy.
+	// pass through the CA that signed the document signer — the CA
+	// itself, not just the anchor above it, which other CAs share — for
+	// a statuslist.VerifyOptions.LeafPolicy.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 }
 
 // StatusTrust is StatusSignerTrust for ref, the MSO's status list
 // reference, and documentSignerPath, the document signer's verified
-// certificate path, leaf first, with or without its trust anchor.
+// certificate path, leaf first, with or without its trust anchor. The
+// CA that signed the document signer is the path's second certificate
+// (matched as the same certificate, or the same subject and key), or,
+// for a path of the document signer alone, the anchor that signed it.
 func StatusTrust(ref *StatusListRef, documentSignerPath []*x509.Certificate) (StatusSignerTrust, error) {
 	if ref != nil && len(ref.Certificate) > 0 {
 		cert, err := x509.ParseCertificate(ref.Certificate)
@@ -41,20 +46,33 @@ func StatusTrust(ref *StatusListRef, documentSignerPath []*x509.Certificate) (St
 		roots.AddCert(cert)
 		return StatusSignerTrust{Roots: roots}, nil
 	}
-	if len(documentSignerPath) == 0 || documentSignerPath[len(documentSignerPath)-1] == nil {
+	if len(documentSignerPath) == 0 || documentSignerPath[0] == nil {
 		return StatusSignerTrust{}, errors.New("mdoc: no document signer path to bind the status list's signer to")
 	}
-	top := documentSignerPath[len(documentSignerPath)-1]
+	ds := documentSignerPath[0]
+	// The CA that signed the document signer, not the path's top: with
+	// the anchor left off, the top is an intermediate, and any path to
+	// the anchor above it — a sibling intermediate's, another issuer's —
+	// would be accepted.
+	signedDS := func(cert *x509.Certificate) bool { return ds.CheckSignatureFrom(cert) == nil }
+	if len(documentSignerPath) > 1 {
+		issuer := documentSignerPath[1]
+		if issuer == nil || !signedDS(issuer) {
+			return StatusSignerTrust{}, errors.New("mdoc: the document signer path's second certificate didn't sign the document signer")
+		}
+		// The same certificate, or the same CA certified again (a
+		// cross-certificate or a renewal under the same key).
+		signedDS = func(cert *x509.Certificate) bool {
+			return bytes.Equal(cert.Raw, issuer.Raw) ||
+				bytes.Equal(cert.RawSubject, issuer.RawSubject) && bytes.Equal(cert.RawSubjectPublicKeyInfo, issuer.RawSubjectPublicKeyInfo)
+		}
+	}
 	return StatusSignerTrust{LeafPolicy: func(_ *x509.Certificate, chains [][]*x509.Certificate) error {
 		for _, chain := range chains {
-			if len(chain) == 0 {
-				continue
-			}
-			root := chain[len(chain)-1]
-			// The path's anchor is the CA that signed the document signer's
-			// path, or is that path's own top certificate when it carries
-			// its anchor.
-			if bytes.Equal(root.Raw, top.Raw) || top.CheckSignatureFrom(root) == nil {
+			// The list's signer is the CA that signed the document signer,
+			// or under it: the path to the anchor passes through it. With
+			// the document signer alone, that CA is the anchor.
+			if slices.ContainsFunc(chain, signedDS) {
 				return nil
 			}
 		}

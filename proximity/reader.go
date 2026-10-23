@@ -6,7 +6,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"encoding/asn1"
 	"fmt"
 	"maps"
 	"slices"
@@ -78,9 +77,10 @@ func WithMaxClockSkew(d time.Duration) ReaderOption {
 // DefaultDocumentSignerPolicy, and Verify refuses the document when it
 // fails. Chain validation accepts a leaf with any key usage; the
 // default refuses only certificates an IACA issues for other jobs.
-// RequireMDLDocumentSignerEKU requires what ISO/IEC 18013-5 Annex B
-// profiles an mDL document signer with, and AnyDocumentSigner checks
-// nothing.
+// The default accepts a certificate with no extended key usage
+// extension; RequireMDLDocumentSignerEKU requires the one ISO/IEC
+// 18013-5 Annex B profiles an mDL document signer with, through every
+// intermediate, and AnyDocumentSigner checks nothing.
 func WithDocumentSignerPolicy(policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) ReaderOption {
 	return func(c *readerConfig) { c.signerPolicy = policy }
 }
@@ -109,8 +109,8 @@ func AnyDocumentSigner(*x509.Certificate, [][]*x509.Certificate) error { return 
 
 // MDLDocumentSignerEKU is the extended key usage of an mDL document
 // signer certificate (ISO/IEC 18013-5 Annex B: id-mdl-kp-mdlDS,
-// 1.0.18013.5.1.2).
-var MDLDocumentSignerEKU = asn1.ObjectIdentifier{1, 0, 18013, 5, 1, 2}
+// 1.0.18013.5.1.2): mdoc.MDLDocumentSignerEKU.
+var MDLDocumentSignerEKU = mdoc.MDLDocumentSignerEKU
 
 // RequireMDLDocumentSignerEKU is a WithDocumentSignerPolicy policy
 // refusing a document signer certificate without MDLDocumentSignerEKU,
@@ -380,10 +380,10 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: issuer certificate: %w", err)
 	}
-	if r.signerPolicy != nil {
-		if err := r.signerPolicy(leaf, chains); err != nil {
-			return Verified{}, fmt.Errorf("proximity: document signer certificate: %w", err)
-		}
+	// Only the paths the policy approves on their own: the issuer chain
+	// reported, and the status list's signer bound to, is one of them.
+	if chains, err = certchain.ApprovedChains(leaf, chains, r.signerPolicy); err != nil {
+		return Verified{}, fmt.Errorf("proximity: document signer certificate: %w", err)
 	}
 	// The algorithm is the verified certificate's key's (ISO/IEC
 	// 18013-5 §9.3.1: its working public key algorithm), never the

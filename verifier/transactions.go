@@ -72,6 +72,12 @@ type Transaction struct {
 	SameDevice         bool
 	ExpiresAt          time.Time
 
+	// RetainUntil is the earliest a store may delete the transaction:
+	// ExpiresAt plus TransactionsConfig.Lifetime, how long
+	// Transactions.Lookup still reports a completed one's result. Zero
+	// for one saved before it was set.
+	RetainUntil time.Time
+
 	Status TransactionStatus
 
 	// ResponseCodeHash is SHA-256 (base64url) of the response_code a
@@ -113,8 +119,8 @@ type Transaction struct {
 // TransactionsConfig.Lifetime (see Transactions.Lookup), and
 // Transactions.Forget drops it on demand, but nothing here deletes a
 // transaction: a store should delete each one some time after its
-// ExpiresAt — no sooner than that retention, which an answer's
-// browser may still need — rather than keep holders' claims
+// ExpiresAt — no sooner than that retention, its RetainUntil, which an
+// answer's browser may still need — rather than keep holders' claims
 // indefinitely.
 type TransactionStore interface {
 	// Create saves a new transaction; its ID must be unused.
@@ -397,8 +403,9 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 	tx := Transaction{
 		ID: id, KeyID: built.ResponseEncryptionKeyID, State: state, Nonce: built.Nonce, Query: query,
 		ResponseDecryptionKey: built.ResponseDecryptionKey, RequestObject: built.RequestObject,
-		SameDevice: sameDevice, ExpiresAt: t.now().Add(t.cfg.Lifetime), Status: TransactionPending,
+		SameDevice: sameDevice, Status: TransactionPending,
 	}
+	tx.ExpiresAt, tx.RetainUntil = t.expiry()
 	sum := sha256.Sum256([]byte(browserBinding))
 	tx.BrowserBindingHash = sum[:]
 	if err := t.store.Create(ctx, tx); err != nil {
@@ -770,6 +777,14 @@ type TransactionView struct {
 	// from anyone who has the request, not necessarily the holder (see
 	// Transaction.LastError).
 	LastError string
+}
+
+// expiry is a new transaction's ExpiresAt and RetainUntil: it stays
+// answerable for Lifetime, and a result it completes with is reported
+// for one more (Lookup).
+func (t *Transactions) expiry() (expiresAt, retainUntil time.Time) {
+	expiresAt = t.now().Add(t.cfg.Lifetime)
+	return expiresAt, expiresAt.Add(t.cfg.Lifetime)
 }
 
 // Lookup reports the request id's progress to whoever asked:

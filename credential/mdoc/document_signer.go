@@ -2,6 +2,7 @@ package mdoc
 
 import (
 	"crypto/x509"
+	"encoding/asn1"
 	"errors"
 	"fmt"
 	"slices"
@@ -25,21 +26,32 @@ const (
 // checks issuing_country and issuing_jurisdiction in.
 var issuingAuthorityNameSpaces = []string{MDLNameSpace, ISO23220NameSpace, EUDIPIDNameSpace}
 
+// MDLDocumentSignerEKU is the extended key usage of an mDL document
+// signer certificate (ISO/IEC 18013-5 Annex B: id-mdl-kp-mdlDS,
+// 1.0.18013.5.1.2).
+var MDLDocumentSignerEKU = asn1.ObjectIdentifier{1, 0, 18013, 5, 1, 2}
+
 // DefaultDocumentSignerPolicy is the document signer check made where
 // no other is configured — verifier.X5ChainIssuerKeyResolver with no
 // LeafPolicy, a wallet receiving an mdoc with no IssuerLeafPolicy,
 // proximity's reader without WithDocumentSignerPolicy: a certificate
-// whose key usage extension doesn't allow digital signatures, or that
-// is an OCSP signer — the other end-entity certificates an IACA issues
-// (ISO/IEC 18013-5 Annex B) — doesn't sign mdocs. Chain validation
-// alone would accept them. It accepts a certificate without those
-// extensions.
+// whose key usage extension doesn't allow digital signatures, that is
+// an OCSP signer, or whose extended key usage extension doesn't list
+// MDLDocumentSignerEKU — the other end-entity certificates an IACA
+// issues (ISO/IEC 18013-5 Annex B), a reader authentication
+// certificate among them — doesn't sign mdocs. Chain validation alone
+// would accept them. It accepts a certificate without those
+// extensions. A deployment whose document signers carry another
+// extended key usage sets its own policy.
 func DefaultDocumentSignerPolicy(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
 	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
 		return errors.New("mdoc: the document signer certificate's key usage doesn't allow digital signatures")
 	}
 	if slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageOCSPSigning) {
 		return errors.New("mdoc: the document signer certificate is an OCSP signer's")
+	}
+	if (len(leaf.ExtKeyUsage) > 0 || len(leaf.UnknownExtKeyUsage) > 0) && !slices.ContainsFunc(leaf.UnknownExtKeyUsage, MDLDocumentSignerEKU.Equal) {
+		return fmt.Errorf("mdoc: the document signer certificate's extended key usage doesn't include %s (ISO/IEC 18013-5 Annex B)", MDLDocumentSignerEKU)
 	}
 	return nil
 }

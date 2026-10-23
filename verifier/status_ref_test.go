@@ -110,3 +110,46 @@ func TestRequireValidStatus(t *testing.T) {
 		t.Errorf("revoked: %v, want a NotValidError", err)
 	}
 }
+
+// RequireStatusReference refuses an answer with a credential that has
+// no status reference, which RequireValidStatus would let through, and
+// otherwise leaves the answer to the Accept it wraps.
+func TestRequireStatusReference(t *testing.T) {
+	sdjwt := verifier.VerifiedCredential{CredentialQueryID: "pid", Claims: map[string]any{"status": map[string]any{"status_list": map[string]any{"idx": 0, "uri": "https://status.example/1"}}}}
+	mdl := verifier.VerifiedCredential{CredentialQueryID: "mdl", MdocStatus: &mdoc.Status{StatusList: &mdoc.StatusListRef{URI: "https://status.example/2"}}}
+	identifierList := verifier.VerifiedCredential{CredentialQueryID: "mdl", MdocStatus: &mdoc.Status{IdentifierList: &mdoc.IdentifierListRef{URI: "https://status.example/3"}}}
+	noStatus := verifier.VerifiedCredential{CredentialQueryID: "unrevocable", Claims: map[string]any{"vct": "x"}}
+	noMdocStatus := verifier.VerifiedCredential{CredentialQueryID: "unrevocable", MdocStatus: &mdoc.Status{}}
+	ctx := context.Background()
+
+	wrapped := 0
+	accept := verifier.RequireStatusReference(func(context.Context, string, verifier.VerifyResponseResult) error {
+		wrapped++
+		return nil
+	})
+	for name, tc := range map[string]struct {
+		creds   []verifier.VerifiedCredential
+		refused bool
+	}{
+		"SD-JWT VC and mdoc with references": {creds: []verifier.VerifiedCredential{sdjwt, mdl}},
+		"an identifier list":                 {creds: []verifier.VerifiedCredential{identifierList}},
+		"an SD-JWT VC without one":           {creds: []verifier.VerifiedCredential{sdjwt, noStatus}, refused: true},
+		"an mdoc without one":                {creds: []verifier.VerifiedCredential{noMdocStatus}, refused: true},
+	} {
+		wrapped = 0
+		err := accept(ctx, "id", verifier.VerifyResponseResult{Credentials: tc.creds})
+		if (err != nil) != tc.refused {
+			t.Errorf("%s: %v, want refused=%v", name, err, tc.refused)
+		}
+		if want := map[bool]int{false: 1, true: 0}[tc.refused]; wrapped != want {
+			t.Errorf("%s: the wrapped Accept ran %d times, want %d", name, wrapped, want)
+		}
+	}
+	if err := verifier.RequireStatusReference(nil)(ctx, "id", verifier.VerifyResponseResult{Credentials: []verifier.VerifiedCredential{sdjwt}}); err != nil {
+		t.Errorf("no wrapped Accept: %v", err)
+	}
+	refusal := errors.New("refused")
+	if err := verifier.RequireStatusReference(func(context.Context, string, verifier.VerifyResponseResult) error { return refusal })(ctx, "id", verifier.VerifyResponseResult{Credentials: []verifier.VerifiedCredential{sdjwt}}); !errors.Is(err, refusal) {
+		t.Errorf("the wrapped Accept's refusal: %v", err)
+	}
+}

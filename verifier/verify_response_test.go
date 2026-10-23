@@ -677,10 +677,17 @@ func TestVerifyResponse_OriginMustBeExpected(t *testing.T) {
 
 // A DC API request's expected_origins, and the origin a response is
 // verified for, must be serialized origins: one with a path, a trailing
-// slash or a query would never match what the browser gives.
+// slash or a query would never match what the browser gives, and nor
+// would one spelled otherwise than the browser serializes it: an
+// uppercase scheme or host, a non-ASCII host, the scheme's default port,
+// an empty or zero-padded one.
 func TestDCAPI_OriginsMustBeSerializedOrigins(t *testing.T) {
 	v := newTestVerifier(t)
-	for _, origin := range []string{"https://verifier.example.com/", "https://verifier.example.com/path", "verifier.example.com", "https://verifier.example.com?x=1", ""} {
+	for _, origin := range []string{
+		"https://verifier.example.com/", "https://verifier.example.com/path", "verifier.example.com", "https://verifier.example.com?x=1", "",
+		"HTTPS://verifier.example.com", "https://Verifier.Example.com", "https://vérifier.example.com",
+		"https://verifier.example.com:443", "http://localhost:80", "https://verifier.example.com:", "http://localhost:08080",
+	} {
 		if _, err := v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
 			Query: testQuery(t), ExpectedOrigins: []string{origin},
 		}); err == nil {
@@ -688,7 +695,7 @@ func TestDCAPI_OriginsMustBeSerializedOrigins(t *testing.T) {
 		}
 	}
 	if _, err := v.BuildDCAPIAuthorizationRequest(verifier.BuildDCAPIAuthorizationRequestRequest{
-		Query: testQuery(t), ExpectedOrigins: []string{"https://verifier.example.com", "http://localhost:8080"},
+		Query: testQuery(t), ExpectedOrigins: []string{"https://verifier.example.com", "http://localhost:8080", "https://verifier.example.com:8443", "https://[::1]:8443", "https://xn--vrifier-bya.example.com"},
 	}); err != nil {
 		t.Errorf("serialized origins: %v", err)
 	}

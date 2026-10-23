@@ -90,6 +90,34 @@ func VerifyLeafWithPolicyAt(ders [][]byte, roots *x509.CertPool, policy func(lea
 	return leaf, nil
 }
 
+// ApprovedChains is chains, leaf's verified paths, narrowed to those
+// policy approves on its own, after policy has approved them together.
+// A policy over every path passes when one of them does (EKUInPath
+// does), so the paths a caller goes on to rely on — the issuer chain it
+// reports, authorizes and binds status to — would otherwise include
+// ones the policy refused: through a CA certified twice, a path to an
+// anchor that restricts it beside one to an anchor that doesn't. A nil
+// policy approves every path.
+func ApprovedChains(leaf *x509.Certificate, chains [][]*x509.Certificate, policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) ([][]*x509.Certificate, error) {
+	if policy == nil {
+		return chains, nil
+	}
+	if err := policy(leaf, chains); err != nil {
+		return nil, fmt.Errorf("certchain: leaf certificate policy: %w", err)
+	}
+	approved := make([][]*x509.Certificate, 0, len(chains))
+	lastErr := errors.New("no verified path")
+	for _, chain := range chains {
+		if lastErr = policy(leaf, [][]*x509.Certificate{chain}); lastErr == nil {
+			approved = append(approved, chain)
+		}
+	}
+	if len(approved) == 0 {
+		return nil, fmt.Errorf("certchain: leaf certificate policy: no verified path passes it on its own: %w", lastErr)
+	}
+	return approved, nil
+}
+
 // VerifyChains is VerifyLeaf, also returning every verified path from
 // the leaf to a certificate in roots (leaf first, root last), as
 // crypto/x509's own Verify builds them. What a verified path says

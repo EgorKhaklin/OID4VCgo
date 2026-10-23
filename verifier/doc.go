@@ -58,6 +58,18 @@
 // decrypting it. VerifyResponse doesn't check revocation: each
 // VerifiedCredential carries its status reference (Claims["status"], or
 // MdocStatus) for the caller to resolve with package statuslist.
+// RequireValidStatus does, as an Accept; it passes a credential with no
+// status reference, which RequireStatusReference refuses.
+//
+// Certificate revocation isn't checked, for any certificate role: no
+// CRL or OCSP responder is consulted for an issuer's or document
+// signer's certificate, a status list signer's, a Wallet or Key
+// Attestation signer's, or a CA's on any of their paths. A certificate
+// is trusted from its chain to the configured roots and its validity
+// period alone, so a compromised key is refused only once its
+// certificate expires, or its CA is removed from the roots; a
+// credential's own revocation is its status list's.
+//
 // The issuer key resolvers establish who a credential's issuer is, not
 // which types it may issue: where trusted issuers aren't all authorized
 // for every requested type, VerifyResponseRequest.IssuerAuthorized

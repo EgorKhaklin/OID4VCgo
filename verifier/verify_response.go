@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
@@ -154,6 +156,19 @@ type VerifyResponseRequest struct {
 	// say) would be accepted for a PID by mistake.
 	AnyIssuerForAnyType bool
 
+	// DistinctCredentials refuses a response that presents one
+	// credential for more than one credential query (the same
+	// Issuer-signed JWT, or mdoc Mobile Security Object, whatever the
+	// holder varied around it). Set it where each query is meant to be
+	// answered by a credential of its own — two adults, two documents —
+	// so one isn't counted as both. Without it, OpenID4VP 1.0 §6.1
+	// applies: "Multiple Credential Queries in a request MAY request a
+	// presentation of the same Credential", and a Wallet may answer
+	// queries for different claims of one credential with it (walletflow
+	// does). Under one query's multiple, a credential presented twice is
+	// refused either way.
+	DistinctCredentials bool
+
 	// Accept, if set, runs on a response that verified, before
 	// VerifyResponse returns it, and its error is VerifyResponse's:
 	// RequireValidStatus (or RequireValidStatusFrom) checks revocation.
@@ -245,7 +260,9 @@ type VerifyResponseResult struct {
 	// Query's multiple, each is a different issued credential:
 	// VerifyResponse refuses a response that presents one twice (the
 	// same Issuer-signed JWT, or mdoc Mobile Security Object, whatever
-	// the holder varied around it). Different credentials can still be
+	// the holder varied around it). Across Credential Queries the same
+	// credential may answer more than one unless
+	// VerifyResponseRequest.DistinctCredentials is set. Different credentials can still be
 	// the same holder's — batch-issued copies of one credential each
 	// have their own key — so a Verifier counting people decides from
 	// their claims who is who.
@@ -388,12 +405,15 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	}
 	result := VerifyResponseResult{}
 	verifiedIDs := make(map[string]bool, len(answered))
+	// The credentials verified so far, across every credential query
+	// under DistinctCredentials: see verifyCredentialQuery.
+	seen := make(map[[sha256.Size]byte]string)
 	var firstFailure error
 	for _, cq := range req.Query.Credentials {
 		if !answered[cq.ID] {
 			continue
 		}
-		vcs, discarded, err := v.verifyCredentialQuery(ctx, cq, req)
+		vcs, discarded, err := v.verifyCredentialQuery(ctx, cq, req, seen)
 		var allFailed *discardedError
 		switch {
 		case errors.As(err, &allFailed):
@@ -512,8 +532,11 @@ func isUnverifiedAKIChecker(checker dcql.TrustedAuthoritiesChecker) bool {
 // and §8.1's own "when multiple is omitted, or set to false, the
 // array MUST contain only one Presentation"), and verifies every one
 // of them, dispatching to the format-specific verification
-// VerifyResponse's own doc comment describes.
-func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, req VerifyResponseRequest) ([]VerifiedCredential, []DiscardedPresentation, error) {
+// VerifyResponse's own doc comment describes. seen maps each credential
+// already verified in this response, by the hash of its signed part, to
+// the credential query it answered; verifyCredentialQuery adds cq's, and
+// consults another query's only under req.DistinctCredentials.
+func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, req VerifyResponseRequest, seen map[[sha256.Size]byte]string) ([]VerifiedCredential, []DiscardedPresentation, error) {
 	presentations := req.Response.VPToken[cq.ID]
 	if len(presentations) == 0 {
 		return nil, nil, newError(ReasonMalformed, "no presentation returned", nil)
@@ -531,7 +554,6 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 	var firstErr error
 
 	vcs := make([]VerifiedCredential, 0, len(presentations))
-	seen := make(map[[sha256.Size]byte]bool, len(presentations))
 	for _, presented := range presentations {
 		var claims map[string]any
 		var status *mdoc.Status
@@ -573,11 +595,18 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 		// One credential presented twice isn't two credentials: under
 		// multiple, a Verifier counting them (one per person, say) would
 		// be misled. A Wallet never does it, so the response is refused.
+		// So is one credential answering two queries, where the Verifier
+		// asked for a credential of its own for each.
 		identity := sha256.Sum256(signed)
-		if seen[identity] {
-			return nil, nil, newError(ReasonMalformed, "the same credential was presented more than once", nil)
+		if other, ok := seen[identity]; ok {
+			if other == cq.ID {
+				return nil, nil, newError(ReasonMalformed, "the same credential was presented more than once", nil)
+			}
+			if req.DistinctCredentials {
+				return nil, nil, newError(ReasonMalformed, fmt.Sprintf("the same credential was presented for credential queries %q and %q", other, cq.ID), nil)
+			}
 		}
-		seen[identity] = true
+		seen[identity] = cq.ID
 		vcs = append(vcs, VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain})
 	}
 	if len(vcs) == 0 && firstErr != nil {
@@ -916,6 +945,38 @@ func checkSerializedOrigin(origin string) error {
 		return fmt.Errorf("origin %q needs a scheme and a host", origin)
 	case u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || u.Opaque != "" || u.ForceQuery:
 		return fmt.Errorf("origin %q must be a scheme, host and optional port only (no trailing slash)", origin)
+	case !isCanonicalOrigin(origin, u):
+		return fmt.Errorf("origin %q isn't serialized as a browser gives it: a lowercase scheme and ASCII host, and a port only when it isn't the scheme's default", origin)
 	}
 	return nil
+}
+
+// isCanonicalOrigin reports whether origin, parsed as u, is spelled as
+// the browser serializes an origin: url.Parse accepts an uppercase
+// scheme or host, an empty or zero-padded port, or the scheme's default
+// one, none of which the browser ever gives, so such an origin can never
+// match.
+func isCanonicalOrigin(origin string, u *url.URL) bool {
+	// url.Parse lowercases the scheme it returns.
+	if !strings.HasPrefix(origin, u.Scheme+"://") {
+		return false
+	}
+	for i := 0; i < len(u.Host); i++ {
+		if c := u.Host[i]; c >= utf8.RuneSelf || ('A' <= c && c <= 'Z') {
+			return false
+		}
+	}
+	if strings.HasSuffix(u.Host, ":") {
+		return false
+	}
+	port := u.Port()
+	if port == "" {
+		return true
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || strconv.Itoa(n) != port {
+		return false
+	}
+	defaultPort := map[string]string{"http": "80", "https": "443"}[u.Scheme]
+	return port != defaultPort
 }
