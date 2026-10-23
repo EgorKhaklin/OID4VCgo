@@ -24,11 +24,13 @@ import (
 
 // Logo is an image the issuer names for display: its URI, https or a
 // data: image, and alternative text. An https URI naming an IP address
-// or localhost is dropped: loading it would have the phone reach into
-// its own network for whoever wrote the metadata. The URI is the
-// issuer's: loading it tells the issuer, or whoever serves it, that the
-// holder is looking, so an app should fetch it once — when the holder
-// accepts the credential, not on the offer's preview — and keep it.
+// or a local name (a single label, or one under localhost, local,
+// home.arpa, internal or lan) is dropped: loading it would have the
+// phone reach into its own network for whoever wrote the metadata. The
+// URI is the issuer's: loading it tells the issuer, or whoever serves
+// it, that the holder is looking, so an app should fetch it once — when
+// the holder accepts the credential, not on the offer's preview — and
+// keep it.
 type Logo struct {
 	URI     string
 	AltText string
@@ -127,8 +129,9 @@ func firstIndex(n int, match func(int) bool) int {
 }
 
 // logoOf is l as a Logo, when its URI is one an app may load: https
-// from a host name, or a data: image. Anything else — http, a custom
-// scheme, an IP address or localhost — is dropped.
+// from a public host name, or a data: image. Anything else — http, a
+// custom scheme, an IP address or a local name (localLogoHost) — is
+// dropped.
 func logoOf(l *oid4vci.Logo) *Logo {
 	if l == nil {
 		return nil
@@ -146,18 +149,33 @@ func logoOf(l *oid4vci.Logo) *Logo {
 	return nil
 }
 
-// localLogoHost is whether host, a logo URI's, is an IP address or
-// localhost (RFC 6761 §6.3) rather than a name. A host whose last label
-// is a number is an IPv4 address to a WHATWG URL parser (as 2130706433
-// or 0x7f.1 are 127.0.0.1), so it counts as one.
+// localLogoHost is whether host, a logo URI's, names something on the
+// phone's own network rather than a public name: an IP address; a
+// single label (router, a search-domain name); or a name under a
+// special-use or local-only domain, localDomains. A host whose last
+// label is a number is an IPv4 address to a WHATWG URL parser (as
+// 2130706433 or 0x7f.1 are 127.0.0.1), so it counts as one. A public
+// name whose DNS answers a private address can't be told apart without
+// resolving it.
 func localLogoHost(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	if _, err := netip.ParseAddr(host); err == nil || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+	if _, err := netip.ParseAddr(host); err == nil || !strings.Contains(host, ".") {
 		return true
+	}
+	for _, d := range localDomains {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return true
+		}
 	}
 	last := host[strings.LastIndex(host, ".")+1:]
 	return last != "" && (strings.Trim(last, "0123456789") == "" || strings.HasPrefix(last, "0x"))
 }
+
+// localDomains are the domains whose names only a local network
+// resolves: localhost (RFC 6761 §6.3), local (mDNS, RFC 6762),
+// home.arpa (RFC 8375), internal (reserved for private use by ICANN)
+// and lan, a common home-router default.
+var localDomains = []string{"localhost", "local", "home.arpa", "internal", "lan"}
 
 // Credential status values, in CredentialStatus.Value.
 const (

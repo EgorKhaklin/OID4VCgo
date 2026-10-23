@@ -153,16 +153,25 @@ func TestNew_RefusesMeaninglessChoices(t *testing.T) {
 	}
 }
 
-// In production, one certificate pool given to two roles needs a leaf
+// In production, two roles whose pools may share an anchor need a leaf
 // policy on each: otherwise a Verifier's certificate could sign
 // credentials, or an issuer's pass for a Verifier.
 func TestNew_RoleSeparation(t *testing.T) {
 	deps := Dependencies{Keys: durableKeyStore{NewMemoryKeyStore()}, Credentials: NewMemoryCredentialStore(), Authorizations: durableAuthorizations{NewMemoryAuthorizationStore()}}
 	issuerCA, _ := testcert.CA(t, "issuer CA")
 	verifierCA, _ := testcert.CA(t, "verifier CA")
+	otherIssuerCA, _ := testcert.CA(t, "another issuer CA")
+	reissuedIssuerCA, _ := testcert.CA(t, "issuer CA")
 	shared, verifiers := x509.NewCertPool(), x509.NewCertPool()
 	shared.AddCert(issuerCA)
 	verifiers.AddCert(verifierCA)
+	// issuers holds shared's anchor and one more; reissued holds a
+	// certificate with the same subject as shared's, under another key.
+	issuers, reissued, sharedCopy := x509.NewCertPool(), x509.NewCertPool(), x509.NewCertPool()
+	issuers.AddCert(issuerCA)
+	issuers.AddCert(otherIssuerCA)
+	reissued.AddCert(reissuedIssuerCA)
+	sharedCopy.AddCert(issuerCA)
 	policy := func(*x509.Certificate, [][]*x509.Certificate) error { return nil }
 	for name, tc := range map[string]struct {
 		cfg Config
@@ -179,11 +188,38 @@ func TestNew_RoleSeparation(t *testing.T) {
 		"one pool for credentials and metadata":    {Config{IssuerRoots: shared, IssuerLeafPolicy: policy, IssuerMetadataRoots: shared}, false},
 		"one pool for metadata, both narrowed":     {Config{IssuerRoots: shared, IssuerLeafPolicy: policy, IssuerMetadataRoots: shared, IssuerMetadataLeafPolicy: policy}, true},
 		"separate metadata pool":                   {Config{IssuerRoots: shared, IssuerMetadataRoots: verifiers}, true},
+		"overlapping pools":                        {Config{IssuerRoots: issuers, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared}}, false},
+		"overlapping pools, only one narrowed":     {Config{IssuerRoots: issuers, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared}}, false},
+		"overlapping pools, both narrowed":         {Config{IssuerRoots: issuers, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, true},
+		"overlapping registrar pool":               {Config{IssuerRoots: verifiers, RegistrarRoots: issuers, MdocReaderRoots: shared, MdocReaderLeafPolicy: policy}, false},
+		"equal pools built twice":                  {Config{IssuerRoots: shared, IssuerMetadataRoots: sharedCopy}, false},
+		"a reissued anchor's subject":              {Config{IssuerRoots: shared, VerifierTrust: wallet.X5CVerifierRoots{Roots: reissued}}, false},
+		"overlapping pools, in dev":                {Config{IssuerRoots: issuers, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared}, Development: true}, true},
 	} {
 		_, err := New(tc.cfg, deps)
-		refused := err != nil && strings.Contains(err.Error(), "same certificate pool")
+		refused := err != nil && strings.Contains(err.Error(), "may share a trust anchor")
 		if refused == tc.ok {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// A system pool whose roots the platform keeps, unlisted, may hold any
+// role's anchor, so another role beside it needs a leaf policy on each.
+func TestNew_RoleSeparationSystemPool(t *testing.T) {
+	system, err := x509.SystemCertPool()
+	if err != nil || !opaqueSystemPool(system) {
+		t.Skip("this platform's system pool lists its roots")
+	}
+	deps := Dependencies{Keys: durableKeyStore{NewMemoryKeyStore()}, Credentials: NewMemoryCredentialStore(), Authorizations: durableAuthorizations{NewMemoryAuthorizationStore()}}
+	verifierCA, _ := testcert.CA(t, "verifier CA")
+	verifiers := x509.NewCertPool()
+	verifiers.AddCert(verifierCA)
+	policy := func(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+	if _, err := New(Config{IssuerRoots: system, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifiers}}, deps); err == nil || !strings.Contains(err.Error(), "may share a trust anchor") {
+		t.Errorf("system IssuerRoots beside VerifierTrust: %v", err)
+	}
+	if _, err := New(Config{IssuerRoots: system, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifiers, LeafPolicy: policy}}, deps); err != nil {
+		t.Errorf("system IssuerRoots, both narrowed: %v", err)
 	}
 }
