@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -79,8 +80,12 @@ func newIssuedFixture(t testing.TB, leaf *x509.Certificate, leafKey *ecdsa.Priva
 
 func caIssuedFixture(t testing.TB) issuedFixture {
 	t.Helper()
-	ca, caKey := testcert.CA(t, "issued credential test CA")
-	leaf, leafKey := testcert.Leaf(t, "issued credential test issuer", ca, caKey)
+	// Both name a country, as an IACA and its document signers must
+	// (ISO/IEC 18013-5 Annex B, §9.3.3).
+	ca, caKey := testcert.CAWithSubject(t, pkix.Name{CommonName: "issued credential test CA", Country: []string{"SG"}})
+	leaf, leafKey := testcert.Issue(t, &x509.Certificate{
+		Subject: pkix.Name{CommonName: "issued credential test issuer", Country: []string{"SG"}},
+	}, ca, caKey)
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
 	return newIssuedFixture(t, leaf, leafKey, roots)

@@ -119,9 +119,12 @@ const issuerClockSkew = time.Minute
 // certificate chaining to IssuerRoots (HAIP 1.0 §6.1.1 has the Wallet,
 // too, support X.509 issuer key resolution), that it is the requested
 // type and currently valid, and that it is bound to the key the Wallet
-// proved possession of. A Credential Offer's issuer is not trusted just
-// because it sent the offer (OID4VCI 1.0 §13.5), so neither is what it
-// issues.
+// proved possession of. An mdoc gets ISO/IEC 18013-5's document signer
+// checks too (mdoc.CheckDocumentSigner), as a verifier makes them: its
+// signer's country matches its IACA's, and an issuing_country it
+// discloses matches its signer's. A Credential Offer's issuer is not
+// trusted just because it sent the offer (OID4VCI 1.0 §13.5), so
+// neither is what it issues.
 func VerifyIssuedCredential(ctx context.Context, p VerifyIssuedCredentialParams) (VerifiedIssuedCredential, error) {
 	if p.IssuerRoots == nil {
 		return VerifiedIssuedCredential{}, errors.New("wallet: verify issued credential: IssuerRoots is required")
@@ -276,8 +279,13 @@ func verifyIssuedMdoc(p VerifyIssuedCredentialParams, now time.Time) (VerifiedIs
 	if policy == nil {
 		policy = mdoc.DefaultDocumentSignerPolicy
 	}
-	leaf, err := certchain.VerifyLeafWithPolicyAt(chain, p.IssuerRoots, policy, now)
+	leaf, chains, err := certchain.VerifyChainsAt(chain, p.IssuerRoots, now)
 	if err != nil {
+		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
+	}
+	// Only the paths the policy approves on their own: the document
+	// signer checks below must pass on one of them.
+	if chains, err = certchain.ApprovedChains(leaf, chains, policy); err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
 	alg, err := coseAlgForKey(leaf.PublicKey)
@@ -289,6 +297,14 @@ func verifyIssuedMdoc(p VerifyIssuedCredentialParams, now time.Time) (VerifiedIs
 	})
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("verify: %w", err)
+	}
+	// ISO/IEC 18013-5's document signer checks, the ones a verifier
+	// makes (§9.3.1's signing date, §9.3.3's IACA subject, an
+	// issuing_country or issuing_jurisdiction matching the signer's
+	// subject): a credential a verifier would refuse isn't one to keep
+	// and display.
+	if _, err := mdoc.CheckDocumentSigner(mso, chains); err != nil {
+		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
 	if p.HolderKey != nil && !publicKeysEqual(mso.DeviceKey, p.HolderKey) {
 		return VerifiedIssuedCredential{}, errors.New("the MSO's DeviceKey isn't the holder key")

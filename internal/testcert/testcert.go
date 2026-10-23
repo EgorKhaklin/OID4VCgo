@@ -53,13 +53,20 @@ func SelfSigned(t testing.TB, commonName string, pub crypto.PublicKey, signer cr
 // intermediate/root in x509.Certificate.Verify's own chain building.
 func CA(t testing.TB, commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
+	return CAWithSubject(t, pkix.Name{CommonName: commonName})
+}
+
+// CAWithSubject is CA with a whole subject name, for a test whose
+// checks read more of it than the common name (an IACA's countryName).
+func CAWithSubject(t testing.TB, subject pkix.Name) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("testcert: generate CA key: %v", err)
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: commonName},
+		Subject:               subject,
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(24 * time.Hour),
 		IsCA:                  true,
