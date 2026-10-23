@@ -23,15 +23,19 @@ const (
 	// endpoint URL parsed with fapi.AllowLoopbackHTTP. It rejects
 	// AllowLoopbackHosts too, the https-only form of the same
 	// development switch, which lets a fetch reach this machine's own
-	// services.
+	// services, and AllowedLoopbackHosts, which fapihttp counts among
+	// the same development-only loopback exceptions
+	// (fapihttp.Config.AllowsLoopback).
 	//
 	// It also rejects Config.VerifierTrust set to NoVerifierTrust{},
-	// which skips OID4VP §5.9.3's Verifier trust chain validation.
+	// which skips OID4VP §5.9.3's Verifier trust chain validation, and
+	// a Dependencies.Random other than crypto/rand.Reader (nil means
+	// it).
 	//
-	// Config.Fetch.AllowedPrivateHosts and AllowedLoopbackHosts are
-	// deliberately not rejected: each is an explicit, named allow-list
-	// for a fixed deployment topology (e.g. a Wallet backend reaching an
-	// internal Credential Issuer), not a development switch, and every
-	// other SSRF check still applies to an allowed host.
+	// Config.Fetch.AllowedPrivateHosts is deliberately not rejected: it
+	// is an explicit, named allow-list for a fixed deployment topology
+	// (e.g. a Wallet backend reaching an internal Credential Issuer),
+	// not a development switch, and every other SSRF check still
+	// applies to an allowed host.
 	AssuranceProduction
 )

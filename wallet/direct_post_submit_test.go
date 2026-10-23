@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/idfoundry/fapigo/fapihttp"
+
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -135,6 +137,36 @@ func (c redirectingClient) Do(req *http.Request) (*http.Response, error) {
 		Header: http.Header{"Content-Type": {"application/json"}},
 		Body:   io.NopCloser(strings.NewReader(`{"redirect_uri":"https://attacker.example/phish"}`)),
 	}, nil
+}
+
+// (*Wallet).SubmitDirectPostResponse posts through the Wallet's own
+// client: one trusting the Verifier reaches it, and the hardened one
+// New builds by default refuses a response_uri on a loopback address.
+func TestWalletSubmitDirectPostResponse(t *testing.T) {
+	srv := verifierReply(t, http.StatusOK, "application/json", `{"redirect_uri":"https://verifier.example/cb"}`)
+	deps := validDependencies()
+	deps.HTTP = srv.Client()
+	w, err := wallet.New(validConfig(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := w.SubmitDirectPostResponse(context.Background(), srv.URL, "the-jwe"); err != nil || got.RedirectURI != "https://verifier.example/cb" {
+		t.Fatalf("SubmitDirectPostResponse = %+v, %v", got, err)
+	}
+
+	var hit atomic.Bool
+	internal := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit.Store(true) }))
+	defer internal.Close()
+	cfg := validConfig()
+	cfg.Fetch.AllowLoopbackHTTP = false
+	deps.HTTP = nil
+	hardened, err := wallet.New(cfg, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hardened.SubmitDirectPostResponse(context.Background(), internal.URL, "the-jwe"); !errors.Is(err, fapihttp.ErrSSRFBlocked) || hit.Load() {
+		t.Fatalf("posted to a loopback response_uri: %v, want fapihttp.ErrSSRFBlocked", err)
+	}
 }
 
 func TestSubmitDirectPostResponse_RefusesReplyFromElsewhere(t *testing.T) {

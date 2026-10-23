@@ -131,6 +131,11 @@ type credentialRequestBody struct {
 // RequestDeferredCredential. See CredentialResult's own doc comment
 // for how to tell the two cases apart. A response outside those two
 // statuses is returned as a *Error.
+//
+// The returned Credentials are as the Issuer sent them, unverified:
+// pass each through VerifyIssuedCredential (its signature, issuer,
+// type, validity and holder binding) before storing, showing or
+// presenting it.
 func (w *Wallet) RequestCredential(
 	ctx context.Context, resource ProtectedResourceClient, endpoint fapi.URL, req CredentialRequest,
 ) (CredentialResult, error) {
@@ -168,7 +173,7 @@ func (w *Wallet) RequestCredential(
 		return CredentialResult{}, fmt.Errorf("wallet: request credential: marshal request: %w", err)
 	}
 	return w.postCredentialResult(ctx, resource, endpoint, credentialPost{
-		body: body, reqEnc: req.RequestEncryption, respDecryptKey: respDecryptKey, respZip: responseZip(req.ResponseEncryption),
+		body: body, reqEnc: req.RequestEncryption, respDecryptKey: respDecryptKey, respEnc: req.ResponseEncryption,
 		errPrefix: "request credential",
 	})
 }

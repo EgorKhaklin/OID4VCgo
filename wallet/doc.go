@@ -174,16 +174,19 @@
 // are pure (no HTTP). The two HTTP steps around them have defaults:
 // SubmitDirectPostResponse POSTs the built response to response_uri and
 // returns the Verifier's redirect_uri, which the Wallet must then follow
-// (OID4VP §8.2), and fetching request_uri —
-// (*Wallet).FetchAuthorizationRequest performs §5.10's plain GET using
-// this Wallet's own hardened fapihttp.Client and hands the result
-// straight to ParseAuthorizationRequest; a caller wanting §5.10's
-// OPTIONAL POST+wallet_nonce variant instead calls
-// ParseAuthorizationRequest directly against its own fetch (see
-// FetchAuthorizationRequest's own doc comment for why that variant
-// isn't built in). Only the "x509_hash" Client Identifier Prefix is
-// supported (HAIP's own mandate, and the only one verifier itself
-// produces). A DC API request arrives through the platform instead:
+// (OID4VP §8.2) — (*Wallet).SubmitDirectPostResponse, Respond and
+// RespondSelection send through the Wallet's own hardened client, and
+// the package-level forms need one fapihttp.NewClient built in
+// production — and fetching request_uri —
+// (*Wallet).FetchAuthorizationRequest performs §5.10's plain GET, and
+// FetchAuthorizationRequestPost its POST with a fresh wallet_nonce (a
+// link's request_uri_method=post), both through this Wallet's own
+// hardened fapihttp.Client, since request_uri comes from a QR code or
+// deep link anyone can make, and verify the result with the Wallet's
+// VerifierTrust; (*Wallet).ParseAuthorizationRequest does that
+// verification alone for a Request Object obtained otherwise. Only the
+// "x509_hash" Client Identifier Prefix is supported (HAIP's own
+// mandate, and the only one verifier itself produces). A DC API request arrives through the platform instead:
 // (*Wallet).ParseDCAPIRequestData takes it as delivered, in any of
 // the three forms HAIP §5.2 requires a Wallet to support — unsigned,
 // signed, or multi-signed (JWS JSON Serialization, authenticated by the

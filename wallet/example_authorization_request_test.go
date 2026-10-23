@@ -7,6 +7,8 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -29,8 +31,9 @@ import (
 // verifier.BuildAuthorizationRequest draws on the building side).
 // FetchAuthorizationRequest is the batteries-included default: a plain
 // GET, using this Wallet's own hardened fetcher — exactly what a real
-// Verifier's request_uri endpoint expects unless it also offers §5.10's
-// OPTIONAL POST variant.
+// Verifier's request_uri endpoint expects unless its link asks for
+// §5.10's POST variant, which FetchAuthorizationRequestPost sends
+// through the same fetcher.
 //
 // This example stands up a real *verifier.Verifier and a real HTTP
 // server for it (httptest.Server, an actual TCP listener — not a fake
@@ -78,9 +81,20 @@ func ExampleWallet_FetchAuthorizationRequest() {
 
 	// A real Verifier serves built.RequestObject at its own
 	// request_uri — this httptest.Server stands in for that endpoint.
+	// Asked with POST (request_uri_method=post, §5.10), it builds a
+	// fresh Request Object carrying the Wallet's wallet_nonce instead.
 	requestURIServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestObject := built.RequestObject
+		if r.Method == http.MethodPost {
+			fresh, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query, WalletNonce: r.PostFormValue("wallet_nonce")})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			requestObject = fresh.RequestObject
+		}
 		w.Header().Set("Content-Type", "application/oauth-authz-req+jwt")
-		_, _ = w.Write([]byte(built.RequestObject))
+		_, _ = w.Write([]byte(requestObject))
 	}))
 	defer requestURIServer.Close()
 
@@ -115,33 +129,29 @@ func ExampleWallet_FetchAuthorizationRequest() {
 	fmt.Println("signed by trusted verifier:", authReq.VerifierCertificate.Subject.CommonName)
 	fmt.Println("query asks for credential ID:", authReq.Query.Credentials[0].ID)
 
-	// The OPTIONAL POST variant (§5.10): a Wallet sends a fresh
-	// "wallet_nonce" so the Verifier can embed it in the signed Request
-	// Object (§5.10.1), which ParseAuthorizationRequest then checks was
-	// echoed back. FetchAuthorizationRequest doesn't cover this: it
-	// uses this Wallet's own hardened fetcher (fapihttp.Client), which
-	// is GET-only by design — widening it to an arbitrary POST would
-	// weaken the SSRF hardening every other caller of it relies on. A
-	// Wallet that wants the POST variant performs that request itself
-	// (a plain http.Client is reasonable here: by this point
-	// request_uri is a value already resolved from an openid4vp://
-	// deep link/QR code, not attacker-supplied input the way an
-	// initial fetch target can be) and calls ParseAuthorizationRequest
-	// directly:
-	//
-	//	walletNonce := freshOpaqueValue()
-	//	form := url.Values{"wallet_nonce": {walletNonce}}
-	//	resp, err := http.Post(requestURI, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
-	//	// ... read resp.Body into requestObject ...
-	//	authReq, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
-	//		RequestObject: requestObject, ClientID: clientID, WalletNonce: walletNonce,
-	//		VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
-	//	})
+	// For a link with request_uri_method=post (§5.10), the Wallet
+	// POSTs a fresh wallet_nonce, and optionally its own metadata, to
+	// request_uri through the same hardened fetcher — request_uri comes
+	// from the QR code or deep link, which anyone can make — and checks
+	// the Request Object echoes that nonce (§5.10.1).
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		fmt.Println("wallet_nonce:", err)
+		return
+	}
+	walletMetadata := json.RawMessage(`{"vp_formats_supported":{"dc+sd-jwt":{"sd-jwt_alg_values":["ES256"],"kb-jwt_alg_values":["ES256"]}}}`)
+	if _, err := w.FetchAuthorizationRequestPost(context.Background(), requestURIServer.URL, v.ClientID(),
+		base64.RawURLEncoding.EncodeToString(nonce), walletMetadata); err != nil {
+		fmt.Println("FetchAuthorizationRequestPost:", err)
+		return
+	}
+	fmt.Println("fetched a Request Object over HTTP POST, bound to its wallet_nonce")
 
 	// Output:
 	// fetched and parsed a real Request Object over HTTP GET
 	// signed by trusted verifier: ExampleWallet_FetchAuthorizationRequest
 	// query asks for credential ID: cred1
+	// fetched a Request Object over HTTP POST, bound to its wallet_nonce
 }
 
 // exampleCertificate generates a P-256 key and a certificate for it

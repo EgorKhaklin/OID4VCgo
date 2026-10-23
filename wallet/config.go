@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"crypto/rand"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -132,8 +133,9 @@ type Dependencies struct {
 	// changed after NewClient built it, and one allowing loopback. An *http.Client is used through a
 	// copy that follows no redirect, so a DPoP proof, access token or
 	// client attestation is never resent to a host the Wallet didn't
-	// choose; another HTTPClient (a wrapper) must not follow redirects
-	// itself.
+	// choose, and whose Timeout, if zero (as NewClient leaves it), is
+	// Config.Fetch.RequestTimeout; another HTTPClient (a wrapper) must
+	// not follow redirects itself, and must bound each request's time.
 	HTTP fapihttp.HTTPClient
 
 	// Clock supplies the current time — the jwt-type key proof's own
@@ -142,7 +144,9 @@ type Dependencies struct {
 
 	// Random is the source of cryptographically secure randomness for
 	// a DPoP proof's own jti claim (RFC 9449 §4.2) — required only for
-	// RequestPreAuthorizedCodeToken.
+	// RequestPreAuthorizedCodeToken and GenerateDPoPProof. Under
+	// AssuranceProduction it must be crypto/rand.Reader, which nil
+	// then means, as issuer and verifier require.
 	Random io.Reader
 }
 
@@ -176,6 +180,14 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if deps.Clock == nil {
 		return nil, fmt.Errorf("wallet: dependencies: clock is required")
 	}
+	if cfg.Assurance == AssuranceProduction {
+		if deps.Random == nil {
+			deps.Random = rand.Reader
+		}
+		if deps.Random != rand.Reader {
+			return nil, fmt.Errorf("wallet: dependencies: random must be crypto/rand.Reader, or nil, under AssuranceProduction")
+		}
+	}
 
 	if err := checkIssuerMetadataConfig(cfg); err != nil {
 		return nil, err
@@ -199,6 +211,12 @@ func checkAssuranceConfig(cfg Config) error {
 	}
 	if cfg.Assurance == AssuranceProduction && cfg.Fetch.AllowLoopbackHosts {
 		return fmt.Errorf("wallet: config: fetch.allow_loopback_hosts is not permitted under AssuranceProduction")
+	}
+	// fapihttp's own rule: every loopback exception is for local
+	// development, and the transport New builds dials loopback for a
+	// host AllowedLoopbackHosts lists.
+	if cfg.Assurance == AssuranceProduction && cfg.Fetch.AllowsLoopback() {
+		return fmt.Errorf("wallet: config: fetch.allowed_loopback_hosts is not permitted under AssuranceProduction")
 	}
 	if cfg.Assurance == AssuranceProduction && isNoVerifierTrust(cfg.VerifierTrust) {
 		return fmt.Errorf("wallet: config: verifier_trust NoVerifierTrust is not permitted under AssuranceProduction")
@@ -225,12 +243,22 @@ func checkIssuerMetadataConfig(cfg Config) error {
 // when Dependencies.HTTP is nil and Config.Fetch sets no RequestTimeout.
 const defaultHTTPTimeout = 30 * time.Second
 
+// requestTimeout is the per-request timeout of the Wallet's HTTP
+// client: cfg.Fetch.RequestTimeout, or defaultHTTPTimeout.
+func requestTimeout(cfg Config) time.Duration {
+	if cfg.Fetch.RequestTimeout > 0 {
+		return cfg.Fetch.RequestTimeout
+	}
+	return defaultHTTPTimeout
+}
+
 // walletHTTPClient is the HTTP client the Wallet uses: with none given,
 // fapihttp's hardened one, its loopback and private-host allowances
 // those of cfg.Fetch; with an *http.Client, a copy that follows no
 // redirect, so a token request's or a Credential Request's DPoP proof,
 // access token or client attestation is never resent to a host the
-// Wallet didn't choose. Another HTTPClient is used as it is.
+// Wallet didn't choose, and that times out after requestTimeout when
+// it has no Timeout of its own. Another HTTPClient is used as it is.
 func walletHTTPClient(cfg Config, given fapihttp.HTTPClient) (fapihttp.HTTPClient, error) {
 	switch c := given.(type) {
 	case nil:
@@ -242,10 +270,7 @@ func walletHTTPClient(cfg Config, given fapihttp.HTTPClient) (fapihttp.HTTPClien
 		if err != nil {
 			return nil, fmt.Errorf("wallet: dependencies: http: %w", err)
 		}
-		client.Timeout = cfg.Fetch.RequestTimeout
-		if client.Timeout <= 0 {
-			client.Timeout = defaultHTTPTimeout
-		}
+		client.Timeout = requestTimeout(cfg)
 		return client, nil
 	case *http.Client:
 		if c == nil {
@@ -253,6 +278,13 @@ func walletHTTPClient(cfg Config, given fapihttp.HTTPClient) (fapihttp.HTTPClien
 		}
 		noRedirects := *c
 		noRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		// fapihttp.NewClient sets no Timeout. The fetcher bounds its own
+		// calls, but the token, Credential and direct_post requests go
+		// through this client directly, so without one a stalled server
+		// holds them until ctx ends.
+		if noRedirects.Timeout <= 0 {
+			noRedirects.Timeout = requestTimeout(cfg)
+		}
 		return &noRedirects, nil
 	default:
 		return given, nil

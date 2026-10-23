@@ -245,7 +245,11 @@ type wireJWKKid struct {
 // "protocol logic here, HTTP transport in the caller" split
 // verifier.BuildAuthorizationRequest already draws (it doesn't host
 // the Request Object it builds either — see that function's own doc
-// comment).
+// comment). (*Wallet).FetchAuthorizationRequest and
+// FetchAuthorizationRequestPost do both through the Wallet's hardened
+// fetcher; request_uri comes from the invocation link, which anyone can
+// make, so a caller fetching it some other way must refuse internal
+// addresses itself.
 //
 // The request must ask for response_type vp_token in response_mode
 // direct_post.jwt (HAIP 1.0 §5.1): one asking for anything else is
@@ -453,23 +457,14 @@ func responseEnc(offered []string) (string, error) {
 // request_uri — the OID4VP analog of ResolveCredentialOffer (offer.go)
 // dereferencing a by-reference Credential Offer, using this Wallet's
 // own hardened fetcher (SSRF/size/redirect protection, Config.Fetch)
-// the same way. Fetches requestURI, then calls
-// ParseAuthorizationRequest with the result, clientID and
-// Config.VerifierTrust — which this method therefore requires.
+// the same way. Fetches requestURI, then verifies the result with
+// (*Wallet).ParseAuthorizationRequest — which requires
+// Config.VerifierTrust.
 //
-// This does NOT cover §5.10's own OPTIONAL POST variant (a Wallet
-// sending a fresh "wallet_nonce" so the Verifier can embed it in the
-// signed Request Object, §5.10.1): fapihttp.Client — the hardened
-// fetcher every other network call in this package uses — only ever
-// performs a plain, bodyless GET, by design (see its own doc comment);
-// widening it to an arbitrary POST would weaken the SSRF hardening
-// every other caller of it relies on. A Wallet that wants the POST
-// variant has to perform that request itself (a plain http.Client is
-// reasonable here: by this point request_uri is a value this Wallet
-// already resolved from an openid4vp:// deep link/QR code, not
-// attacker-supplied input the way an initial fetch target can be) and
-// call ParseAuthorizationRequest directly with the response body and
-// its own WalletNonce — see the package example for the exact shape.
+// request_uri comes straight from the invocation link (a QR code or
+// deep link anyone can make), so it is attacker input: fetch it only
+// through this Wallet, never a plain http.Client. For a link with
+// request_uri_method=post, use FetchAuthorizationRequestPost.
 func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clientID string) (AuthorizationRequest, error) {
 	if w.cfg.VerifierTrust == nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: Config.VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
@@ -486,8 +481,70 @@ func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clie
 	if err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: fetch request_uri: %w", err)
 	}
+	return w.ParseAuthorizationRequest(string(res.Body), clientID, "")
+}
+
+// requestURIPostContentType is the only media type a request_uri POST
+// response may have (OpenID4VP 1.0 §5.10.1).
+const requestURIPostContentType = "application/" + requestObjectTyp
+
+// FetchAuthorizationRequestPost is FetchAuthorizationRequest for an
+// invocation link with request_uri_method=post (OpenID4VP 1.0 §5.10):
+// it POSTs walletNonce and walletMetadata to requestURI as the
+// form-encoded wallet_nonce and wallet_metadata parameters (§5.10.1),
+// through this Wallet's hardened fetcher, and verifies the Request
+// Object that comes back with (*Wallet).ParseAuthorizationRequest,
+// which also requires its wallet_nonce claim to be walletNonce.
+//
+// walletNonce is REQUIRED: a fresh value from crypto/rand for each
+// fetch (at least 128 bits, base64url-encoded), so a Request Object
+// replayed from another fetch is refused. walletMetadata is the
+// Wallet's own metadata (§10), a JSON object such as
+// {"vp_formats_supported": {...}}; nil sends none. The response must be
+// application/oauth-authz-req+jwt, and is never followed through a
+// redirect.
+func (w *Wallet) FetchAuthorizationRequestPost(ctx context.Context, requestURI, clientID, walletNonce string, walletMetadata json.RawMessage) (AuthorizationRequest, error) {
+	if w.cfg.VerifierTrust == nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: Config.VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
+	}
+	if walletNonce == "" {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: wallet_nonce is required")
+	}
+	form := url.Values{"wallet_nonce": {walletNonce}}
+	if len(walletMetadata) > 0 {
+		var object map[string]json.RawMessage
+		if err := strictjson.Unmarshal(walletMetadata, &object); err != nil || object == nil {
+			return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: wallet_metadata isn't a JSON object")
+		}
+		form.Set("wallet_metadata", string(walletMetadata))
+	}
+	target, err := url.Parse(requestURI)
+	if err != nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: parse request_uri: %w", err)
+	}
+	res, err := w.fetcher.Post(ctx, fapihttp.PostRequest{
+		URL: target, Body: []byte(form.Encode()), ContentType: "application/x-www-form-urlencoded",
+		Accept: requestURIPostContentType, ExpectedContentType: requestURIPostContentType,
+	})
+	if err != nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: post request_uri: %w", err)
+	}
+	return w.ParseAuthorizationRequest(string(res.Body), clientID, walletNonce)
+}
+
+// ParseAuthorizationRequest is the package-level ParseAuthorizationRequest
+// with this Wallet's own configuration: Config.VerifierTrust, which it
+// therefore requires, Config.Fetch.AllowLoopbackHTTP for response_uri,
+// and Dependencies.Clock for exp and nbf. Use it for a Request Object
+// obtained some other way than FetchAuthorizationRequest or
+// FetchAuthorizationRequestPost; walletNonce is the wallet_nonce sent
+// for it, or empty when none was.
+func (w *Wallet) ParseAuthorizationRequest(requestObject, clientID, walletNonce string) (AuthorizationRequest, error) {
+	if w.cfg.VerifierTrust == nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: Config.VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
+	}
 	return ParseAuthorizationRequest(ParseAuthorizationRequestParams{
-		RequestObject: string(res.Body), ClientID: clientID, VerifierTrust: w.cfg.VerifierTrust,
+		RequestObject: requestObject, ClientID: clientID, VerifierTrust: w.cfg.VerifierTrust, WalletNonce: walletNonce,
 		AllowLoopbackHTTP: w.cfg.Fetch.AllowLoopbackHTTP, Now: w.deps.Clock.Now,
 	})
 }

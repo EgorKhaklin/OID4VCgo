@@ -1,7 +1,11 @@
 package wallet_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"github.com/idfoundry/fapigo/fapihttp"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -39,6 +43,19 @@ func TestNewProductionRejectsAllowLoopbackHosts(t *testing.T) {
 	}
 }
 
+// AllowedLoopbackHosts is one of fapihttp's loopback exceptions: the
+// transport New builds would dial loopback for a listed host.
+func TestNewProductionRejectsAllowedLoopbackHosts(t *testing.T) {
+	cfg := validConfig()
+	cfg.Assurance = wallet.AssuranceProduction
+	cfg.Fetch.AllowLoopbackHTTP = false
+	cfg.Fetch.AllowedLoopbackHosts = []string{"issuer-sidecar.internal"}
+	_, err := wallet.New(cfg, productionDependencies())
+	if err == nil || !strings.Contains(err.Error(), "allowed_loopback_hosts") {
+		t.Fatalf("New(AssuranceProduction, AllowedLoopbackHosts) error = %v, want an allowed_loopback_hosts rejection", err)
+	}
+}
+
 func TestNewProductionAcceptsHardenedFetch(t *testing.T) {
 	cfg := validConfig()
 	cfg.Assurance = wallet.AssuranceProduction
@@ -46,9 +63,38 @@ func TestNewProductionAcceptsHardenedFetch(t *testing.T) {
 	// An explicit private-host allow-list is a deployment choice, not a
 	// development switch, so it stays permitted.
 	cfg.Fetch.AllowedPrivateHosts = []string{"issuer.internal"}
-	cfg.Fetch.AllowedLoopbackHosts = []string{"issuer-sidecar.internal"}
 	if _, err := wallet.New(cfg, productionDependencies()); err != nil {
 		t.Fatalf("New(AssuranceProduction): %v", err)
+	}
+}
+
+// Under production, DPoP jti values come from crypto/rand.Reader: nil
+// means it, and any other source is refused.
+func TestNewProductionRequiresCryptoRandom(t *testing.T) {
+	cfg := validConfig()
+	cfg.Assurance = wallet.AssuranceProduction
+	cfg.Fetch.AllowLoopbackHTTP = false
+	for name, tc := range map[string]struct {
+		random io.Reader
+		ok     bool
+	}{
+		"crypto/rand.Reader": {rand.Reader, true},
+		"nil":                {nil, true},
+		"another reader":     {strings.NewReader(strings.Repeat("x", 1024)), false},
+	} {
+		deps := productionDependencies()
+		deps.Random = tc.random
+		w, err := wallet.New(cfg, deps)
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: %v, want ok = %v", name, err, tc.ok)
+			continue
+		}
+		if err == nil {
+			key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if _, err := w.GenerateDPoPProof(key, "POST", "https://issuer.example.com/token", "", ""); err != nil {
+				t.Errorf("%s: GenerateDPoPProof: %v", name, err)
+			}
+		}
 	}
 }
 
