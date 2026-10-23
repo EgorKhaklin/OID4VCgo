@@ -115,6 +115,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
 
     fun attach(activity: Activity) {
         this.activity = WeakReference(activity)
+        foreground = WeakReference(activity)
     }
 
     /**
@@ -135,7 +136,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val config = DevelopmentTLS.install(context, loaded)
-        keys = AndroidKeystoreKeyStore(authenticator = BiometricPromptAuthenticator({ activity.get() }))
+        keys = sharedKeys
         this.config = config
         val reset = intent?.getBooleanExtra("reset", false) == true
         if (reset) {
@@ -171,10 +172,12 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
 
     private fun makeWallet(): Wallet {
         val config = config ?: throw IllegalStateException("not configured")
-        return Wallet(
-            config.wallet.copy(copyPolicy = copyPolicy), keys!!,
-            FileCredentialStore.standard(getApplication()), config.providerURL?.let(::HTTPWalletProvider),
-        )
+        return sharedWallet(config, copyPolicy) {
+            Wallet(
+                config.wallet.copy(copyPolicy = copyPolicy), keys!!,
+                FileCredentialStore.standard(getApplication()), config.providerURL?.let(::HTTPWalletProvider),
+            )
+        }
     }
 
     /** Switches the copy policy, rebuilding the wallet over the same keys and credentials. */
@@ -1017,6 +1020,27 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
+        /**
+         * The process's one Wallet, for the configuration and copy
+         * policy it was made with. The app's model and
+         * [GetCredentialActivity]'s share it: two over the same store
+         * would each serialize only their own work, so a refresh token
+         * could be used twice, or a copy's presented mark lost.
+         */
+        private var shared: Triple<DemoConfiguration, WalletConfiguration.CopyPolicy, Wallet>? = null
+
+        @Synchronized
+        private fun sharedWallet(config: DemoConfiguration, policy: WalletConfiguration.CopyPolicy, make: () -> Wallet): Wallet {
+            shared?.let { (c, p, w) -> if (c == config && p == policy) return w }
+            return make().also { shared = Triple(config, policy, it) }
+        }
+
+        /** The activity holder keys ask the holder in: the one last attached, of either model's. */
+        private var foreground = WeakReference<Activity>(null)
+
+        /** The shared Wallet's keys. */
+        private val sharedKeys by lazy { AndroidKeystoreKeyStore(authenticator = BiometricPromptAuthenticator({ foreground.get() })) }
+
         private const val COPY_POLICY = "demo-copy-policy"
         private const val BLE_MODES = "demo-ble-modes"
         private const val ENGAGEMENT = "demo-in-person-engagement"

@@ -1058,11 +1058,20 @@ public final class MdocPresentation: @unchecked Sendable {
         public let origin: String
         /// The subject common name of the reader that signed the request,
         /// when its certificate chains to
-        /// `WalletConfiguration.mdocReaderRoots`; "" when the holder can
-        /// only be shown `origin`.
+        /// `WalletConfiguration.mdocReaderRoots`, without control or
+        /// invisible format characters; "" when the holder can only be
+        /// shown `origin`.
         public let reader: String
+        /// That reader's certificate, DER; nil without one. Compare
+        /// certificates, not names: two can share a name.
+        public let readerCertificate: Data?
         /// The requested documents, in the request's order.
         public let documents: [Document]
+
+        enum CodingKeys: String, CodingKey {
+            case origin, reader, documents
+            case readerCertificate = "reader_certificate"
+        }
     }
 
     /// One requested document.

@@ -47,10 +47,11 @@ struct RequestView: View {
     /// The chosen credential, as last loaded.
     private var chosenCredential: CredentialSummary? { held.first { $0.id == chosen } }
 
-    /// The reader's name, when the request is signed by a certificate
-    /// under the configured mdoc reader roots: checked again, with the
-    /// request's own signature, before anything is shared.
-    private var recognizedReader: String? {
+    /// The reader's name and certificate, when the request is signed by
+    /// a certificate under the configured mdoc reader roots: checked
+    /// again, with the request's own signature, before anything is
+    /// shared.
+    private var recognizedReader: (name: String, certificate: Data)? {
         guard let chain = context.request.requestAuthentications.first?.authenticationCertificateChain, let leaf = chain.first,
               let roots = DemoConfiguration.load()?.wallet.mdocReaderRoots, !roots.isEmpty else { return nil }
         let anchors = roots.components(separatedBy: "-----BEGIN CERTIFICATE-----").dropFirst().compactMap { block -> SecCertificate? in
@@ -65,7 +66,8 @@ struct RequestView: View {
               SecTrustEvaluateWithError(trust, nil) else { return nil }
         var name: CFString?
         SecCertificateCopyCommonName(leaf, &name)
-        return name as String?
+        guard let name = name as String? else { return nil }
+        return (name, SecCertificateCopyData(leaf) as Data)
     }
 
     var body: some View {
@@ -73,7 +75,7 @@ struct RequestView: View {
             List {
                 Section("Asking") {
                     if let reader = recognizedReader {
-                        Label(reader, systemImage: "checkmark.seal")
+                        Label(reader.name, systemImage: "checkmark.seal")
                     }
                     Text(origin ?? "an unknown website").font(.headline)
                 }
@@ -186,8 +188,10 @@ struct RequestView: View {
                           Set(p.request.documents[index].elements) == Set(shown.elements) else {
                         throw RequestError("The request changed after it was shown.")
                     }
-                    if let reader, p.request.reader != reader {
-                        throw RequestError("The request isn't signed by \(reader).")
+                    // The certificate shown, not just its name: two can
+                    // share one.
+                    if let reader, p.request.readerCertificate != reader.certificate {
+                        throw RequestError("The request isn't signed by \(reader.name).")
                     }
                     // Nor a copy another website has seen, unless the
                     // holder was told.
