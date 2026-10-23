@@ -61,17 +61,19 @@ type X5CIssuerKeyResolver struct {
 }
 
 // ResolveIssuerChains implements SDJWTVCIssuerChainResolver: the paths
-// from the x5c header's leaf to Roots, as ResolveIssuerKey verifies it.
+// from the x5c header's leaf to Roots, as ResolveIssuerKey verifies it,
+// that LeafPolicy approves each on its own (certchain.ApprovedChains):
+// the issuer chain VerifyResponse reports is one of them.
 func (r X5CIssuerKeyResolver) ResolveIssuerChains(ctx context.Context, header map[string]any) ([][]*x509.Certificate, error) {
 	ders, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
 		return nil, err
 	}
-	_, chains, err := certchain.VerifyChainsAt(ders, r.Roots, verificationTime(ctx))
+	leaf, chains, err := certchain.VerifyChainsAt(ders, r.Roots, verificationTime(ctx))
 	if err != nil {
 		return nil, err
 	}
-	return chains, nil
+	return certchain.ApprovedChains(leaf, chains, r.LeafPolicy)
 }
 
 // BindsIssuerName implements IssuerNameBinding.

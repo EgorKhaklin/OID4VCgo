@@ -81,7 +81,9 @@ func (r X5ChainIssuerKeyResolver) Capabilities() KeySourceCapabilities {
 }
 
 // ResolveMdocIssuerChains implements MdocIssuerChainResolver: the
-// certificate paths x5chain verifies on, under Roots and LeafPolicy.
+// certificate paths x5chain verifies on under Roots that LeafPolicy
+// approves each on its own (certchain.ApprovedChains): the issuer chain
+// CheckMdocIssuer picks is one of them.
 func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerChains(ctx context.Context, x5chain [][]byte, docType string) ([][]*x509.Certificate, error) {
 	roots, err := r.rootsFor(docType)
 	if err != nil {
@@ -91,10 +93,7 @@ func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerChains(ctx context.Context, x
 	if err != nil {
 		return nil, err
 	}
-	if err := r.leafPolicy()(leaf, chains); err != nil {
-		return nil, err
-	}
-	return chains, nil
+	return certchain.ApprovedChains(leaf, chains, r.leafPolicy())
 }
 
 // rootsFor is the trust anchors a document of docType must chain to:

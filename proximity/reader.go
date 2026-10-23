@@ -380,10 +380,10 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: issuer certificate: %w", err)
 	}
-	if r.signerPolicy != nil {
-		if err := r.signerPolicy(leaf, chains); err != nil {
-			return Verified{}, fmt.Errorf("proximity: document signer certificate: %w", err)
-		}
+	// Only the paths the policy approves on their own: the issuer chain
+	// reported, and the status list's signer bound to, is one of them.
+	if chains, err = certchain.ApprovedChains(leaf, chains, r.signerPolicy); err != nil {
+		return Verified{}, fmt.Errorf("proximity: document signer certificate: %w", err)
 	}
 	// The algorithm is the verified certificate's key's (ISO/IEC
 	// 18013-5 §9.3.1: its working public key algorithm), never the
