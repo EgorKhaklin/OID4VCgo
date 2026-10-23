@@ -12,10 +12,11 @@ import (
 // CA's Subject Key Identifier, base64url-encoded — what an issuer
 // certificate that CA signed carries as its Authority Key Identifier,
 // and what AKITrustedAuthoritiesChecker matches. A CA without a Subject
-// Key Identifier can't be named this way and is an error. Name trust
-// anchors, or intermediates whose identifier is derived from their key
-// (RFC 5280 §4.2.1.2 method 1, as most CAs' are): with Roots, the
-// checker trusts an intermediate's declared identifier only then.
+// Key Identifier can't be named this way and is an error. Name CAs
+// whose identifier is derived from their key (RFC 5280 §4.2.1.2 method
+// 1 or RFC 7093 method 1, as most CAs' are): a verifying checker
+// matches a CA by those alone, and a trust anchor by another only when
+// it's in the checker's Anchors and no other anchor claims it.
 func AKITrustedAuthorities(cas ...*x509.Certificate) (TrustedAuthoritiesQuery, error) {
 	if len(cas) == 0 {
 		return TrustedAuthoritiesQuery{}, errors.New("dcql: aki trusted authorities: at least one CA certificate is required")

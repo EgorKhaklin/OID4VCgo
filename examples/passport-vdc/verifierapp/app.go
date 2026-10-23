@@ -220,6 +220,11 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verifierapp: %w", err)
 	}
+	// The "aki" values name the CAs by their declared Subject Key
+	// Identifiers: no two may claim the same one.
+	if err := (dcql.AKITrustedAuthoritiesChecker{Anchors: cfg.IssuerCAs}).Validate(); err != nil {
+		return nil, fmt.Errorf("verifierapp: IssuerCAs: %w", err)
+	}
 	ids, err := loadIdentities(cfg.StateDir, time.Now())
 	if err != nil {
 		return nil, err
@@ -276,7 +281,7 @@ func (a *App) newTransactions(sc Scenario, sg signer, registrar signer) (*verifi
 	verify := verifier.VerifyResponseRequest{
 		IssuerKeys:         verifier.X5CIssuerKeyResolver{Roots: a.issuerRoots},
 		MdocIssuerKeys:     verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots},
-		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Roots: a.issuerRoots},
+		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Anchors: a.cfg.IssuerCAs},
 		MaxKeyBindingAge:   5 * time.Minute,
 		// The issuer's clock may be ahead of this one (another
 		// machine, as through a tunnel): a credential is valid from
