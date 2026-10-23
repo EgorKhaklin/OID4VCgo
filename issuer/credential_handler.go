@@ -34,6 +34,13 @@ type AccessTokenVerifier interface {
 }
 
 // Grant is what a verified access token allows.
+//
+// Subject and Authorized.Subject must be equal: Prepare looks up what
+// to issue by the first, while deferred transactions and
+// notification_ids are bound to the second, so a Grant whose two differ
+// (or that sets only one) would issue one holder's Credentials under
+// another's, or no, binding. The handlers answer such a Grant with a
+// 500, as an AccessTokenVerifier misconfiguration.
 type Grant struct {
 	// Subject is who the token was issued for — for a token minted by
 	// ExchangePreAuthorizedCode, the redeemed PreAuthorizedCodeRecord's
@@ -41,7 +48,7 @@ type Grant struct {
 	Subject string
 
 	// Authorized is checked against the Credential Request by
-	// RequestCredential.
+	// RequestCredential. Its Subject must be Subject.
 	Authorized AuthorizedRequest
 
 	// DPoPNonce, if set, is sent as the response's DPoP-Nonce header,
@@ -157,6 +164,12 @@ func authorizePost(w http.ResponseWriter, r *http.Request, endpoint *url.URL, to
 	grant, err := tokens.Verify(r, endpoint)
 	if err != nil {
 		tokens.WriteError(w, err)
+		return Grant{}, nil, false
+	}
+	if grant.Subject != grant.Authorized.Subject {
+		// The verifier's own inconsistency, not the Wallet's: a 500
+		// that doesn't reveal either subject.
+		http.Error(w, "server_error", http.StatusInternalServerError)
 		return Grant{}, nil, false
 	}
 	if grant.DPoPNonce != "" {

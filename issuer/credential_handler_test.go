@@ -41,7 +41,7 @@ func newCredentialHandler(t *testing.T, f credentialEndpointFixture, prepareErr 
 	t.Helper()
 	run := &credentialHandlerRun{tokens: &fakeTokens{grant: issuer.Grant{
 		Subject: "holder-1", DPoPNonce: "next-nonce",
-		Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}},
+		Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Subject: "holder-1", Scopes: []string{"identity_credential"}},
 	}}}
 	h, err := f.iss.CredentialHandler(issuer.CredentialHandlerConfig{
 		URL: mustURL(t, testCredentialEndpoint), Tokens: run.tokens,
@@ -117,6 +117,45 @@ func TestCredentialHandler_Issues(t *testing.T) {
 	}
 	if len(run.outcome) != 1 || !run.outcome[0] {
 		t.Errorf("done called with %v, want [true]", run.outcome)
+	}
+}
+
+// TestHandlers_RefuseInconsistentGrantSubjects: a Grant whose Subject
+// and Authorized.Subject differ, or that sets only one, is answered
+// with a 500 by every protected endpoint, before Prepare runs or
+// anything is read from the request.
+func TestHandlers_RefuseInconsistentGrantSubjects(t *testing.T) {
+	for name, grant := range map[string]issuer.Grant{
+		"differ":                  {Subject: "holder-1", Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Subject: "holder-2"}},
+		"only Subject":            {Subject: "holder-1", Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}},
+		"only Authorized.Subject": {Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Subject: "holder-1"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newDeferralFixture(t)
+			h, run := newCredentialHandler(t, f.credentialEndpointFixture, nil)
+			run.tokens.grant = grant
+			if w := postCredentialRequest(t, h, sdjwtCredentialRequestBody(t, f.credentialEndpointFixture)); w.Code != http.StatusInternalServerError || run.prepared != nil {
+				t.Errorf("credential endpoint = %d, Prepare called: %v; want 500 without Prepare", w.Code, run.prepared != nil)
+			}
+			if _, err := f.nonces.Consume(context.Background(), issuer.NonceConsumption{Nonce: "test-nonce"}); err != nil {
+				t.Errorf("the refused request consumed the nonce: %v", err)
+			}
+			tokens := &fakeTokens{grant: grant}
+			dh, err := f.iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{ProtectedEndpointConfig: protectedEndpoint(t, tokens)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w := postCredentialRequest(t, dh, `{"transaction_id":"x"}`); w.Code != http.StatusInternalServerError {
+				t.Errorf("deferred credential endpoint = %d, want 500", w.Code)
+			}
+			nh, err := f.iss.NotificationEndpointHandler(protectedEndpoint(t, tokens))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w := postCredentialRequest(t, nh, `{"notification_id":"x","event":"credential_accepted"}`); w.Code != http.StatusInternalServerError {
+				t.Errorf("notification endpoint = %d, want 500", w.Code)
+			}
+		})
 	}
 }
 

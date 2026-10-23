@@ -257,7 +257,7 @@ func TestDeferral_NeedsADeferredEndpoint(t *testing.T) {
 func TestDeferral_Handlers(t *testing.T) {
 	f := newDeferralFixture(t)
 	h, err := f.iss.CredentialHandler(issuer.CredentialHandlerConfig{
-		URL: mustURL(t, testCredentialEndpoint), Tokens: &fakeTokens{grant: issuer.Grant{Authorized: deferralAuth}},
+		URL: mustURL(t, testCredentialEndpoint), Tokens: &fakeTokens{grant: issuer.Grant{Subject: deferralAuth.Subject, Authorized: deferralAuth}},
 		Prepare: func(_ context.Context, _ issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
 			req.Defer = &issuer.Deferral{}
 			return nil, nil
