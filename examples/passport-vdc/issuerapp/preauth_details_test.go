@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
@@ -87,7 +89,10 @@ func detailsWallet(t *testing.T, env *demotest.Env, configIDs ...string) (wallet
 // TestPreAuthorized_AcceptsAuthorizationDetails: a pre-authorized code
 // Token Request naming configurations in authorization_details gets an
 // access token, and a Token Response with a credential_identifier for
-// each of them (§6.2), rather than spending the code on an error.
+// each of them (§6.2), rather than spending the code on an error; the
+// wallet then requests, and gets, each credential by its
+// credential_identifier, as §8.2 requires once the token has them (the
+// issuer refuses a credential_configuration_id then).
 func TestPreAuthorized_AcceptsAuthorizationDetails(t *testing.T) {
 	ctx := context.Background()
 	env := demotest.New(t, nil)
@@ -99,9 +104,13 @@ func TestPreAuthorized_AcceptsAuthorizationDetails(t *testing.T) {
 		t.Error("the Authorization Server's metadata doesn't list openid_credential authorization_details")
 	}
 	cfg, transport := detailsWallet(t, env, issuerapp.MdocConfigurationID, issuerapp.SDJWTConfigurationID)
-	// Only the token is checked here, not the Credential Requests that
-	// follow it.
-	_, _ = walletapp.Receive(ctx, cfg, offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
+	received, err := walletapp.Receive(ctx, cfg, offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
+	if err != nil || len(received) != 2 {
+		t.Errorf("Receive = %d credentials, %v; want both", len(received), err)
+	}
+	if got := statusFormats(env.Issuer.IssuedStatuses()); !got[mdoc.CredentialFormat] || !got[sdjwtvc.CredentialFormat] {
+		t.Errorf("status entries for %v, want one for each format", got)
+	}
 
 	transport.mu.Lock()
 	defer transport.mu.Unlock()
@@ -120,5 +129,38 @@ func TestPreAuthorized_AcceptsAuthorizationDetails(t *testing.T) {
 	}
 	if !identified[issuerapp.MdocConfigurationID] || !identified[issuerapp.SDJWTConfigurationID] {
 		t.Errorf("Token Response authorization_details = %+v, want a credential_identifier for each configuration", token.AuthorizationDetails)
+	}
+}
+
+// statusFormats is the formats statuses were allocated for.
+func statusFormats(statuses []issuerapp.IssuedStatus) map[string]bool {
+	out := map[string]bool{}
+	for _, s := range statuses {
+		out[s.Format] = true
+	}
+	return out
+}
+
+// TestPreAuthorized_ReviewByCredentialIdentifier: a passport uploaded
+// for review, its credentials requested by credential_identifier, is
+// deferred into a review of each requested configuration.
+func TestPreAuthorized_ReviewByCredentialIdentifier(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	offer, err := env.Issuer.CreateOffer(ctx, demotest.SyntheticEvidence(), issuerapp.OfferOptions{PreAuthorized: true, Review: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := detailsWallet(t, env, issuerapp.MdocConfigurationID, issuerapp.SDJWTConfigurationID)
+	received, pending, err := walletapp.ReceiveDeferrable(ctx, cfg, offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
+	if err != nil || len(received) != 0 || len(pending) != 2 {
+		t.Fatalf("ReceiveDeferrable = %d received, %d pending, %v; want both deferred", len(received), len(pending), err)
+	}
+	formats := map[string]bool{}
+	for _, rv := range env.Issuer.Reviews() {
+		formats[rv.Format] = true
+	}
+	if !formats[mdoc.CredentialFormat] || !formats[sdjwtvc.CredentialFormat] {
+		t.Errorf("reviews for %v, want one for each format", formats)
 	}
 }
