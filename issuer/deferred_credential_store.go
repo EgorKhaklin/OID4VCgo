@@ -77,6 +77,16 @@ type DeferredTransactionRecord struct {
 	BindingKeys               []json.RawMessage
 	ExpiresAt                 time.Time
 
+	// KeyAttestations are the compact Key Attestation JWTs (Appendix D)
+	// that attested BindingKeys, each once, when the request's proofs
+	// carried any. IssueDeferredCredential verifies each again, its
+	// signature, exp and, with Dependencies.AttestationStatus, its
+	// status, so a key attestation that has expired or been revoked
+	// while the transaction was pending stops the issuance. A record
+	// without them, one saved before this field existed or for proofs
+	// with no key attestation, has nothing to check again.
+	KeyAttestations []string
+
 	// Reference is the deployment's own handle for the business
 	// process behind the transaction (Deferral.Reference).
 	Reference string

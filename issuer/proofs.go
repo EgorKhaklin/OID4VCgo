@@ -134,12 +134,10 @@ func (iss *Issuer) resolveKeyAttestationHeader(
 	if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
 		return nil, err
 	}
-	if iss.deps.AttestationStatus != nil {
-		if err := iss.deps.AttestationStatus.CheckAttestationStatus(ctx, verified); err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: key_attestation status", i), err)
-		}
+	if err := iss.checkAttestationStatus(ctx, verified); err != nil {
+		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: key_attestation status", i), err)
 	}
-	return appendAttestedKeys(nil, verified, i, iss.maxBatchSize())
+	return appendAttestedKeys(nil, verified, compact, i, iss.maxBatchSize())
 }
 
 // appendUniqueKeys appends each of add to keys unless keys already has
@@ -420,12 +418,10 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 		if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
 			return nil, err
 		}
-		if iss.deps.AttestationStatus != nil {
-			if err := iss.deps.AttestationStatus.CheckAttestationStatus(ctx, verified); err != nil {
-				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: status", i), err)
-			}
+		if err := iss.checkAttestationStatus(ctx, verified); err != nil {
+			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: status", i), err)
 		}
-		keys, err = appendAttestedKeys(keys, verified, i, maxKeys)
+		keys, err = appendAttestedKeys(keys, verified, raw, i, maxKeys)
 		if err != nil {
 			return nil, err
 		}
@@ -500,7 +496,7 @@ func meetsKeyAttestationRequirement(verified attestation.VerifiedClaims, req *oi
 	return nil
 }
 
-func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims, i, maxKeys int) ([]resolvedKey, error) {
+func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims, compact string, i, maxKeys int) ([]resolvedKey, error) {
 	for j, attestedKeyRaw := range verified.AttestedKeys {
 		if len(keys) >= maxKeys {
 			return nil, newError(ErrorInvalidProof, 400,
@@ -510,9 +506,19 @@ func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims,
 		if err != nil {
 			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d]: parse jwk", i, j), err)
 		}
+		key.KeyAttestation = compact
 		keys = append(keys, key)
 	}
 	return keys, nil
+}
+
+// checkAttestationStatus runs Dependencies.AttestationStatus, when set,
+// on a verified key attestation.
+func (iss *Issuer) checkAttestationStatus(ctx context.Context, verified attestation.VerifiedClaims) error {
+	if iss.deps.AttestationStatus == nil {
+		return nil
+	}
+	return iss.deps.AttestationStatus.CheckAttestationStatus(ctx, verified)
 }
 
 // consumeNonce consumes nonce via NonceStore and checks it hasn't

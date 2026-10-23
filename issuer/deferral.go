@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo"
@@ -28,6 +29,14 @@ type Deferral struct {
 	// DeferredTransactionRecord, never sent to the Wallet.
 	Reference string
 }
+
+// ErrDeferredKeyAttestation is returned, wrapped with the reason, by
+// IssueDeferredCredential when a key attestation that attested the
+// transaction's binding keys no longer verifies (it has expired, been
+// revoked, or lost its trust): the transaction is denied instead of
+// issued, and the Wallet's next poll receives credential_request_denied
+// (§9.3).
+var ErrDeferredKeyAttestation = errors.New("issuer: a key attestation behind the deferred transaction is no longer valid")
 
 // ErrDeferredTransactionResolved is returned by IssueDeferredCredential
 // and DenyDeferredCredential for a transaction that isn't pending any
@@ -56,13 +65,18 @@ func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, co
 	}
 	transactionID := base64.RawURLEncoding.EncodeToString(raw)
 	bindingKeys := make([]json.RawMessage, len(keys))
+	var keyAttestations []string
 	for i, k := range keys {
 		bindingKeys[i] = k.JWKRaw
+		if k.KeyAttestation != "" && !slices.Contains(keyAttestations, k.KeyAttestation) {
+			keyAttestations = append(keyAttestations, k.KeyAttestation)
+		}
 	}
 	record := DeferredTransactionRecord{
 		ClientID: auth.ClientID(), Subject: auth.Subject, Status: DeferredTransactionPending,
 		CredentialConfigurationID: configID, BindingKeys: bindingKeys, Reference: d.Reference,
-		ExpiresAt: iss.deps.Clock.Now().Add(iss.cfg.Limits.DeferredTransactionLifetime),
+		ExpiresAt:       iss.deps.Clock.Now().Add(iss.cfg.Limits.DeferredTransactionLifetime),
+		KeyAttestations: keyAttestations,
 	}
 	if err := iss.deps.DeferredTransactions.Create(ctx, transactionID, record); err != nil {
 		return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: save deferred transaction: %w", err)
@@ -91,6 +105,12 @@ type DeferredIssuance struct {
 // them. It returns ErrDeferredTransactionResolved for a transaction
 // that isn't pending, and an error for an unknown one.
 //
+// The key attestations the transaction's request carried
+// (DeferredTransactionRecord.KeyAttestations) are verified again first,
+// as of now: one that has expired, been revoked or is no longer trusted
+// denies the transaction, and IssueDeferredCredential returns
+// ErrDeferredKeyAttestation, wrapped with the reason.
+//
 // Concurrent calls for one transaction may each build Credentials, and
 // run content.PerCredential for them, but only the first to finish
 // saves them; the others return ErrDeferredTransactionResolved, and
@@ -117,6 +137,12 @@ func (iss *Issuer) issueDeferredCredential(ctx context.Context, transactionID st
 			return record.ClientID, fmt.Errorf("issuer: issue deferred credential: binding key %d: %w", i, err)
 		}
 		keys[i] = resolvedKey{Public: pub, JWKRaw: raw}
+	}
+	if err := iss.recheckKeyAttestations(ctx, cc, record); err != nil {
+		if _, denyErr := iss.denyPending(ctx, transactionID); denyErr != nil {
+			return record.ClientID, denyErr
+		}
+		return record.ClientID, fmt.Errorf("issuer: issue deferred credential: %w: %w", ErrDeferredKeyAttestation, err)
 	}
 	credentials, err := iss.issueBatch(ctx, cc, CredentialRequest{
 		SDJWTClaims: content.SDJWTClaims, MdocClaims: content.MdocClaims, PerCredential: content.PerCredential,
@@ -151,17 +177,57 @@ func (iss *Issuer) DenyDeferredCredential(ctx context.Context, transactionID str
 	var clientID string
 	err := iss.requireDeferredStore()
 	if err == nil {
-		err = iss.deps.DeferredTransactions.Update(ctx, transactionID, func(cur *DeferredTransactionRecord) error {
-			clientID = cur.ClientID
-			if err := iss.checkPending(*cur); err != nil {
-				return err
-			}
-			cur.Status = DeferredTransactionDenied
-			return nil
-		})
+		clientID, err = iss.denyPending(ctx, transactionID)
 	}
 	iss.audit(ctx, AuditEventDenyDeferredCredential, clientID, err)
 	return err
+}
+
+// denyPending marks the pending transaction transactionID denied, and
+// returns its client. It returns ErrDeferredTransactionResolved for a
+// transaction that isn't pending.
+func (iss *Issuer) denyPending(ctx context.Context, transactionID string) (string, error) {
+	var clientID string
+	err := iss.deps.DeferredTransactions.Update(ctx, transactionID, func(cur *DeferredTransactionRecord) error {
+		clientID = cur.ClientID
+		if err := iss.checkPending(*cur); err != nil {
+			return err
+		}
+		cur.Status = DeferredTransactionDenied
+		return nil
+	})
+	return clientID, err
+}
+
+// recheckKeyAttestations verifies record's KeyAttestations again, as of
+// now: each one's signature against the key
+// Dependencies.AttestationVerifier resolves, by an algorithm one of
+// cc's proof types accepts, its exp, and its status
+// (checkAttestationStatus). The request-time checks of freshness
+// (nonce, iat) and of the proofs themselves aren't repeated: they were
+// met when the transaction was created.
+func (iss *Issuer) recheckKeyAttestations(ctx context.Context, cc CredentialConfiguration, record DeferredTransactionRecord) error {
+	if len(record.KeyAttestations) == 0 {
+		return nil
+	}
+	if iss.deps.AttestationVerifier == nil {
+		return fmt.Errorf("this issuer has no Dependencies.AttestationVerifier to verify them with")
+	}
+	var algs []string
+	for _, ptc := range cc.ProofTypesSupported {
+		algs = append(algs, ptc.ProofSigningAlgValuesSupported...)
+	}
+	now := iss.deps.Clock.Now()
+	for i, compact := range record.KeyAttestations {
+		verified, err := iss.verifyOneAttestation(ctx, compact, i, now, algs)
+		if err != nil {
+			return err
+		}
+		if err := iss.checkAttestationStatus(ctx, verified); err != nil {
+			return fmt.Errorf("attestation %d: status: %w", i, err)
+		}
+	}
+	return nil
 }
 
 // abandonDeferral denies a pending transaction whose Credential

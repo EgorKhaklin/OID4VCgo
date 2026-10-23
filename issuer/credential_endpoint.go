@@ -303,9 +303,13 @@ type CredentialInstance struct {
 // with its public members only (publicJWK), never the Wallet's own
 // bytes, whether the key came from a jwt proof's "jwk" header, a
 // kid/x5c resolution, or an attestation's attested_keys.
+// KeyAttestation is the compact Key Attestation JWT that attested the
+// key, "" for a key no attestation vouched for: a deferral keeps it so
+// IssueDeferredCredential can check it again.
 type resolvedKey struct {
-	Public crypto.PublicKey
-	JWKRaw json.RawMessage
+	Public         crypto.PublicKey
+	JWKRaw         json.RawMessage
+	KeyAttestation string
 }
 
 // RequestCredential implements the Credential Endpoint (§8): it

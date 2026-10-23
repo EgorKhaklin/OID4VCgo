@@ -631,12 +631,15 @@ changes whether *every* bullet below is `(done)`.
   `RequestCredential` caller) makes `RequestCredential` check the
   request and its proofs, consuming the nonce, then save a pending
   `DeferredTransactionRecord` — the configuration, the proofs' binding
-  keys as public JWKs, the client, a deployment `Reference` and an
-  `ExpiresAt` (`Limits.DeferredTransactionLifetime`) — and answer 202
-  with a random 256-bit `transaction_id` and `interval`.
-  `IssueDeferredCredential` later issues one Credential per stored key
-  from the content it's given, exactly as an immediate issuance would,
-  with a `notification_id` bound to the stored client;
+  keys as public JWKs, the key attestations that attested them, the
+  client, a deployment `Reference` and an `ExpiresAt`
+  (`Limits.DeferredTransactionLifetime`) — and answer 202 with a random
+  256-bit `transaction_id` and `interval`.
+  `IssueDeferredCredential` later verifies those key attestations again
+  (signature, `exp`, status), denying the transaction if one no longer
+  verifies, then issues one Credential per stored key from the content
+  it's given, exactly as an immediate issuance would, with a
+  `notification_id` bound to the stored client;
   `DenyDeferredCredential` refuses it. `DeferredCredentialHandlerConfig.Resolve`
   lets a deployment decide at poll time instead, only for the polling
   client's own transaction. `DeferredTransactionStore` gained `Create`
