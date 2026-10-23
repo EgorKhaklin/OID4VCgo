@@ -84,9 +84,10 @@ type VerifyOptions struct {
 
 	// MaxAge, if set, refuses a token issued longer ago (its iat): a
 	// signed list from before a revocation stays valid until its exp,
-	// or forever without one, so anyone who can serve bytes at the
-	// status URI (a cache, a mirror) could replay it. Zero leaves
-	// freshness to exp.
+	// so anyone who can serve bytes at the status URI (a cache, a
+	// mirror) could replay it until then. Zero leaves freshness to exp
+	// for a token that has one, and refuses a token without exp issued
+	// more than DefaultMaxAgeWithoutExp ago.
 	MaxAge time.Duration
 
 	// MaxClockSkew is how far in the future a token's iat may be;
@@ -211,7 +212,8 @@ const DefaultMaxAgeWithoutExp = 24 * time.Hour
 
 // checkTokenTimes checks a Status List Token's iat, which draft-14
 // §5.1 requires, exp and nbf, against opts: issued not in the future
-// (past MaxClockSkew), not longer ago than MaxAge when it's set, not
+// (past MaxClockSkew), not longer ago than MaxAge when it's set (or
+// DefaultMaxAgeWithoutExp, when neither it nor exp is), not
 // expired, and not before its nbf (RFC 7519 §4.1.5: it "MUST NOT be
 // accepted for processing" before then, past MaxClockSkew).
 func checkTokenTimes(iat int64, exp, nbf *int64, opts VerifyOptions) error {
