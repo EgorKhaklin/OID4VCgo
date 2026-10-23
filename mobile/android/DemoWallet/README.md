@@ -51,6 +51,17 @@ Android answers over OpenID4VP, mdocs included: `org-iso-mdoc` is the iOS demo's
 This has run on the API 37 emulator with Google Play; on a physical
 device it's still to be tried (MOBILE.md's Phase 8 open items).
 
+## Screen privacy
+
+Both activities set `FLAG_SECURE` on their window, so the recents
+screen's thumbnail, screenshots and screen recordings show nothing of a
+portrait or a passport's claims. An app on the library should do the
+same on every screen that shows credentials, and keep claims and QR
+codes (a device engagement) out of its logs. Issuer logos are URLs the
+issuer chose: fetch one once, when the holder accepts the credential,
+and keep it, rather than loading it on the offer's preview (which tells
+the issuer, or a tracker it names, that the offer was opened).
+
 ## Configuration
 
 The app takes its configuration — the JSON mobile/cmd/testservices
@@ -195,10 +206,8 @@ the same services, Bluetooth on, screen lock set:
    holder shows an unknown reader).
 5. Swap the phones' roles.
 
-Two Android emulators can do it too, over the emulator's own Bluetooth:
-the holder's debug build logs its QR code's text (`adb logcat -s
-DemoWallet`), and `adb -s <reader> shell am start -a
-android.intent.action.VIEW -d '<mdoc:…>'` hands it to the reader.
+The demo doesn't log its QR code: the device engagement is for the
+reader that scans it, not for anything that can read the device's log.
 
 ## UI tests, against test services
 

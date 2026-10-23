@@ -12,9 +12,27 @@ struct DemoWalletApp: App {
                 .environment(model)
                 .environment(inPerson)
                 .onOpenURL { model.openFromOutside($0) }
+                // iOS snapshots the window for the app switcher as the
+                // scene leaves the foreground: cover claims and portraits
+                // first.
+                .overlay { if scenePhase != .active { PrivacyCover() } }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await model.becameActive() } }
         }
+    }
+}
+
+/// What the app switcher's snapshot shows instead of the wallet's screens.
+struct PrivacyCover: View {
+    var body: some View {
+        ZStack {
+            Rectangle().fill(.background)
+            Image(systemName: "wallet.pass")
+                .font(.system(size: 64))
+                .foregroundStyle(.secondary)
+        }
+        .ignoresSafeArea()
+        .accessibilityHidden(true)
     }
 }
