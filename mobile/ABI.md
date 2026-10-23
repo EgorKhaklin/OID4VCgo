@@ -679,24 +679,62 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 | `Request(docType, elementsJSON)` | `{"send"}`: send the base64 SessionEstablishment once connected. `elementsJSON` is `{namespace: [identifiers]}`. A reader key requiring user presence prompts now. Once per session (`wrong_step` otherwise) |
 | `HandleMessage(message)` | `{"event", "verified", "send", "reason", "error"}` for the holder's answer. The session is then over: send `send` if present, write `0x02` to State, and disconnect. `event` is `verified` or `ended`. `reason`, for `ended`, is `declined` (status 20, which isn't authenticated) or `error`, with `error` the failing call's text (`protocol` for a response that doesn't verify) |
 | `Terminate()` | `{"send"}`: the reader cancelled or timed out. Send `send` (status 20) if connected, then disconnect |
+| `CheckStatus(op)` | `{"status"}`: the revocation status of the mdoc `HandleMessage` verified, fetched from the network (see below). `wrong_step` before a verified mdoc |
 
 `verified` is `{"doctype", "claims", "device_signed_claims", "issuer",
-"trust_anchor", "valid_from", "valid_until", "device_auth", "status"}`.
-It means the issuer's chain reaches `issuer_roots` (with §9.3.3's
-country checks), and the digests, validity and device authentication
-over this session all verified. The disclosed elements are only ones
-the request asked for. `claims` is `{namespace: {identifier: value}}`
-with values as a wallet's claims (byte strings as base64, dates as
-their text). The holder may withhold elements, so check that each one
-needed is there. `device_auth` is `signature` or `mac`. `status`, when
-present, is the MSO's revocation reference, which isn't checked: check
-it before relying on the document. It's `{"type": "status_list", "uri",
-"idx"}` or `{"type": "identifier_list", "uri", "id"}` (`id` as base64),
-with `certificate` (base64 DER), the list signer's trust anchor, when
-the MSO names one. `type` and the identifier list were added within ABI
-version 12; before, an identifier list gave no `status`.
+"trust_anchor", "valid_from", "valid_until", "device_auth", "status",
+"issuer_chain"}`. It means the issuer's chain reaches `issuer_roots`
+(with §9.3.3's country checks), and the digests, validity and device
+authentication over this session all verified. The disclosed elements
+are only ones the request asked for. `claims` is `{namespace:
+{identifier: value}}` with values as a wallet's claims (byte strings as
+base64, dates as their text). The holder may withhold elements, so check
+that each one needed is there. `device_auth` is `signature` or `mac`.
+`issuer_chain` is the document signer's verified certificate path, leaf
+first, ending at the root in `issuer_roots` it chained to, as base64
+DER: decide which issuers to accept on it. `issuer` and `trust_anchor`
+are its first and last certificates' common names, which any document
+signer under a trusted root can choose, so they're for display only.
+`status`, when present, is the MSO's revocation reference, which
+`HandleMessage` doesn't check: call `CheckStatus` before relying on the
+document. It's `{"type": "status_list", "uri", "idx"}` or `{"type":
+"identifier_list", "uri", "id"}` (`id` as base64), with `certificate`
+(base64 DER), the list signer's trust anchor, when the MSO names one.
+`type` and the identifier list were added within ABI version 12; before,
+an identifier list gave no `status`.
 
-ProximityReader was added within ABI version 12.
+```json
+{"abi": 12, "event": "verified", "verified": {
+  "doctype": "org.iso.18013.5.1.mDL",
+  "claims": {"org.iso.18013.5.1": {"family_name": "Doe"}},
+  "issuer": "Example DS", "trust_anchor": "Example IACA",
+  "valid_from": "2026-10-01T00:00:00Z", "valid_until": "2027-10-01T00:00:00Z",
+  "device_auth": "signature",
+  "status": {"type": "status_list", "uri": "https://issuer.example/status/1", "idx": 412},
+  "issuer_chain": ["MIIB…", "MIIC…"]}}
+```
+
+`CheckStatus(op)` fetches the Token Status List `status` names, as a
+CWT, over https from public addresses only, and verifies it as ISO/IEC
+18013-5 §12.3.6 requires: signed under `status`'s `certificate` when
+there is one, or else under the CA that signed the document signer,
+chaining to the same root in `issuer_roots` as the document, not to
+another IACA the reader trusts. It returns `{"abi", "status"}`, where
+`status` is `valid`, `invalid` (revoked), `suspended`, another status
+the list defines (`0x` and its value), `none` (the MSO names no
+revocation list) or `unknown` (an identifier list, §12.3.6.3, which this
+reader can't check). Rely on the document only on `valid` or `none`. A
+failed fetch is `network`, a list that doesn't verify `protocol`, and
+cancelling `op` makes it `cancelled`. The list covers many documents, so
+fetching it doesn't tell its publisher which one was presented; it can
+be called after the BLE session has ended.
+
+```json
+{"abi": 12, "status": "valid"}
+```
+
+ProximityReader was added within ABI version 12, and later within it
+`issuer_chain` and `CheckStatus`.
 
 ## Other functions
 

@@ -1160,8 +1160,17 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   the GATT server and serves the Ident characteristic. The holder side
   offered peripheral server mode only at first; it offers either, or
   both, now.
-- **Revocation isn't checked:** the result carries the MSO's status
-  list reference for the app to check, as `proximity.Verify` leaves it.
+- **Revocation is a separate call:** `HandleMessage` reports the MSO's
+  status reference unchecked, as `proximity.Verify` leaves it, since it
+  runs on the BLE path and a status list is a network fetch. At first
+  that was all, and the result carried only the issuer's and trust
+  anchor's common names, so an app couldn't bind a status list's signer
+  to the document's CA (ISO/IEC 18013-5 §12.3.6) itself. The result now
+  carries `issuer_chain`, and `ProximityReaderSession.CheckStatus(op)`
+  fetches and verifies the list (`statuslist.Checker` with
+  `mdoc.StatusTrust`, under the root the document chained to, public
+  addresses only), reporting `valid`, `invalid`, `suspended`, `none` or
+  `unknown` (an identifier list, which isn't checked).
 
 ### Phase 10 findings: the Android SDK
 

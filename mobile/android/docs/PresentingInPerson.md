@@ -65,6 +65,7 @@ import dev.idfoundry.oid4vcwallet.NfcPresentation
 import dev.idfoundry.oid4vcwallet.ProximityBLEMode
 import dev.idfoundry.oid4vcwallet.ProximityDiagnostics
 import dev.idfoundry.oid4vcwallet.MdocPresentation
+import dev.idfoundry.oid4vcwallet.MdocStatus
 import dev.idfoundry.oid4vcwallet.ProximityPresentation
 import dev.idfoundry.oid4vcwallet.ProximityReader
 import dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration
@@ -124,7 +125,10 @@ authentication extended key usage (`ProximityReaderConfiguration`).
 `start` takes the holder's QR code and what to ask for.
 
 ```kotlin
-/** Reads an mDL's name and portrait from the holder whose QR code was scanned. Returns the verified mdoc, or null if the holder declined. */
+/**
+ * Reads an mDL's name and portrait from the holder whose QR code was scanned. Returns the verified
+ * mdoc, or null if the holder declined or the mdoc isn't known to be unrevoked.
+ */
 suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String): VerifiedMdoc? {
     val reader = ProximityReader(ProximityReaderConfiguration(issuerRoots = issuerRoots))
     val session = reader.start(
@@ -132,7 +136,10 @@ suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String):
         mapOf("org.iso.18013.5.1" to listOf("given_name", "family_name", "portrait")),
     )
     return when (val state = session.state.first { it.isFinal }) {
-        is ProximityReaderSession.State.Verified -> state.result
+        is ProximityReaderSession.State.Verified -> when (session.checkStatus()) {
+            MdocStatus.Valid, MdocStatus.NoStatus -> state.result
+            else -> null
+        }
         is ProximityReaderSession.State.Failed -> throw state.error
         else -> null
     }
@@ -140,8 +147,18 @@ suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String):
 ```
 
 `VerifiedMdoc` carries the disclosed elements, the document signer and
-the IACA it chains to, and its validity. Its status list reference is
-unchecked: check it before relying on the document.
+the IACA it chains to, and its validity. Decide which issuers to accept
+on `issuerChain`, the verified certificate path: `issuer` and
+`trustAnchor` are names any document signer under a trusted IACA can
+choose, for display.
+
+The session doesn't check revocation itself: `session.checkStatus()`
+does, once the session is `Verified`. It fetches the issuer's status
+list over the network, so the reader needs a connection then, and
+verifies the list is signed under the certificate the document names or
+the CA that signed the document signer (ISO/IEC 18013-5 §12.3.6). Rely
+on the document only when it's `MdocStatus.Valid` or
+`MdocStatus.NoStatus`.
 
 ## NFC holder and reader
 

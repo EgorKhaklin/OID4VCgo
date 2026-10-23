@@ -144,8 +144,17 @@ final class ProximityTests: XCTestCase {
         XCTAssertNil(v.claims[Self.namespace]?["given_name"])
         XCTAssertEqual(v.deviceAuth, "signature")
         XCTAssertNotNil(v.statusList)
+        XCTAssertGreaterThanOrEqual(v.issuerChain.count, 2)
         let held = try await final(holder.states) { $0.isFinal }
         guard case .presented(linkable: false) = held else { return XCTFail("holder: \(held)") }
+
+        // The reader checks the status list the MSO names, and sees a
+        // revocation.
+        let status = try await reader.checkStatus()
+        XCTAssertEqual(status, .valid)
+        s.env.env.revoke()
+        let revoked = try await reader.checkStatus()
+        XCTAssertEqual(revoked, .revoked)
     }
 
     /// With MAC preferred, the holder key agrees a key with the reader's

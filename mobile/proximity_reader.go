@@ -1,6 +1,7 @@
 package mobile
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/proximity"
+	"github.com/idfoundry/oid4vcgo/statuslist"
+	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
 // ProximityReader is an ISO/IEC 18013-5 mdoc reader: a verifier asking
@@ -151,6 +154,8 @@ type ProximityReaderSession struct {
 	s       *proximity.ReaderSession
 	asked   bool
 	stopped bool
+	// verified is the mdoc HandleMessage verified, for CheckStatus.
+	verified *proximity.Verified
 }
 
 // Start reads qrCode, the holder's QR code ("mdoc:…"), and derives the
@@ -242,6 +247,10 @@ type verifiedJSON struct {
 	ValidUntil         string         `json:"valid_until"`
 	DeviceAuth         string         `json:"device_auth"`
 	Status             *statusRefJSON `json:"status,omitempty"`
+	// IssuerChain is the document signer's verified certificate path,
+	// leaf first, ending at the trusted root, as base64 DER: what to
+	// decide on, where Issuer and TrustAnchor are only for display.
+	IssuerChain []string `json:"issuer_chain"`
 }
 
 type statusRefJSON struct {
@@ -291,12 +300,14 @@ func statusRefOf(status *mdoc.Status) *statusRefJSON {
 //     requested elements). verified is {"doctype", "claims":
 //     {namespace: {identifier: value}}, "device_signed_claims",
 //     "issuer", "trust_anchor", "valid_from", "valid_until",
-//     "device_auth" ("signature" or "mac"), "status"}: claims as the
-//     wallet's are (byte strings base64, dates their text). The holder
-//     may withhold elements: check each one needed is there. status,
-//     when present, is the MSO's status list reference ({"uri",
-//     "idx"}), which isn't checked: check it before relying on the
-//     document.
+//     "device_auth" ("signature" or "mac"), "status", "issuer_chain"}:
+//     claims as the wallet's are (byte strings base64, dates their
+//     text). The holder may withhold elements: check each one needed is
+//     there. status, when present, is the MSO's revocation reference,
+//     which isn't checked here: call CheckStatus before relying on the
+//     document. issuer_chain is the document signer's verified path,
+//     leaf first, ending at the trusted root, as base64 DER; issuer and
+//     trust_anchor are its common names, for display only.
 //   - "ended": no verified mdoc. reason is "declined" (the holder ended
 //     the session without answering — not authenticated: anyone in
 //     radio range can send that) or "error", with error, a failing
@@ -317,6 +328,7 @@ func (p *ProximityReaderSession) HandleMessage(message []byte) string {
 	switch {
 	case err == nil:
 		out.Event, out.Verified = "verified", verifiedOf(v)
+		p.verified = &v
 	case errors.Is(err, proximity.ErrDeclined):
 		out.Reason = "declined"
 	default:
@@ -349,7 +361,98 @@ func verifiedOf(v proximity.Verified) *verifiedJSON {
 		}
 	}
 	out.Status = statusRefOf(v.Status)
+	out.IssuerChain = make([]string, len(v.IssuerChain))
+	for i, c := range v.IssuerChain {
+		out.IssuerChain[i] = base64.StdEncoding.EncodeToString(c.Raw)
+	}
 	return out
+}
+
+// CheckStatus checks the revocation status of the mdoc HandleMessage
+// verified, and returns {"abi", "status"}. It fetches the Token Status
+// List the MSO names, as a CWT, and verifies it as ISO/IEC 18013-5
+// §12.3.6 says: signed under the Certificate the MSO's status names,
+// or else under the CA that signed the document signer, chaining to
+// the root the document did rather than to any IACA the reader trusts.
+// status is "valid", "invalid" (revoked), "suspended", another status
+// the list defines as "0x" and its value, "none" (the MSO names no
+// revocation list) or "unknown" (it names an identifier list,
+// §12.3.6.3, which this reader can't check): rely on the document only
+// on "valid" or "none". The list covers many documents, so fetching it
+// doesn't tell its publisher which one is checked. It's fetched over
+// https from public addresses only. A failed fetch is network, a list
+// that doesn't verify protocol, and before a verified mdoc it's
+// wrong_step. Cancelling op cancels it.
+func (p *ProximityReaderSession) CheckStatus(op *Operation) (string, error) {
+	p.mu.Lock()
+	v := p.verified
+	p.mu.Unlock()
+	if v == nil {
+		return "", newError(CodeWrongStep, errors.New("no verified mdoc to check"))
+	}
+	status, err := p.r.checkStatus(op.context(), *v)
+	if err != nil {
+		return "", classify(err)
+	}
+	return marshal(struct {
+		result
+		Status string `json:"status"`
+	}{result{ABIVersion}, status})
+}
+
+// checkStatus is v's revocation status, as CheckStatus reports it.
+func (r *ProximityReader) checkStatus(ctx context.Context, v proximity.Verified) (string, error) {
+	switch {
+	case v.Status == nil || (v.Status.StatusList == nil && v.Status.IdentifierList == nil):
+		return "none", nil
+	case v.Status.StatusList == nil:
+		return "unknown", nil
+	case len(v.IssuerChain) == 0:
+		return "", errors.New("no issuer chain to bind the status list's signer to")
+	}
+	ref := v.Status.StatusList
+	trust, err := mdoc.StatusTrust(ref, v.IssuerChain)
+	if err != nil {
+		return "", err
+	}
+	roots := trust.Roots
+	if roots == nil {
+		roots = x509.NewCertPool()
+		roots.AddCert(v.IssuerChain[len(v.IssuerChain)-1])
+	}
+	checker := statuslist.Checker{
+		Fetcher: statusFetcher(),
+		Roots:   roots,
+		Options: statuslist.VerifyOptions{Now: r.clock, LeafPolicy: trust.LeafPolicy},
+	}
+	status, _, err := checker.Check(ctx, statuslist.StatusListRef{Idx: ref.Idx, URI: ref.URI}, true)
+	if err != nil {
+		return "", err
+	}
+	return statusValue(status), nil
+}
+
+// statusFetcher is the reader's status list fetcher: public addresses
+// only, or with the mobiletest build's test client, its in-process
+// issuer's too.
+func statusFetcher() statuslist.Fetcher {
+	if c := testHTTP.Load(); c != nil {
+		return statuslist.Fetcher{HTTP: c, AllowLoopback: true}
+	}
+	return statuslist.Fetcher{}
+}
+
+// statusValue is s as walletflow names a credential's status.
+func statusValue(s statuslist.StatusType) string {
+	switch s {
+	case statuslist.StatusValid:
+		return walletflow.StatusValid
+	case statuslist.StatusInvalid:
+		return walletflow.StatusInvalid
+	case statuslist.StatusSuspended:
+		return walletflow.StatusSuspended
+	}
+	return fmt.Sprintf("0x%02x", uint8(s))
 }
 
 // Terminate ends the session — the reader cancelled or timed out — and

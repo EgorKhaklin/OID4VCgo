@@ -83,7 +83,7 @@ class ProximityTest {
         keys.deleteKeys(emptySet())
     }
 
-    private class Setup(val wallet: Wallet, val reader: ProximityReader, val mdocID: String)
+    private class Setup(val wallet: Wallet, val reader: ProximityReader, val mdocID: String, val env: TestEnv)
 
     /** A wallet holding the test mdoc and recognizing the test reader, and that reader. */
     private suspend fun setup(
@@ -113,7 +113,7 @@ class ProximityTest {
         } else {
             ProximityReader(ProximityReaderConfiguration(issuerRoots = readerConfig.issuerRoots))
         }
-        return Setup(wallet, reader, mdocID)
+        return Setup(wallet, reader, mdocID, env)
     }
 
     private fun start(s: Setup, modes: Set<ProximityBLEMode> = setOf(ProximityBLEMode.PERIPHERAL_SERVER)): Pair<ProximityPresentation, ProximityReaderSession> {
@@ -161,7 +161,13 @@ class ProximityTest {
         assertEquals(setOf("family_name"), claims.keys)
         assertEquals("signature", verified.deviceAuth)
         assertTrue(verified.statusList != null)
+        assertTrue(verified.issuerChain.size >= 2)
         assertEquals(ProximityPresentation.State.Presented(false), awaitFinal(holder.state) { it.isFinal })
+
+        // The reader checks the status list the MSO names, and sees a revocation.
+        assertEquals(MdocStatus.Valid, reader.checkStatus())
+        s.env.env.revoke()
+        assertEquals(MdocStatus.Revoked, reader.checkStatus())
     }
 
     /** Actual Kotlin/Go bindings and Keystore, simulated NFC APDUs and BLE messages. */

@@ -126,8 +126,10 @@ is a complete, working app on this library to compare against.
   leaving the screen.
 - [ ] The result says how it went: `session.usesNfcData`, and the BLE
   `mode` only when that's false.
-- [ ] `VerifiedMdoc`'s status list reference isn't checked: check it
-  before relying on the document.
+- [ ] Call `session.checkStatus()` once the session is `Verified`, and
+  rely on the document only on `MdocStatus.Valid` or
+  `MdocStatus.NoStatus`. Decide which issuers to accept on
+  `VerifiedMdoc.issuerChain`, not on its `issuer` name.
 - [ ] *Check:* both a QR holder and an NFC holder verify; an mdoc from
   an issuer outside `issuerRoots` is refused.
 

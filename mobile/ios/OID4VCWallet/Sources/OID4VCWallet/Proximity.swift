@@ -756,6 +756,54 @@ public final class ProximityReaderSession: @unchecked Sendable {
         guard broadcast.update(final, if: { !$0.isFinal }) else { return }
         transport.close()
     }
+
+    /// Checks the revocation status of the mdoc the session verified:
+    /// fetches the Token Status List its MSO names, over https from a
+    /// public address, and verifies it's signed under the certificate the
+    /// MSO names or else under the CA that signed the document signer
+    /// (ISO/IEC 18013-5 §12.3.6). Rely on the document only when this is
+    /// `.valid` or `.noStatus`. Call it once the session is `.verified`, after
+    /// the Bluetooth connection has closed; before, it throws `WalletError`
+    /// `.wrongStep`. A failed fetch is `.network`, a list that doesn't
+    /// verify `.protocol`; cancelling the calling Task cancels it. The list
+    /// covers many documents, so fetching it doesn't tell its publisher
+    /// which one was presented.
+    public func checkStatus() async throws -> MdocStatus {
+        let s = handle
+        let json = try await OID4VC.cancellable { op in try OID4VC.call { s.checkStatus(op, error: $0) } }
+        return MdocStatus(try decode(StatusJSON.self, json).status)
+    }
+
+    struct StatusJSON: Decodable { let status: String }
+}
+
+/// A verified mdoc's revocation status, as
+/// `ProximityReaderSession.checkStatus()` found it.
+public enum MdocStatus: Equatable, Sendable {
+    /// Neither revoked nor suspended.
+    case valid
+    /// Revoked for good (the list's `invalid`).
+    case revoked
+    /// Suspended, for now.
+    case suspended
+    /// A status the issuer's list defines itself, as "0x" and its value.
+    case other(String)
+    /// The MSO names no revocation list.
+    case noStatus
+    /// The MSO names an identifier list (ISO/IEC 18013-5 §12.3.6.3), which
+    /// isn't checked: the status isn't known.
+    case unknown
+
+    init(_ text: String) {
+        switch text {
+        case "valid": self = .valid
+        case "invalid": self = .revoked
+        case "suspended": self = .suspended
+        case "none": self = .noStatus
+        case "unknown": self = .unknown
+        default: self = .other(text)
+        }
+    }
 }
 
 /// A verified mdoc, as a `ProximityReaderSession` received it.
@@ -767,9 +815,11 @@ public struct VerifiedMdoc: Sendable {
     public let claims: [String: JSONValue]
     /// Any device-signed elements.
     public let deviceSignedClaims: [String: JSONValue]?
-    /// The document signer certificate's subject common name.
+    /// The document signer certificate's subject common name, for display:
+    /// any document signer under a trusted IACA can choose it, so decide
+    /// on `issuerChain`.
     public let issuer: String
-    /// The common name of the IACA it chains to.
+    /// The common name of the IACA it chains to, for display.
     public let trustAnchor: String
     /// When the mdoc's signed data (its MSO) became valid.
     public let validFrom: Date
@@ -777,9 +827,14 @@ public struct VerifiedMdoc: Sendable {
     public let validUntil: Date
     /// "signature" or "mac".
     public let deviceAuth: String
-    /// The MSO's status list reference, unchecked: check it before
-    /// relying on the document.
+    /// The MSO's status list reference, unchecked: call
+    /// `ProximityReaderSession.checkStatus()` before relying on the
+    /// document.
     public let statusList: StatusListReference?
+    /// The document signer's verified certificate path, leaf first,
+    /// ending at the IACA in `ProximityReaderConfiguration.issuerRoots`
+    /// it chains to: decide which issuers to accept on it.
+    public let issuerChain: [SecCertificate]
 
     /// Where the mdoc's status is published: a Token Status List, and its index
     /// in it.
@@ -809,18 +864,23 @@ struct VerifiedJSON: Decodable {
     let validUntil: Date
     let deviceAuth: String
     let status: Status?
+    let issuerChain: [Data]?
 
-    struct Status: Decodable { let uri: String; let idx: Int }
+    /// `idx` is left out when 0, and an identifier list has none.
+    struct Status: Decodable { let type: String?; let uri: String; let idx: Int? }
 
     enum CodingKeys: String, CodingKey {
         case doctype, claims, issuer, status
         case deviceSignedClaims = "device_signed_claims", trustAnchor = "trust_anchor"
         case validFrom = "valid_from", validUntil = "valid_until", deviceAuth = "device_auth"
+        case issuerChain = "issuer_chain"
     }
 
     var mdoc: VerifiedMdoc {
-        VerifiedMdoc(doctype: doctype, claims: claims, deviceSignedClaims: deviceSignedClaims, issuer: issuer,
-                     trustAnchor: trustAnchor, validFrom: validFrom, validUntil: validUntil, deviceAuth: deviceAuth,
-                     statusList: status.map { VerifiedMdoc.StatusListReference(uri: $0.uri, index: $0.idx) })
+        let list = status.flatMap { $0.type == nil || $0.type == "status_list" ? $0 : nil }
+        return VerifiedMdoc(doctype: doctype, claims: claims, deviceSignedClaims: deviceSignedClaims, issuer: issuer,
+                            trustAnchor: trustAnchor, validFrom: validFrom, validUntil: validUntil, deviceAuth: deviceAuth,
+                            statusList: list.map { VerifiedMdoc.StatusListReference(uri: $0.uri, index: $0.idx ?? 0) },
+                            issuerChain: (issuerChain ?? []).compactMap { SecCertificateCreateWithData(nil, $0 as CFData) })
     }
 }
