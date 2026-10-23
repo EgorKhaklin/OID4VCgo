@@ -137,8 +137,9 @@ type credentialSetJSON struct {
 // query is the request's, in its order, with the credentials that can
 // answer it (none when nothing can); multiple says whether it takes more
 // than one. For a Verifier with a verified registration, unregistered
-// are the claims paths the query asks for beyond it, and
-// unregistered_all whether it asks for every claim, which no
+// are the claims paths the query asks for beyond it, then those its
+// credentials would disclose along with them beyond it (the rest of an
+// array disclosed as one, say), and unregistered_all whether it asks for every claim, which no
 // registration covers; nothing is refused for them. credential_sets are its sets of
 // alternatives, each option the query IDs that together answer it, most
 // preferred first; none means every query must be answered.
@@ -211,8 +212,11 @@ func selection(selectionJSON string) (walletflow.Selection, error) {
 // path]}]}, a claim path being a JSON array of keys (and indexes, or
 // null for every element). always_disclosed are the SD-JWT VC claims
 // disclosed beyond claims: those its issuer didn't make selectively
-// disclosable, and the plaintext members of a disclosed object a
-// claim sits within. Show them with claims. retained are the claims the
+// disclosable, and what shares a Disclosure with a claim: the
+// plaintext members of a disclosed object or array element a claim
+// sits within, and the other elements of an array disclosed as one.
+// Each is a leaf (an index counts the credential's elements). Show them
+// with claims. retained are the claims the
 // Verifier says it will keep (an mdoc's intent_to_retain): show that
 // with them. A selection that doesn't answer the request as it asks
 // is invalid_selection.

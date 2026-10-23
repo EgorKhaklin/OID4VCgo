@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
@@ -87,5 +88,41 @@ func TestRegistration(t *testing.T) {
 	}
 	if r := start(w, registered, "family_name"); r.Status != walletflow.RegistrationInvalid || r.Unregistered != nil {
 		t.Errorf("another registrar: %+v, want invalid", r)
+	}
+}
+
+// TestRegistration_JudgesWhatIsDisclosed: a Verifier registered for
+// nationalities[0] that asks for it, of a credential whose issuer
+// disclosed the array as one, receives nationalities[1] too: that's
+// beyond its registration.
+func TestRegistration_JudgesWhatIsDisclosed(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{PlainClaims: map[string]any{"nationalities": sdjwtvc.SD([]any{"DE", "IR"})}})
+	first := dcql.Path{dcql.PathKey("nationalities"), dcql.PathIndex(0)}
+	registered, err := f.env.StartRegisteredVerifier(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		VerifierTrust: registered.Trust, Development: true, RegistrarRoots: f.env.RegistrarRoots,
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receive(t, f, w, walletflowtest.SDJWTConfigurationID)
+	q := f.env.SDJWTQuery(t, "pid")
+	q.Claims = []dcql.ClaimsQuery{{Path: first}}
+	_, link, err := registered.Begin(dcql.Query{Credentials: []dcql.CredentialQuery{q}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := w.StartPresentation(context.Background(), link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := p.Registration()
+	want := dcql.Path{dcql.PathKey("nationalities"), dcql.PathIndex(1)}
+	if r.Status != walletflow.RegistrationVerified || len(r.Unregistered["pid"]) != 1 || !slices.Equal(r.Unregistered["pid"][0], want) {
+		t.Errorf("Unregistered = %v, want [%v]", r.Unregistered, want)
 	}
 }
