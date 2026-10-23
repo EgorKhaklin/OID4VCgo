@@ -154,6 +154,13 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("parse: %w", err)
 	}
+	if pres.HasKeyBinding() {
+		// An issued SD-JWT ends with "~" (RFC 9901 §4). What follows the
+		// last one would be taken for a Key Binding JWT, which Verify
+		// doesn't check here: a final Disclosure without its "~" would be
+		// dropped unseen, and anything else kept beside the credential.
+		return VerifiedIssuedCredential{}, errors.New("parse: an issued SD-JWT must end with '~', not a Key Binding JWT or an unterminated Disclosure")
+	}
 	header, _, err := jose.DecodeUnverified(pres.IssuerJWT)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("decode issuer JWT: %w", err)
