@@ -66,6 +66,9 @@ jobs:
           - id: cose-verify-mac
             pkg: ./internal/cose
             name: FuzzVerifyMAC
+          - id: strictcbor-wellformed
+            pkg: ./internal/strictcbor
+            name: FuzzWellformed
           - id: mdoc-unmarshal-issuer-signed
             pkg: ./credential/mdoc
             name: FuzzUnmarshalIssuerSigned

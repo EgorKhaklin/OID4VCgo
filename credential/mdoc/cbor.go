@@ -101,8 +101,14 @@ func wrapTag24(v interface{}) ([]byte, error) {
 // unwrapTag24 decodes a #6.24(bstr .cbor v) value produced by wrapTag24
 // into v.
 func unwrapTag24(data []byte, v interface{}) error {
+	return unwrapTag24With(decMode, data, v)
+}
+
+// unwrapTag24With is unwrapTag24 through mode, such as one with the
+// item budget of the message data is part of.
+func unwrapTag24With(mode strictcbor.DecMode, data []byte, v interface{}) error {
 	var t cbor.Tag
-	if err := decMode.Unmarshal(data, &t); err != nil {
+	if err := mode.Unmarshal(data, &t); err != nil {
 		return fmt.Errorf("mdoc: unmarshal tag 24: %w", err)
 	}
 	if t.Number != tag24 {
@@ -112,7 +118,7 @@ func unwrapTag24(data []byte, v interface{}) error {
 	if !ok {
 		return fmt.Errorf("mdoc: tag %d content is not a byte string", tag24)
 	}
-	if err := decMode.Unmarshal(inner, v); err != nil {
+	if err := mode.Unmarshal(inner, v); err != nil {
 		return fmt.Errorf("mdoc: unmarshal tag 24 content: %w", err)
 	}
 	return nil

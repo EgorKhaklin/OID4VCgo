@@ -7,6 +7,7 @@ import (
 	"hash"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 )
 
 // randomMinLength is §12.3.5's minimum length for IssuerSignedItem.Random.
@@ -134,11 +135,15 @@ func UnmarshalIssuerSignedMax(data []byte, maxBytes int) (IssuerSigned, error) {
 	if len(data) > maxBytes {
 		return IssuerSigned{}, fmt.Errorf("mdoc: IssuerSigned is %d bytes, exceeds the %d byte limit", len(data), maxBytes)
 	}
+	// One item budget for the IssuerSigned and every
+	// IssuerSignedItemBytes in it: each item is decoded on its own, and
+	// its elementValue into interface{}.
+	mode := decMode.WithBudget(strictcbor.DefaultMaxItems)
 	var wire wireIssuerSigned
-	if err := decMode.Unmarshal(data, &wire); err != nil {
+	if err := mode.Unmarshal(data, &wire); err != nil {
 		return IssuerSigned{}, fmt.Errorf("mdoc: unmarshal IssuerSigned: %w", err)
 	}
-	nameSpaces, err := decodeIssuerNameSpaces(wire.NameSpaces)
+	nameSpaces, err := decodeIssuerNameSpaces(mode, wire.NameSpaces)
 	if err != nil {
 		return IssuerSigned{}, err
 	}
@@ -184,13 +189,13 @@ func digest(alg DigestAlg, itemBytes []byte) ([]byte, error) {
 
 // decodeIssuerNameSpaces decodes wire (§10.3.3's IssuerNameSpaces:
 // namespace => [+ IssuerSignedItemBytes]) into its logical form.
-func decodeIssuerNameSpaces(wire map[string][]cbor.RawMessage) (map[string][]IssuerSignedItem, error) {
+func decodeIssuerNameSpaces(mode strictcbor.DecMode, wire map[string][]cbor.RawMessage) (map[string][]IssuerSignedItem, error) {
 	out := make(map[string][]IssuerSignedItem, len(wire))
 	for namespace, itemBytesList := range wire {
 		items := make([]IssuerSignedItem, len(itemBytesList))
 		for i, itemBytes := range itemBytesList {
 			var item IssuerSignedItem
-			if err := unwrapTag24(itemBytes, &item); err != nil {
+			if err := unwrapTag24With(mode, itemBytes, &item); err != nil {
 				return nil, fmt.Errorf("mdoc: decode namespace %q item %d: %w", namespace, i, err)
 			}
 			items[i] = item

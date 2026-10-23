@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 )
 
@@ -51,8 +52,13 @@ func mustSortedEncMode() cbor.EncMode {
 
 func mustDecMode() strictcbor.DecMode {
 	mode, err := cbor.DecOptions{
-		MaxArrayElements: 1 << 16,
-		MaxMapPairs:      1 << 16,
+		// credential/mdoc's bounds, which the documents a
+		// DeviceResponse carries are decoded within anyway. No
+		// proximity message comes near them: a DeviceRequest holds
+		// MaxDocRequests documents and MaxRequestedElements elements.
+		MaxNestedLevels:  mdoc.MaxCBORNestedLevels,
+		MaxArrayElements: mdoc.MaxCBORContainerItems,
+		MaxMapPairs:      mdoc.MaxCBORContainerItems,
 		DupMapKey:        cbor.DupMapKeyEnforcedAPF,
 		// ISO/IEC 18013-5's map keys are case-sensitive: "DocType"
 		// isn't "docType".
