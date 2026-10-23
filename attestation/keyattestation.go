@@ -215,6 +215,12 @@ func (a KeyAttestation) KeyID() string {
 	return kid
 }
 
+// Issuer returns the claims' "iss", or "" if absent. Untrusted until
+// Verify succeeds; use only to select or check the key to verify
+// against (issuer.X5CAttestationVerifier binds it to the signing
+// certificate).
+func (a KeyAttestation) Issuer() string { return a.claims.Issuer }
+
 // X5C returns the header's "x5c" certificate chain, or nil if absent.
 // Untrusted until Verify succeeds.
 func (a KeyAttestation) X5C() []string { return stringSlice(a.header["x5c"]) }

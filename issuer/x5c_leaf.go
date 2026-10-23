@@ -19,6 +19,27 @@ import (
 // attestation), and the chain is checked at the verification time ctx
 // carries (the Issuer's Clock), as the rest of the request is.
 func resolveX5CLeaf(ctx context.Context, x5c []any, roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error) (*x509.Certificate, error) {
+	ders, err := presentedX5CDERs(x5c)
+	if err != nil {
+		return nil, err
+	}
+	return certchain.VerifyLeafWithPolicyAt(ders, roots, policy, certchain.TimeFrom(ctx))
+}
+
+// resolveX5CChains is resolveX5CLeaf without a policy, also returning
+// the leaf's verified paths (leaf first, anchor last), for a caller
+// that checks which anchor a path ends at.
+func resolveX5CChains(ctx context.Context, x5c []any, roots *x509.CertPool) (*x509.Certificate, [][]*x509.Certificate, error) {
+	ders, err := presentedX5CDERs(x5c)
+	if err != nil {
+		return nil, nil, err
+	}
+	return certchain.VerifyChainsAt(ders, roots, certchain.TimeFrom(ctx))
+}
+
+// presentedX5CDERs decodes x5c, requiring at least one entry and no
+// trust anchor among them.
+func presentedX5CDERs(x5c []any) ([][]byte, error) {
 	if len(x5c) == 0 {
 		return nil, fmt.Errorf("issuer: x5c must be a non-empty array")
 	}
@@ -29,5 +50,5 @@ func resolveX5CLeaf(ctx context.Context, x5c []any, roots *x509.CertPool, policy
 	if err := certchain.CheckNoAnchor(ders); err != nil {
 		return nil, fmt.Errorf("issuer: %w", err)
 	}
-	return certchain.VerifyLeafWithPolicyAt(ders, roots, policy, certchain.TimeFrom(ctx))
+	return ders, nil
 }
