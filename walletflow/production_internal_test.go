@@ -195,6 +195,10 @@ func TestNew_RoleSeparation(t *testing.T) {
 		"equal pools built twice":                  {Config{IssuerRoots: shared, IssuerMetadataRoots: sharedCopy}, false},
 		"a reissued anchor's subject":              {Config{IssuerRoots: shared, VerifierTrust: wallet.X5CVerifierRoots{Roots: reissued}}, false},
 		"overlapping pools, in dev":                {Config{IssuerRoots: issuers, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared}, Development: true}, true},
+		"one pool for both credential formats":     {Config{IssuerRoots: shared, MdocIssuerRoots: shared, MdocIssuerRootsByDocType: map[string]*x509.CertPool{"a": shared}}, true},
+		"one pool for mdoc issuers and Verifiers":  {Config{IssuerRoots: verifiers, MdocIssuerRoots: shared, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, false},
+		"one pool for mdoc issuers, both narrowed": {Config{MdocIssuerRoots: shared, MdocIssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, true},
+		"a document type's pool and readers":       {Config{IssuerRoots: verifiers, MdocIssuerRootsByDocType: map[string]*x509.CertPool{"a": issuers}, MdocReaderRoots: shared, MdocReaderLeafPolicy: policy}, false},
 	} {
 		_, err := New(tc.cfg, deps)
 		refused := err != nil && strings.Contains(err.Error(), "may share a trust anchor")

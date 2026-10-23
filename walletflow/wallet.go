@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/idfoundry/fapigo/keys"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -34,13 +37,39 @@ type Config struct {
 
 	// IssuerRoots are the trust anchors for issuers: every received
 	// credential must be signed by a certificate chaining to one of
-	// them, or it's refused. REQUIRED for StartIssuance.
+	// them, or it's refused — an mdoc only when MdocIssuerRoots and
+	// MdocIssuerRootsByDocType don't apply to it. REQUIRED for
+	// StartIssuance, unless the wallet receives only mdocs and those
+	// are set.
 	IssuerRoots *x509.CertPool
 	// IssuerLeafPolicy, if set, decides whether a certificate under
 	// IssuerRoots may sign credentials
 	// (wallet.VerifyIssuedCredentialParams.IssuerLeafPolicy): set it
 	// where IssuerRoots also anchor another role, such as Verifiers.
+	// It applies to an mdoc too unless MdocIssuerLeafPolicy is set or
+	// the mdoc's roots are mdoc-specific.
 	IssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+
+	// MdocIssuerRoots, if set, are the trust anchors for mdoc document
+	// signers (the IACAs, ISO/IEC 18013-5 Annex B) in place of
+	// IssuerRoots: a received mdoc ("mso_mdoc") must chain to one of
+	// them, and an anchor in IssuerRoots alone, an SD-JWT VC issuer's
+	// CA say, can't sign one. Unset, mdocs chain to IssuerRoots.
+	MdocIssuerRoots *x509.CertPool
+	// MdocIssuerRootsByDocType, if set, are each document type's own
+	// IACAs, as verifier.X5ChainIssuerKeyResolver's RootsByDocType: an
+	// mdoc of a type it names must chain to that type's anchors, not to
+	// MdocIssuerRoots or IssuerRoots, so a PID issuer's IACA can't sign
+	// an mDL, say. A type named with a nil pool is refused.
+	MdocIssuerRootsByDocType map[string]*x509.CertPool
+	// MdocIssuerLeafPolicy, if set, decides whether a certificate under
+	// an mdoc's roots may sign mdocs, in place of IssuerLeafPolicy:
+	// document signers carry another extended key usage than SD-JWT VC
+	// issuers (mdoc.MDLDocumentSignerEKU), so a wallet receiving both
+	// sets each its own. Unset, an mdoc under IssuerRoots gets
+	// IssuerLeafPolicy, and one under MdocIssuerRoots or
+	// MdocIssuerRootsByDocType mdoc.DefaultDocumentSignerPolicy.
+	MdocIssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	// StatusIssuers are the Status Issuers that may sign a credential
 	// issuer's status lists on its behalf (draft-ietf-oauth-status-list):
@@ -421,7 +450,7 @@ func withDefaultDependencies(cfg Config, deps Dependencies) (Dependencies, error
 // checkProductionReceiving's checks, and a Durable Authorizations store
 // when issuance redirects.
 func (w *Wallet) checkReceivingAtNew() error {
-	if w.cfg.Development || w.cfg.IssuerRoots == nil {
+	if w.cfg.Development || !w.cfg.receivesCredentials() {
 		return nil
 	}
 	if err := w.checkProductionReceiving(); err != nil {
@@ -455,18 +484,30 @@ func (c Config) validateChoices() error {
 // credentials the wallet accepts or an issuer's metadata, an issuer's
 // pass for a trusted Verifier or mdoc reader, or a Verifier register
 // itself. mayShareAnchor says what it can see of a pool.
+//
+// The credential issuers' pools, IssuerRoots and the mdoc ones, are
+// one role: an ecosystem's CA may certify both its SD-JWT VC issuers
+// and its document signers, and what tells those apart is their leaf
+// policies, not their anchors.
 func checkRoleSeparation(c Config) error {
 	roles := []trustRole{
-		{"IssuerRoots", c.IssuerRoots, c.IssuerLeafPolicy != nil},
-		{"IssuerMetadataRoots", c.IssuerMetadataRoots, c.IssuerMetadataLeafPolicy != nil},
-		{"RegistrarRoots", c.RegistrarRoots, c.RegistrarLeafPolicy != nil},
-		{"MdocReaderRoots", c.MdocReaderRoots, c.MdocReaderLeafPolicy != nil},
+		{"IssuerRoots", c.IssuerRoots, c.IssuerLeafPolicy != nil, roleIssuer},
+		{"MdocIssuerRoots", c.MdocIssuerRoots, c.MdocIssuerLeafPolicy != nil, roleIssuer},
+		{"IssuerMetadataRoots", c.IssuerMetadataRoots, c.IssuerMetadataLeafPolicy != nil, ""},
+		{"RegistrarRoots", c.RegistrarRoots, c.RegistrarLeafPolicy != nil, ""},
+		{"MdocReaderRoots", c.MdocReaderRoots, c.MdocReaderLeafPolicy != nil, ""},
+	}
+	for _, docType := range slices.Sorted(maps.Keys(c.MdocIssuerRootsByDocType)) {
+		roles = append(roles, trustRole{fmt.Sprintf("MdocIssuerRootsByDocType[%q]", docType), c.MdocIssuerRootsByDocType[docType], c.MdocIssuerLeafPolicy != nil, roleIssuer})
 	}
 	if r, ok := verifierTrustRole(c.VerifierTrust); ok {
 		roles = append(roles, r)
 	}
 	for i, a := range roles {
 		for _, b := range roles[i+1:] {
+			if a.family != "" && a.family == b.family {
+				continue
+			}
 			if err := separated(a, b); err != nil {
 				return err
 			}
@@ -475,12 +516,17 @@ func checkRoleSeparation(c Config) error {
 	return nil
 }
 
+// roleIssuer is the family of the credential issuers' pools.
+const roleIssuer = "issuer"
+
 // trustRole is one of the certificate pools checkRoleSeparation
-// compares, and whether a leaf policy tells its certificates apart.
+// compares, whether a leaf policy tells its certificates apart, and
+// the family of roles, if any, whose pools may share anchors.
 type trustRole struct {
 	name      string
 	pool      *x509.CertPool
 	hasPolicy bool
+	family    string
 }
 
 // verifierTrustRole is VerifierTrust's pool, by value or by pointer;
@@ -488,10 +534,10 @@ type trustRole struct {
 func verifierTrustRole(t wallet.VerifierTrust) (trustRole, bool) {
 	switch v := t.(type) {
 	case wallet.X5CVerifierRoots:
-		return trustRole{"VerifierTrust", v.Roots, v.LeafPolicy != nil}, true
+		return trustRole{"VerifierTrust", v.Roots, v.LeafPolicy != nil, ""}, true
 	case *wallet.X5CVerifierRoots:
 		if v != nil {
-			return trustRole{"VerifierTrust", v.Roots, v.LeafPolicy != nil}, true
+			return trustRole{"VerifierTrust", v.Roots, v.LeafPolicy != nil, ""}, true
 		}
 	}
 	return trustRole{}, false
@@ -615,12 +661,40 @@ func (w *Wallet) deleteCredential(ctx context.Context, id string) (StoredCredent
 	return c, nil
 }
 
+// receivesCredentials reports whether c trusts any credential issuer.
+func (c Config) receivesCredentials() bool {
+	return c.IssuerRoots != nil || c.MdocIssuerRoots != nil || len(c.MdocIssuerRootsByDocType) > 0
+}
+
+// issuerTrust is the trust anchors and leaf policy a received
+// credential of format, and for an mdoc docType, is checked against:
+// for an mdoc, MdocIssuerRootsByDocType's for a type it names, else
+// MdocIssuerRoots, else IssuerRoots, with MdocIssuerLeafPolicy, else
+// IssuerLeafPolicy under IssuerRoots alone. A nil pool is refused by
+// wallet.VerifyIssuedCredential, as a nil policy means
+// mdoc.DefaultDocumentSignerPolicy there.
+func (c Config) issuerTrust(format, docType string) (*x509.CertPool, func(*x509.Certificate, [][]*x509.Certificate) error) {
+	if format != mdoc.CredentialFormat {
+		return c.IssuerRoots, c.IssuerLeafPolicy
+	}
+	roots, policy := c.IssuerRoots, c.IssuerLeafPolicy
+	if byType, ok := c.MdocIssuerRootsByDocType[docType]; ok {
+		roots, policy = byType, nil
+	} else if c.MdocIssuerRoots != nil {
+		roots, policy = c.MdocIssuerRoots, nil
+	}
+	if c.MdocIssuerLeafPolicy != nil {
+		policy = c.MdocIssuerLeafPolicy
+	}
+	return roots, policy
+}
+
 // checkIssuance reports what StartIssuance needs that w lacks, whatever
 // the offer: what the grant an offer has needs is checked once it's
 // known (checkAuthorizationCode, chooseClientAuth).
 func (w *Wallet) checkIssuance() error {
 	switch {
-	case w.cfg.IssuerRoots == nil:
+	case !w.cfg.receivesCredentials():
 		return errors.New("walletflow: Config.IssuerRoots is required to receive credentials")
 	case w.cfg.IssuanceProfile == ProfileHAIP && (w.deps.Provider == nil || w.cfg.ClientID == ""):
 		return errors.New("walletflow: Dependencies.Provider and Config.ClientID are required to receive credentials under ProfileHAIP")
