@@ -3,8 +3,11 @@ package walletflow
 import (
 	"context"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"sort"
 	"sync"
@@ -130,7 +133,10 @@ type Presentation struct {
 // StartPresentation fetches and verifies the OpenID4VP Authorization
 // Request requestLink (an openid4vp:// link with client_id and
 // request_uri) from a Verifier Config.VerifierTrust accepts, and finds
-// the held credentials that can answer it, without sending anything.
+// the held credentials that can answer it, without sending anything
+// but the fetch: a GET of request_uri, or for a link with
+// request_uri_method=post a POST of a fresh wallet_nonce and the
+// wallet's metadata (OpenID4VP 1.0 §5.10).
 // Show the holder Verifier, Queries and CredentialSets, choose a
 // Selection (or start from DefaultSelection), Preview it, then Respond
 // or Decline.
@@ -144,8 +150,9 @@ func (w *Wallet) StartPresentation(ctx context.Context, requestLink string) (*Pr
 	}
 	// Checks the signing certificate chains to a trusted CA, the Request
 	// Object's signature, and that client_id is bound to that
-	// certificate.
-	req, err := w.core.FetchAuthorizationRequest(ctx, link.RequestURI, link.ClientID)
+	// certificate; after a POST, that the Request Object carries the
+	// wallet_nonce sent.
+	req, err := w.fetchAuthorizationRequest(ctx, link)
 	var rejected *wallet.RequestRejectedError
 	if errors.As(err, &rejected) {
 		return nil, w.refuse(ctx, rejected)
@@ -155,6 +162,37 @@ func (w *Wallet) StartPresentation(ctx context.Context, requestLink string) (*Pr
 	}
 	return w.newPresentation(ctx, req)
 }
+
+// fetchAuthorizationRequest fetches link's request_uri: by GET, unless
+// the link says request_uri_method=post (OpenID4VP 1.0 §5.10), when it
+// POSTs a fresh wallet_nonce and walletMetadata, and the Request Object
+// must carry that wallet_nonce back, so one fetched for another request
+// can't be replayed.
+func (w *Wallet) fetchAuthorizationRequest(ctx context.Context, link wallet.AuthorizationRequestLink) (wallet.AuthorizationRequest, error) {
+	if link.RequestURIMethod != wallet.RequestURIMethodPost {
+		return w.core.FetchAuthorizationRequest(ctx, link.RequestURI, link.ClientID)
+	}
+	var nonce [32]byte
+	if _, err := io.ReadFull(w.deps.Random, nonce[:]); err != nil {
+		return wallet.AuthorizationRequest{}, fmt.Errorf("wallet_nonce: %w", err)
+	}
+	return w.core.FetchAuthorizationRequestPost(ctx, link.RequestURI, link.ClientID, base64.RawURLEncoding.EncodeToString(nonce[:]), walletMetadata)
+}
+
+// walletMetadata is the wallet metadata (OpenID4VP 1.0 §10) sent with
+// a request_uri POST: what a presentation can be, as the wallet package
+// makes it. An SD-JWT VC's issuer signature is one VerifyIssuedCredential
+// accepted on receipt (ES256 or EdDSA), its Key Binding JWT ES256; an
+// mdoc's IssuerAuth likewise (COSE -7 or -8), its DeviceSignature ES256
+// (-7). Requests are accepted only from an x509_hash Client Identifier.
+// It asks for no encrypted Request Object, which the wallet can't
+// decrypt: neither jwks nor the encryption parameters that would ask
+// for one are sent. The response's encryption follows the Verifier's
+// client_metadata.
+var walletMetadata = json.RawMessage(`{"vp_formats_supported":{` +
+	`"dc+sd-jwt":{"sd-jwt_alg_values":["ES256","EdDSA"],"kb-jwt_alg_values":["ES256"]},` +
+	`"mso_mdoc":{"issuerauth_alg_values":[-7,-8],"deviceauth_alg_values":[-7]}},` +
+	`"client_id_prefixes_supported":["x509_hash"]}`)
 
 // refuse tells the Verifier its authentic request r is refused, by an
 // error response to its response_uri (OpenID4VP §8.5), and returns

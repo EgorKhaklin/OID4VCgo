@@ -386,7 +386,7 @@ Provider, are the app's to pin.
 | `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list and checks the list's signature against `issuer_roots` (an mdoc's, against the mdoc roots it was received under). The list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status list is returned as it is, as is an expired one: it isn't valid whatever its status, so its status list isn't fetched (draft-ietf-oauth-status-list §8.3) |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
-| `StartPresentation(op, requestLink)` | a `Presentation` |
+| `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
 | `TakeRefusalRedirect()` | once, the `redirect_uri` the Verifier answered the latest `request_refused` with, `""` for none: open it (OpenID4VP §8.2). Added within ABI 12 |
 
 A credential **summary** is `{"id", "credential_issuer",
