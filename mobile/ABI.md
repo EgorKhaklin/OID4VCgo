@@ -379,7 +379,9 @@ presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
   when it was received, in `locales`' language: `{"issuer_name",
   "issuer_logo", "name", "description", "logo", "background_color",
   "text_color"}`. A logo is `{"uri", "alt_text"}`, and only an https URL
-  or a `data:` image is passed on.
+  of a public host name (no IP address, single label, or name under
+  `localhost`, `local`, `home.arpa`, `internal` or `lan`) or a `data:`
+  image is passed on.
 - `valid_until` is when the credential expires.
 - `copies` is how many copies the wallet holds, each bound to its own
   key, and `copies_left` how many no Verifier has seen. A presentation

@@ -31,6 +31,21 @@ func TestLogoOf(t *testing.T) {
 		"https://2130706433/logo.png":       false,
 		"https://0x7f.1/logo.png":           false,
 		"https://10.0.0.010/logo.png":       false,
+		"https://[::ffff:7f00:1]/logo.png":  false,
+		// A single label or a local-only domain: names the phone's own
+		// network resolves.
+		"https://router/logo.png":             false,
+		"https://router./logo.png":            false,
+		"https://printer.local/logo.png":      false,
+		"https://PRINTER.LOCAL./logo.png":     false,
+		"https://nas.home.arpa/logo.png":      false,
+		"https://home.arpa/logo.png":          false,
+		"https://svc.corp.internal/logo.png":  false,
+		"https://nas.lan/logo.png":            false,
+		"https://lan/logo.png":                false,
+		"https://issuer.local.example/l.png":  true,
+		"https://issuer.lan.example/l.png":    true,
+		"https://internal.issuer.example/l.p": true,
 	} {
 		if got := logoOf(&oid4vci.Logo{URI: uri}) != nil; got != keep {
 			t.Errorf("logoOf(%q) kept = %v, want %v", uri, got, keep)
