@@ -73,6 +73,10 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 // checker's roots.
 // Where status lists come from a separate Status Issuer, use
 // RequireValidStatusFrom.
+//
+// Under AssuranceProduction, checker.Fetcher must be one whose
+// HardenedForProduction is true: this function doesn't know the
+// Verifier's assurance level, so it can't refuse one that isn't.
 func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id string, result VerifyResponseResult) error {
 	return RequireValidStatusFrom(checker, nil)
 }
