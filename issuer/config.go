@@ -511,10 +511,13 @@ type Dependencies struct {
 	// whenever the attestation proof type is supported.
 	AttestationVerifier AttestationVerifier
 
-	// AttestationStatus, if set, checks each attestation-type proof's
-	// key attestation for revocation (its "status" claim, OID4VCI
-	// Appendix D.1) after its signature verifies, and refuses the proof
-	// when it returns an error. Without it, a key attestation its Wallet
+	// AttestationStatus, if set, checks each key attestation — an
+	// attestation-type proof's, or a jwt proof's key_attestation header —
+	// for revocation (its "status" claim, OID4VCI Appendix D.1) after its
+	// signature verifies, and refuses the proof when it returns an
+	// error; IssueDeferredCredential checks a deferred request's again.
+	// It's given the attestation's signer, to bind the Status List
+	// Token's signer to (see AttestationStatusChecker). Without it, a key attestation its Wallet
 	// Provider has since revoked is accepted until it expires: under
 	// AssuranceProduction, New requires it whenever AttestationVerifier
 	// is set, unless Config.NoAttestationStatusCheck says the issuer

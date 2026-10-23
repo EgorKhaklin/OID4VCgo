@@ -10,7 +10,6 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
-	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/issuer"
@@ -169,7 +168,7 @@ func TestDeferral_RechecksKeyAttestation(t *testing.T) {
 			revoked, checked := false, 0
 			f := newDeferralFixture(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
 				cfg.Limits.DeferredTransactionLifetime = 3 * time.Hour
-				deps.AttestationStatus = attestationStatusFunc(func(context.Context, attestation.VerifiedClaims) error {
+				deps.AttestationStatus = attestationStatusFunc(func(context.Context, issuer.VerifiedKeyAttestation) error {
 					checked++
 					if revoked {
 						return errors.New("revoked")
@@ -222,7 +221,7 @@ func TestDeferral_RechecksKeyAttestation(t *testing.T) {
 func TestDeferral_NoKeyAttestationToRecheck(t *testing.T) {
 	checked := 0
 	f := newDeferralFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
-		deps.AttestationStatus = attestationStatusFunc(func(context.Context, attestation.VerifiedClaims) error { checked++; return nil })
+		deps.AttestationStatus = attestationStatusFunc(func(context.Context, issuer.VerifiedKeyAttestation) error { checked++; return nil })
 	})
 	txID, _ := f.deferOne(t)
 	if record, err := f.store.Get(context.Background(), txID); err != nil || record.KeyAttestations != nil {
