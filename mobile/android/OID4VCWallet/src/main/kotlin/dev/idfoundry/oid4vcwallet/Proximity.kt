@@ -403,21 +403,24 @@ public class ProximityPresentation internal constructor(
             if (current.isFinal) return
             if (_state.compareAndSet(current, final)) break
         }
-        scope.launch {
-            if (letReaderEnd) {
-                // Until the reader disconnects or ends: receive throws then.
-                withTimeoutOrNull(LINGER) { runCatching { while (true) transport.receive() } }
-            }
-            try {
-                withTimeout(5.seconds) { runner.cancelAndJoin() }
-                transport.close()
-                closed.complete(Unit)
-            } catch (e: Exception) {
-                runCatching { transport.close() }
-                closed.completeExceptionally(e)
-            } finally {
-                scope.cancel()
-            }
+        scope.launch { shutDown(letReaderEnd) }
+    }
+
+    /** Stops the session's work and closes the transport, as [finish] describes. */
+    private suspend fun shutDown(letReaderEnd: Boolean) {
+        if (letReaderEnd) {
+            // Until the reader disconnects or ends: receive throws then.
+            withTimeoutOrNull(LINGER) { runCatching { while (true) transport.receive() } }
+        }
+        try {
+            withTimeout(5.seconds) { runner.cancelAndJoin() }
+            transport.close()
+            closed.complete(Unit)
+        } catch (e: Exception) {
+            runCatching { transport.close() }
+            closed.completeExceptionally(e)
+        } finally {
+            scope.cancel()
         }
     }
 

@@ -862,15 +862,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         notice = null
         armingJob = viewModelScope.launch {
         try {
-            val e = inPersonEngagement
-            val p = when {
-                !e.nfc -> InPersonSession.Qr(wallet.startProximityPresentation(getApplication(), modes = bleModes))
-                // Both offered: the first reader to engage, by QR or by tap, wins.
-                e.qr -> InPersonSession.Combined(wallet.startCombinedPresentation(getApplication(), modes = bleModes,
-                    nfc = NfcEngagementOptions(negotiated = e.negotiated, nfcData = e.nfcData)))
-                else -> InPersonSession.Nfc(wallet.startNfcPresentation(getApplication(), modes = bleModes,
-                    negotiated = e.negotiated, nfcData = e.nfcData))
-            }
+            val p = startInPerson(wallet)
             inPerson = p
             refreshNfcForeground()
             inPersonJob = viewModelScope.launch {
@@ -888,6 +880,19 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             notice = describe(e)
         }
+        }
+    }
+
+    /** Starts the in-person session [inPersonEngagement] asks for. */
+    private suspend fun startInPerson(wallet: Wallet): InPersonSession {
+        val e = inPersonEngagement
+        return when {
+            !e.nfc -> InPersonSession.Qr(wallet.startProximityPresentation(getApplication(), modes = bleModes))
+            // Both offered: the first reader to engage, by QR or by tap, wins.
+            e.qr -> InPersonSession.Combined(wallet.startCombinedPresentation(getApplication(), modes = bleModes,
+                nfc = NfcEngagementOptions(negotiated = e.negotiated, nfcData = e.nfcData)))
+            else -> InPersonSession.Nfc(wallet.startNfcPresentation(getApplication(), modes = bleModes,
+                negotiated = e.negotiated, nfcData = e.nfcData))
         }
     }
 
