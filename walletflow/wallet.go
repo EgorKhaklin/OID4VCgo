@@ -191,9 +191,9 @@ type Config struct {
 	//     private networks, instead of the hardened one;
 	//   - skips the checks New makes at production assurance: Durable
 	//     Authorizations (and Grants, with RequestRefresh), Keys
-	//     declaring durable custody, Random crypto/rand, one pool per
-	//     role (or leaf policies) — and fapigo/client's own production
-	//     checks.
+	//     declaring durable custody, Random crypto/rand, roles' pools
+	//     sharing no anchor (or leaf policies) — and fapigo/client's
+	//     own production checks.
 	Development bool
 
 	// TLSPins, if set, pins hosts' certificates (see TLSPins) on the
@@ -435,14 +435,13 @@ func (c Config) validateChoices() error {
 	return nil
 }
 
-// checkRoleSeparation refuses, in production, one certificate pool
-// given to two roles unless both narrow their certificates by a leaf
-// policy (an extended key usage, say): otherwise a Verifier's
-// certificate under the shared pool could sign credentials the wallet
-// accepts or an issuer's metadata, an issuer's pass for a trusted
-// Verifier or mdoc reader, or a Verifier register itself. Pools are compared as wholes (CertPool
-// can't be listed), so only the same pool is caught; the mobile façade,
-// which has the certificates, also catches overlapping ones.
+// checkRoleSeparation refuses, in production, two roles whose
+// certificate pools may share an anchor unless both narrow their
+// certificates by a leaf policy (an extended key usage, say): otherwise
+// a Verifier's certificate under the shared anchor could sign
+// credentials the wallet accepts or an issuer's metadata, an issuer's
+// pass for a trusted Verifier or mdoc reader, or a Verifier register
+// itself. mayShareAnchor says what it can see of a pool.
 func checkRoleSeparation(c Config) error {
 	roles := []trustRole{
 		{"IssuerRoots", c.IssuerRoots, c.IssuerLeafPolicy != nil},
@@ -485,18 +484,62 @@ func verifierTrustRole(t wallet.VerifierTrust) (trustRole, bool) {
 	return trustRole{}, false
 }
 
-// separated refuses a and b sharing a pool unless both have a leaf
-// policy.
+// separated refuses a's and b's pools when they may share an anchor,
+// unless both have a leaf policy.
 func separated(a, b trustRole) error {
-	if a.pool == nil || b.pool == nil || !a.pool.Equal(b.pool) {
+	if !mayShareAnchor(a.pool, b.pool) {
 		return nil
 	}
 	for _, r := range []trustRole{a, b} {
 		if !r.hasPolicy {
-			return fmt.Errorf("walletflow: %s and %s are the same certificate pool: give %s a leaf policy (an extended key usage) to tell its certificates apart, or use separate pools", a.name, b.name, r.name)
+			return fmt.Errorf("walletflow: %s and %s may share a trust anchor: give %s a leaf policy (an extended key usage) to tell its certificates apart, or use pools with no certificate subject in common", a.name, b.name, r.name)
 		}
 	}
 	return nil
+}
+
+// mayShareAnchor reports whether pools a and b may vouch for the same
+// certificates. A CertPool lists only its certificates' subjects, so
+// they may when:
+//   - they're the same pool;
+//   - they hold certificates with the same subject: the same anchor, a
+//     reissue of it, or another CA that a certificate naming that
+//     subject as its issuer may chain to;
+//   - either is a system pool whose roots the platform keeps
+//     (x509.SystemCertPool on macOS, iOS and Windows) and doesn't list:
+//     it may hold any anchor.
+//
+// An intermediate or cross-certificate in one pool that an anchor of
+// the other certified under another subject isn't seen: give a role
+// whose pool holds one a leaf policy. The mobile façade, which has the
+// certificates, also catches those.
+func mayShareAnchor(a, b *x509.CertPool) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Equal(b) || opaqueSystemPool(a) || opaqueSystemPool(b) {
+		return true
+	}
+	//nolint:staticcheck // SA1019: deprecated only for a system pool's own roots, which opaqueSystemPool covers
+	as, bs := a.Subjects(), b.Subjects()
+	subjects := make(map[string]bool, len(as))
+	for _, s := range as {
+		subjects[string(s)] = true
+	}
+	for _, s := range bs {
+		if subjects[string(s)] {
+			return true
+		}
+	}
+	return false
+}
+
+// opaqueSystemPool reports whether p holds roots it doesn't list: it
+// lists no subjects yet isn't an empty pool, as x509.SystemCertPool's
+// is where the platform verifies against its own roots.
+func opaqueSystemPool(p *x509.CertPool) bool {
+	//nolint:staticcheck // SA1019: deprecated for exactly the pool this detects
+	return len(p.Subjects()) == 0 && !p.Equal(x509.NewCertPool())
 }
 
 func (c Config) assurance() wallet.AssuranceLevel {
