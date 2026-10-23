@@ -55,10 +55,10 @@ func mdocClaimsForRequest(docType string, nameSpaces map[string]map[string]inter
 	if nameSpaces == nil {
 		return nil
 	}
-	dayStart := time.Now().UTC().Truncate(24 * time.Hour)
+	signed, validFrom, validUntil := mdoc.RoundedValidity(time.Now(), lifetime)
 	return &mdoc.Claims{
 		DocType: docType, NameSpaces: nameSpaces,
-		Signed: dayStart, ValidFrom: dayStart, ValidUntil: dayStart.Add(lifetime),
+		Signed: signed, ValidFrom: validFrom, ValidUntil: validUntil,
 	}
 }
 
