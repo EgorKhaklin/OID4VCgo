@@ -31,8 +31,26 @@ type Responded struct {
 //
 // Show the holder PreviewPresentation's view of the same request and
 // credentials first: Respond sends without asking.
+//
+// client posts to response_uri, the Verifier's choice: in production it
+// must be one fapihttp.NewClient built, as SubmitDirectPostResponse
+// says. (*Wallet).Respond uses the Wallet's own client instead.
 func Respond(ctx context.Context, client fapihttp.HTTPClient, req AuthorizationRequest, credentials []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (Responded, error) {
 	return respond(ctx, client, req, PresentationRequest{Credentials: credentials}, trustedAuthorities)
+}
+
+// Respond is the package-level Respond sent with this Wallet's own HTTP
+// client (Dependencies.HTTP), which New has checked.
+func (w *Wallet) Respond(ctx context.Context, req AuthorizationRequest, credentials []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (Responded, error) {
+	return respond(ctx, w.deps.HTTP, req, PresentationRequest{Credentials: credentials}, trustedAuthorities)
+}
+
+// RespondSelection is the package-level RespondSelection sent with this
+// Wallet's own HTTP client (Dependencies.HTTP), which New has checked:
+// in production, the package-level form's client must be one
+// fapihttp.NewClient built, as SubmitDirectPostResponse says.
+func (w *Wallet) RespondSelection(ctx context.Context, req AuthorizationRequest, selection map[string][]HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (Responded, error) {
+	return respond(ctx, w.deps.HTTP, req, PresentationRequest{Selection: selection}, trustedAuthorities)
 }
 
 // respond presents what pr chooses (Credentials to match, or a

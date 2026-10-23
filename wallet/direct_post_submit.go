@@ -77,6 +77,12 @@ func (e *DirectPostRejectedError) Error() string {
 // redirect_uri, from wherever it pointed — plain http included. A
 // *http.Client is used with redirects turned off; for any other client,
 // a reply that didn't come from responseURI itself is refused.
+//
+// response_uri is the Verifier's choice, and nothing here checks the
+// address it reaches: in production, client must be one
+// fapihttp.NewClient built, which refuses internal addresses when it
+// dials, with a Timeout. (*Wallet).SubmitDirectPostResponse uses the
+// Wallet's own client, which New has already checked.
 func SubmitDirectPostResponse(ctx context.Context, client fapihttp.HTTPClient, responseURI, responseJWE string) (DirectPostResult, error) {
 	form := url.Values{"response": {responseJWE}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, responseURI, strings.NewReader(form.Encode()))
@@ -98,6 +104,13 @@ func SubmitDirectPostResponse(ctx context.Context, client fapihttp.HTTPClient, r
 		return DirectPostResult{}, fmt.Errorf("wallet: submit direct_post response: %w: %w", ErrResponseDelivered, err)
 	}
 	return result, nil
+}
+
+// SubmitDirectPostResponse is the package-level SubmitDirectPostResponse
+// sent with this Wallet's own HTTP client (Dependencies.HTTP), so the
+// POST to response_uri has the address checks and timeout New set up.
+func (w *Wallet) SubmitDirectPostResponse(ctx context.Context, responseURI, responseJWE string) (DirectPostResult, error) {
+	return SubmitDirectPostResponse(ctx, w.deps.HTTP, responseURI, responseJWE)
 }
 
 // readDirectPostReply reads the Verifier's reply to a direct_post

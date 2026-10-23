@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/x509"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -110,5 +111,21 @@ func TestRespond(t *testing.T) {
 	}
 	if _, err := wallet.Respond(ctx, srv.Client(), req, []wallet.HeldCredential{held}, nil); err == nil {
 		t.Error("a second answer to a completed request was accepted")
+	}
+
+	// The Wallet's own forms post through its client: this one trusts
+	// srv's certificate, so each reaches the Verifier, which refuses a
+	// second answer to the completed request as delivered.
+	deps := validDependencies()
+	deps.HTTP = srv.Client()
+	w, err := wallet.New(validConfig(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Respond(ctx, req, []wallet.HeldCredential{held}, nil); !errors.Is(err, wallet.ErrResponseDelivered) {
+		t.Errorf("(*Wallet).Respond to a completed request: %v, want it delivered and refused", err)
+	}
+	if _, err := w.RespondSelection(ctx, req, map[string][]wallet.HeldCredential{"cred": {held}}, nil); !errors.Is(err, wallet.ErrResponseDelivered) {
+		t.Errorf("(*Wallet).RespondSelection to a completed request: %v, want it delivered and refused", err)
 	}
 }
