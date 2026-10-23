@@ -130,6 +130,36 @@ func Leaf(t testing.TB, commonName string, ca *x509.Certificate, caKey *ecdsa.Pr
 	return cert, key
 }
 
+// Issue issues tmpl under parent/parentKey for a fresh EC P-256 key,
+// for a test that needs extensions Leaf and Intermediate don't set (a
+// key usage, an extended key usage). A zero SerialNumber, NotBefore or
+// NotAfter gets Leaf's.
+func Issue(t testing.TB, tmpl *x509.Certificate, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("testcert: generate key: %v", err)
+	}
+	if tmpl.SerialNumber == nil {
+		tmpl.SerialNumber = big.NewInt(4)
+	}
+	if tmpl.NotBefore.IsZero() {
+		tmpl.NotBefore = time.Now().Add(-time.Hour)
+	}
+	if tmpl.NotAfter.IsZero() {
+		tmpl.NotAfter = time.Now().Add(24 * time.Hour)
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, parentKey)
+	if err != nil {
+		t.Fatalf("testcert: create certificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("testcert: parse certificate: %v", err)
+	}
+	return cert, key
+}
+
 // SelfSignedLeaf builds a fresh EC P-256 self-signed leaf certificate
 // (its own issuer, no CA extension) and its own private key — unlike
 // SelfSigned, which signs an already-generated pub with a possibly

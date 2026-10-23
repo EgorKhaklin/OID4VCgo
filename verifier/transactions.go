@@ -43,8 +43,9 @@ const (
 	TransactionClosed
 
 	// TransactionExpired outlived TransactionsConfig.Lifetime without
-	// completing. Only ever reported by Transactions.Lookup; a store
-	// never holds it.
+	// completing, or completed and is past its result's retention (see
+	// Transactions.Lookup). Only ever reported by Transactions.Lookup;
+	// a store never holds it.
 	TransactionExpired
 )
 
@@ -106,6 +107,15 @@ type Transaction struct {
 // transaction complete at most once, and a response_code be redeemed
 // at most once. Lookups by KeyID and ResponseCodeHash must reflect the
 // latest saved Transaction.
+//
+// A completed transaction's Result holds the claims the holder
+// disclosed. Transactions never reports it past ExpiresAt plus
+// TransactionsConfig.Lifetime (see Transactions.Lookup), and
+// Transactions.Forget drops it on demand, but nothing here deletes a
+// transaction: a store should delete each one some time after its
+// ExpiresAt — no sooner than that retention, which an answer's
+// browser may still need — rather than keep holders' claims
+// indefinitely.
 type TransactionStore interface {
 	// Create saves a new transaction; its ID must be unused.
 	Create(ctx context.Context, tx Transaction) error
@@ -764,6 +774,12 @@ type TransactionView struct {
 
 // Lookup reports the request id's progress to whoever asked:
 // browserBinding must be the one the request began with.
+//
+// A completed request's result is reported for one more
+// TransactionsConfig.Lifetime past the request's own expiry — enough
+// for the browser that asked to collect an answer that arrived just
+// before it — and after that as TransactionExpired, without it. Call
+// Forget once the result has been used to drop it sooner.
 func (t *Transactions) Lookup(ctx context.Context, id, browserBinding string) (TransactionView, error) {
 	tx, err := t.store.Get(ctx, id)
 	if err != nil {
@@ -773,7 +789,10 @@ func (t *Transactions) Lookup(ctx context.Context, id, browserBinding string) (T
 		return TransactionView{}, ErrWrongBrowser
 	}
 	status := tx.Status
-	if (status == TransactionPending || status == TransactionAwaitingRedirect) && !t.now().Before(tx.ExpiresAt) {
+	switch now := t.now(); {
+	case (status == TransactionPending || status == TransactionAwaitingRedirect) && !now.Before(tx.ExpiresAt):
+		status = TransactionExpired
+	case status == TransactionDone && !now.Before(tx.ExpiresAt.Add(t.cfg.Lifetime)):
 		status = TransactionExpired
 	}
 	return viewOf(tx, status), nil
@@ -790,6 +809,23 @@ func (t *Transactions) Close(ctx context.Context, id string) error {
 		if cur.Status == TransactionPending || cur.Status == TransactionAwaitingRedirect {
 			cur.Status, cur.ResponseCodeHash, cur.Result = TransactionClosed, "", nil
 		}
+		return nil
+	})
+}
+
+// Forget drops the request id's result — the claims the holder
+// disclosed — and closes it, whatever its state: call it once the
+// Verifier has taken what it needs from a completed request (Lookup or
+// Redeem), so the store no longer holds the claims for the rest of the
+// request's life. Lookup then reports TransactionClosed. The request
+// itself stays in the store until the store deletes it (see
+// TransactionStore): its Request Object is still served until it
+// expires, as for any closed request, and a late answer is refused as
+// one to a closed request. Like Close, it takes no browser binding:
+// call it only from the Verifier's own logic.
+func (t *Transactions) Forget(ctx context.Context, id string) error {
+	return t.store.Update(ctx, id, func(cur *Transaction) error {
+		cur.Status, cur.ResponseCodeHash, cur.Result, cur.LastError = TransactionClosed, "", nil, ""
 		return nil
 	})
 }

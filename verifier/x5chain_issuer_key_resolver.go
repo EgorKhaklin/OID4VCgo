@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 )
 
@@ -39,8 +40,20 @@ type X5ChainIssuerKeyResolver struct {
 	// would otherwise be accepted too: prefer Roots that anchor only
 	// this role's certificates, and use LeafPolicy to require what
 	// distinguishes them (an extended key usage, a certificate policy)
-	// where the anchors are shared.
+	// where the anchors are shared. nil means
+	// mdoc.DefaultDocumentSignerPolicy, which refuses the certificates
+	// an IACA issues for other jobs (an OCSP signer's, one whose key
+	// usage doesn't allow digital signatures); a LeafPolicy that's set
+	// replaces it.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+}
+
+// leafPolicy is LeafPolicy, or mdoc.DefaultDocumentSignerPolicy.
+func (r X5ChainIssuerKeyResolver) leafPolicy() func(*x509.Certificate, [][]*x509.Certificate) error {
+	if r.LeafPolicy != nil {
+		return r.LeafPolicy
+	}
+	return mdoc.DefaultDocumentSignerPolicy
 }
 
 // ResolveMdocIssuerKey implements MdocIssuerKeyResolver.
@@ -49,7 +62,7 @@ func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerKey(ctx context.Context, x5ch
 	if err != nil {
 		return nil, 0, err
 	}
-	leaf, err := certchain.VerifyLeafWithPolicyAt(x5chain, roots, r.LeafPolicy, verificationTime(ctx))
+	leaf, err := certchain.VerifyLeafWithPolicyAt(x5chain, roots, r.leafPolicy(), verificationTime(ctx))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -78,10 +91,8 @@ func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerChains(ctx context.Context, x
 	if err != nil {
 		return nil, err
 	}
-	if r.LeafPolicy != nil {
-		if err := r.LeafPolicy(leaf, chains); err != nil {
-			return nil, err
-		}
+	if err := r.leafPolicy()(leaf, chains); err != nil {
+		return nil, err
 	}
 	return chains, nil
 }

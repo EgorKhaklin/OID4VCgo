@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/asn1"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -97,18 +96,11 @@ func WithIssuerRootsByDocType(roots map[string]*x509.CertPool) ReaderOption {
 }
 
 // DefaultDocumentSignerPolicy is the document signer check Verify makes
-// unless WithDocumentSignerPolicy replaces it: a certificate whose key
-// usage extension doesn't allow digital signatures, or that is an OCSP
-// signer — the other end-entity certificates an IACA issues — doesn't
-// sign mdocs. It accepts a certificate without those extensions.
-func DefaultDocumentSignerPolicy(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
-	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
-		return errors.New("the document signer certificate's key usage doesn't allow digital signatures")
-	}
-	if slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageOCSPSigning) {
-		return errors.New("the document signer certificate is an OCSP signer's")
-	}
-	return nil
+// unless WithDocumentSignerPolicy replaces it: mdoc.DefaultDocumentSignerPolicy,
+// which refuses the end-entity certificates an IACA issues for other
+// jobs.
+func DefaultDocumentSignerPolicy(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+	return mdoc.DefaultDocumentSignerPolicy(leaf, chains)
 }
 
 // AnyDocumentSigner is a WithDocumentSignerPolicy policy accepting any
@@ -121,14 +113,14 @@ func AnyDocumentSigner(*x509.Certificate, [][]*x509.Certificate) error { return 
 var MDLDocumentSignerEKU = asn1.ObjectIdentifier{1, 0, 18013, 5, 1, 2}
 
 // RequireMDLDocumentSignerEKU is a WithDocumentSignerPolicy policy
-// refusing a document signer certificate without MDLDocumentSignerEKU.
-func RequireMDLDocumentSignerEKU(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
-	for _, eku := range leaf.UnknownExtKeyUsage {
-		if eku.Equal(MDLDocumentSignerEKU) {
-			return nil
-		}
+// refusing a document signer certificate without MDLDocumentSignerEKU,
+// or whose every verified path has an intermediate CA whose own
+// extended key usage excludes it.
+func RequireMDLDocumentSignerEKU(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+	if err := certchain.EKUInPath(leaf, chains, MDLDocumentSignerEKU); err != nil {
+		return fmt.Errorf("the document signer certificate isn't an mDL document signer's (1.0.18013.5.1.2): %w", err)
 	}
-	return errors.New("the document signer certificate lacks the mDL document signer extended key usage (1.0.18013.5.1.2)")
+	return nil
 }
 
 // NewReaderSession decodes the mdoc's QR code (§8.2.2.3), checks its

@@ -1,7 +1,7 @@
 // Package verifiertest holds reusable contract tests for verifier's
-// issuer key resolvers, and the certificate helpers they need, for a
-// caller testing its own resolver. It imports "testing": import it
-// only from _test.go files.
+// issuer key resolvers, and the certificate helpers they need, and for
+// its TransactionStore, for a caller testing its own resolver or
+// store. It imports "testing": import it only from _test.go files.
 package verifiertest
 
 import (

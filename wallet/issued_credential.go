@@ -55,7 +55,10 @@ type VerifyIssuedCredentialParams struct {
 	// IssuerRoots may sign credentials: an extended key usage or
 	// certificate policy the ecosystem marks its issuers' certificates
 	// with, so a certificate issued under the same roots for another
-	// role, such as a Verifier's, isn't taken for an issuer's.
+	// role, such as a Verifier's, isn't taken for an issuer's. For an
+	// mdoc, nil means mdoc.DefaultDocumentSignerPolicy, which refuses
+	// the certificates an IACA issues for other jobs; a policy that's
+	// set replaces it.
 	IssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	// RequireIssuerName refuses an SD-JWT VC whose iss its signing
@@ -262,7 +265,11 @@ func verifyIssuedMdoc(p VerifyIssuedCredentialParams, now time.Time) (VerifiedIs
 		return VerifiedIssuedCredential{}, fmt.Errorf("decode issuerAuth: %w", err)
 	}
 	chain := cose.X5ChainOf(protected, unprotected)
-	leaf, err := certchain.VerifyLeafWithPolicyAt(chain, p.IssuerRoots, p.IssuerLeafPolicy, now)
+	policy := p.IssuerLeafPolicy
+	if policy == nil {
+		policy = mdoc.DefaultDocumentSignerPolicy
+	}
+	leaf, err := certchain.VerifyLeafWithPolicyAt(chain, p.IssuerRoots, policy, now)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}

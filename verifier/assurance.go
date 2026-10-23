@@ -39,6 +39,14 @@ const (
 	// resolver that doesn't implement KeySourceAssurance at all is
 	// rejected rather than assumed adequate. This does not verify any
 	// declaration.
+	//
+	// Nor does it see how revocation is checked:
+	// TransactionsConfig.Accept (and VerifyResponseRequest.Accept) is a
+	// function this package can't see into. A production status check
+	// that fetches Status List Tokens — RequireValidStatus with a
+	// statuslist.Checker — must use a statuslist.Fetcher whose
+	// HardenedForProduction is true; check it where the Checker is
+	// built.
 	AssuranceProduction
 )
 

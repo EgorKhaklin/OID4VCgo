@@ -45,9 +45,9 @@ func issuerLeaf(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, uri
 	return leaf
 }
 
-// With RequireIssuerName, an iss must name the x5c leaf, so another
-// issuer's certificate under the same trusted root can't sign in this
-// issuer's name.
+// With RequireIssuerName, an iss must be present and name the x5c
+// leaf, so another issuer's certificate under the same trusted root
+// can't sign in this issuer's name.
 func TestX5CIssuerKeyResolver_BindsIssToLeaf(t *testing.T) {
 	ca, caKey := testcert.CA(t, "shared root")
 	roots := x509.NewCertPool()
@@ -60,7 +60,7 @@ func TestX5CIssuerKeyResolver_BindsIssToLeaf(t *testing.T) {
 		ok             bool
 	}{
 		"the leaf names iss":                 {uris: []string{trusted}, iss: trusted, ok: true},
-		"no iss: the leaf is the issuer":     {uris: []string{"https://issuer-b.example"}, iss: nil, ok: true},
+		"no iss":                             {uris: []string{trusted}, iss: nil},
 		"a dns: iss and its dNSName":         {dnsNames: []string{"issuer-a.example"}, iss: "dns:issuer-a.example", ok: true},
 		"another issuer's URL":               {uris: []string{"https://issuer-b.example"}, iss: trusted},
 		"only a DNS host that isn't iss's":   {dnsNames: []string{"issuer-b.example"}, iss: trusted},

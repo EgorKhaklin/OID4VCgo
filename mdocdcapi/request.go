@@ -72,6 +72,13 @@ type RequestData struct {
 // Verifier — never sent to the page. RecipientKey decrypts the
 // response: keep it as secret as any private key, and only as long as
 // the request.
+//
+// A request is answered once: take its Pending out of wherever it's
+// kept — atomically, so that two responses arriving together can't
+// both find it — before calling VerifyResponse, and don't put it back.
+// VerifyResponse keeps no state: a response verifies as often as it's
+// presented with the same Pending, so one that's been captured could
+// otherwise be replayed for as long as the Pending is kept.
 type Pending struct {
 	// Origin is the page's origin the request was built for: the
 	// response's session transcript binds it.

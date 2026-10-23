@@ -16,8 +16,9 @@ import (
 // complete — and a response_code redeem — at most once. Like everything
 // in this package it's for development and testing only; it doesn't
 // implement verifier.StoreAssurance, so verifier.NewTransactions refuses
-// it under verifier.AssuranceProduction. Transactions are kept until
-// the process exits. Every slice in a Transaction's Query and its
+// it under verifier.AssuranceProduction. An expired transaction is
+// dropped, result and all, once it's expiryGrace (10 minutes) past its
+// ExpiresAt, the next time the store has grown enough to prune. Every slice in a Transaction's Query and its
 // BrowserBindingHash are copied in and out; its ResponseDecryptionKey
 // and Result are shared, as values nothing modifies once set.
 type VerifierTransactionStore struct {
