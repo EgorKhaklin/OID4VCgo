@@ -244,6 +244,10 @@ documentation to the package repository's `gh-pages` branch, under the
 version and `latest/` (`ios/docs-site.sh` lays it out), and the
 generated README links the version's. GitHub Pages serves it once the
 package repository's settings (Pages) deploy from that branch.
+If publishing the documentation fails after the release is made, run
+the workflow again from `main` with the same version and
+`documentation_only`: it builds and publishes only the latest
+release's documentation, from the commit that release was built from.
 
 The workflow then commits the result there and creates the tagged
 release, carrying the framework, its `SHA256SUMS` and a build
