@@ -123,6 +123,17 @@ type Limits struct {
 	// ExchangePreAuthorizedCode issues (RFC 9449 §8) remains valid.
 	// Required only when Dependencies.DPoPNonces is set.
 	DPoPNonceLifetime time.Duration
+
+	// NotificationLifetime, if positive, bounds how long a
+	// notification_id IssueNotificationID hands out is accepted by
+	// RequestNotification (NotificationRecord.ExpiresAt), so a store
+	// can drop its record afterwards. Zero means a notification_id
+	// never expires. A Wallet notifies once it has stored or discarded
+	// the Credential (§11), so a lifetime of days is ample. It runs from
+	// when the notification_id is issued, which for a deferred issuance
+	// is when the transaction is resolved (IssueDeferredCredential), so
+	// keep it longer than DeferredTransactionLifetime.
+	NotificationLifetime time.Duration
 }
 
 // Config is this issuer's immutable configuration.
@@ -654,6 +665,9 @@ func validateOptionalEndpointDependencies(cfg Config, deps Dependencies) error {
 	}
 	if !cfg.Endpoints.Notification.IsZero() && deps.Notifications == nil {
 		return fmt.Errorf("issuer: dependencies: notifications is required when endpoints.notification is set")
+	}
+	if cfg.Limits.NotificationLifetime < 0 {
+		return fmt.Errorf("issuer: config: limits.notification_lifetime must not be negative")
 	}
 	return nil
 }

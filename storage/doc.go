@@ -6,12 +6,12 @@
 // production.
 //
 // Every type here is non-durable (an in-process map, gone on restart).
-// The stores an unauthenticated caller can grow — NonceStore,
-// DPoPNonceStore, DPoPReplayChecker and VerifierTransactionStore — drop
-// expired entries as they grow, so they hold about what the request rate
-// times the entries' lifetime adds up to; the others grow for the life
-// of the process. That's fine for a development session or a demo; it
-// is not fine for production.
+// Every store drops expired entries as it grows, so it holds about what
+// the request rate times the entries' lifetime adds up to; an entry
+// with no expiry (a zero ExpiresAt, such as a notification_id issued
+// without issuer.Limits.NotificationLifetime) stays for the life of the
+// process. That's fine for a development session or a demo; it is not
+// fine for production.
 //
 // None of these types implement issuer.StoreAssurance (or
 // verifier.StoreAssurance), and that is

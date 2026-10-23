@@ -3,6 +3,7 @@ package issuer
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 
@@ -73,7 +74,11 @@ func (iss *Issuer) IssueNotificationID(ctx context.Context, auth AuthorizedReque
 		return "", fmt.Errorf("issuer: issue notification id: %w", err)
 	}
 	id := base64.RawURLEncoding.EncodeToString(raw)
-	if err := iss.deps.Notifications.Issue(ctx, id, NotificationRecord{ClientID: auth.ClientID(), Subject: auth.Subject}); err != nil {
+	record := NotificationRecord{ClientID: auth.ClientID(), Subject: auth.Subject}
+	if lifetime := iss.cfg.Limits.NotificationLifetime; lifetime > 0 {
+		record.ExpiresAt = iss.deps.Clock.Now().Add(lifetime)
+	}
+	if err := iss.deps.Notifications.Issue(ctx, id, record); err != nil {
 		return "", fmt.Errorf("issuer: issue notification id: %w", err)
 	}
 	return id, nil
@@ -116,6 +121,9 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 	record, err := iss.deps.Notifications.Get(ctx, req.NotificationID)
 	if err != nil {
 		return newError(ErrorInvalidNotificationID, 400, "unknown notification_id", err)
+	}
+	if !record.ExpiresAt.IsZero() && !iss.deps.Clock.Now().Before(record.ExpiresAt) {
+		return newError(ErrorInvalidNotificationID, 400, "unknown notification_id", errors.New("notification_id has expired"))
 	}
 	// auth.ClientID() == "" here only ever means an explicit
 	// NoClientIdentity (this method's own requireClientIdentityDecision
