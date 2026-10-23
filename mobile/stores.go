@@ -83,6 +83,9 @@ type credentialRecord struct {
 	// CredentialIdentifier: absent from a record written before it was
 	// kept, or for a credential requested by its configuration.
 	CredentialIdentifier string `json:"credential_identifier,omitempty"`
+	// CopiesCorrelated: absent when false, and from a record written
+	// before it was kept.
+	CopiesCorrelated bool `json:"copies_correlated,omitempty"`
 }
 
 // copyJSON is a walletflow.CredentialCopy.
@@ -187,7 +190,7 @@ func recordOf(c walletflow.StoredCredential) (credentialRecord, error) {
 		ID: c.ID, CredentialIssuer: c.CredentialIssuer, ConfigurationID: c.ConfigurationID, Format: c.Format,
 		VCT: c.VCT, DocType: c.DocType, Credential: c.Credential, HolderKeyID: c.HolderKeyID, ReceivedAt: c.ReceivedAt,
 		Display: displayOf(c.Display), StatusListCWT: c.StatusListCWT, GrantID: c.GrantID,
-		CredentialIdentifier: c.CredentialIdentifier,
+		CredentialIdentifier: c.CredentialIdentifier, CopiesCorrelated: c.CopiesCorrelated,
 	}
 	for _, cp := range c.Copies {
 		r.Copies = append(r.Copies, copyOf(cp))
@@ -216,7 +219,7 @@ func (r credentialRecord) stored() (walletflow.StoredCredential, error) {
 		ID: r.ID, CredentialIssuer: r.CredentialIssuer, ConfigurationID: r.ConfigurationID, Format: r.Format,
 		VCT: r.VCT, DocType: r.DocType, Credential: r.Credential, HolderKeyID: r.HolderKeyID, ReceivedAt: r.ReceivedAt,
 		Display: r.Display.display(), StatusListCWT: r.StatusListCWT, GrantID: r.GrantID,
-		CredentialIdentifier: r.CredentialIdentifier,
+		CredentialIdentifier: r.CredentialIdentifier, CopiesCorrelated: r.CopiesCorrelated,
 	}
 	for _, cp := range r.Copies {
 		c.Copies = append(c.Copies, cp.copy())
@@ -266,7 +269,8 @@ type credentialSummary struct {
 	// refuse it (reissue_required).
 	Refreshable bool `json:"refreshable"`
 	// Linkable is whether a copy has been presented to more than one
-	// Verifier, so those Verifiers could link the holder's presentations
+	// Verifier, or copies the issuer correlated to more than one between
+	// them, so those Verifiers could link the holder's presentations
 	// (walletflow.StoredCredential.Linkable). Refreshing gives it copies
 	// no Verifier has seen.
 	Linkable bool `json:"linkable"`

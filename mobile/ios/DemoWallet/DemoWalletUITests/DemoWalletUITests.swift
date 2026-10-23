@@ -198,8 +198,9 @@ final class DemoWalletUITests: XCTestCase {
     }
 
     /// A request that takes several credentials (DCQL multiple): both
-    /// held are offered and chosen, unchoosing one leaves the other
-    /// chosen, and sharing both reaches the Verifier as two.
+    /// held are offered and the first chosen, choosing the other keeps
+    /// the first, unchoosing one leaves the other chosen, and sharing
+    /// both reaches the Verifier as two.
     @MainActor
     func testPresentSeveral() async throws {
         try await receiveWithPIN(reset: true).terminate()
@@ -215,8 +216,10 @@ final class DemoWalletUITests: XCTestCase {
         XCTAssertEqual(candidates.count, 2)
         let first = candidates.element(boundBy: 0)
         let second = candidates.element(boundBy: 1)
-        XCTAssertTrue(first.isSelected && second.isSelected, "the request takes several, so both start chosen")
+        XCTAssertTrue(first.isSelected && !second.isSelected, "the wallet's own choice is the first credential only")
 
+        second.tap()
+        XCTAssertTrue(waitForSelected(second, true) && first.isSelected, "choosing one unchose the other")
         first.tap()
         XCTAssertTrue(waitForSelected(first, false) && second.isSelected, "unchoosing one unchose the other")
         first.tap()

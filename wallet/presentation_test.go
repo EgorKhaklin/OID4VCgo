@@ -295,6 +295,21 @@ func TestMatchDCQLQueryWithoutMultipleReturnsOnlyOneCandidate(t *testing.T) {
 	}
 }
 
+// DefaultSelection takes the first candidate even for a query whose
+// multiple is true: multiple permits several, it doesn't ask for every
+// match.
+func TestDefaultSelectionTakesOneCandidateForMultiple(t *testing.T) {
+	fixtureA := newHeldSDJWTVC(t)
+	fixtureB := newHeldSDJWTVC(t)
+	sel, err := wallet.DefaultSelection(context.Background(), multipleIdentityCredentialQuery(t), []wallet.HeldCredential{fixtureA.held, fixtureB.held}, nil)
+	if err != nil {
+		t.Fatalf("DefaultSelection: %v", err)
+	}
+	if got := sel["identity_credential"]; len(got) != 1 || got[0].Credential != fixtureA.held.Credential {
+		t.Errorf("sel[identity_credential] = %d credentials, want the first candidate only", len(got))
+	}
+}
+
 func TestMatchDCQLQueryRejectsInvalidQuery(t *testing.T) {
 	if _, err := wallet.MatchDCQLQuery(context.Background(), dcql.Query{}, nil, nil); err == nil {
 		t.Fatalf("MatchDCQLQuery = nil error, want error")

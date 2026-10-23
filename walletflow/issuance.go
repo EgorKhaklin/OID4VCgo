@@ -286,6 +286,9 @@ func (s *Issuance) planGrant(ctx context.Context, grant Grant) error {
 // holder authenticates or enters a code, not once the credential is
 // issued.
 func (w *Wallet) checkOffered(metadata oid4vci.Metadata, ids []string) error {
+	if n := len(distinct(ids)); n > MaxCredentialRequests {
+		return fmt.Errorf("walletflow: the offer names %d credentials, more than the %d one issuance requests", n, MaxCredentialRequests)
+	}
 	for _, id := range ids {
 		conf, ok := metadata.CredentialConfigurationsSupported[id]
 		if !ok {
@@ -779,6 +782,14 @@ const (
 	maxIdentifiers                 = 32
 )
 
+// MaxCredentialRequests is the most Credential Requests one issuance
+// makes, each with its own nonce, holder keys and key attestation: an
+// offer, which anyone can make, mustn't make the wallet generate keys
+// without bound. An offer naming more credentials is refused, and so
+// is an issuance whose token grants more credential_identifiers than
+// fit, before requesting any.
+const MaxCredentialRequests = 32
+
 // maxConsecutiveRefusals is how many Credential Requests in a row an
 // issuer may refuse for good before RequestCredentials stops asking:
 // each costs holder keys and a key attestation.
@@ -811,8 +822,12 @@ func (s *Issuance) RequestCredentials(ctx context.Context) (IssuanceResult, erro
 	if s.handled == nil {
 		s.handled = map[string]bool{}
 	}
+	units := s.requestUnits()
+	if len(units) > MaxCredentialRequests {
+		return s.obtained, fmt.Errorf("walletflow: the issuance would make %d Credential Requests, more than %d", len(units), MaxCredentialRequests)
+	}
 	refusals := 0
-	for _, u := range s.requestUnits() {
+	for _, u := range units {
 		if s.handled[u.key()] {
 			continue
 		}
@@ -862,7 +877,7 @@ func (u requestUnit) key() string { return u.configID + "\x00" + u.identifier }
 // Credential Dataset (OpenID4VCI 1.0 §3.3, §6.2), else one by its ID.
 func (s *Issuance) requestUnits() []requestUnit {
 	var out []requestUnit
-	for _, id := range s.offer.CredentialConfigurationIDs {
+	for _, id := range distinct(s.offer.CredentialConfigurationIDs) {
 		ids := s.identifiers[id]
 		if len(ids) == 0 {
 			out = append(out, requestUnit{configID: id})
@@ -870,6 +885,19 @@ func (s *Issuance) requestUnits() []requestUnit {
 		}
 		for _, identifier := range ids {
 			out = append(out, requestUnit{configID: id, identifier: identifier})
+		}
+	}
+	return out
+}
+
+// distinct is ids without repeats, in order.
+func distinct(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
 		}
 	}
 	return out
@@ -1179,6 +1207,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 	now := w.deps.Clock()
 	unbound := slices.Clone(c.holders)
 	copies := make([]CredentialCopy, 0, len(c.result.Credentials))
+	claims := make([]map[string]any, 0, len(c.result.Credentials))
 	var first wallet.VerifiedIssuedCredential
 	for i, ic := range c.result.Credentials {
 		verified, key, err := w.verifyCopy(ctx, c.issuer, conf, ic.Credential, unbound, now)
@@ -1189,6 +1218,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		keyID := key.ID()
 		unbound = slices.DeleteFunc(unbound, func(k Key) bool { return k.ID() == keyID })
 		copies = append(copies, CredentialCopy{Credential: ic.Credential, HolderKeyID: keyID, StatusList: verified.StatusList, ValidUntil: verified.ValidUntil})
+		claims = append(claims, verified.Claims)
 		if i == 0 {
 			first = verified
 		} else if (verified.StatusList == nil) != (first.StatusList == nil) {
@@ -1217,6 +1247,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		ReceivedAt: now.UTC(), Claims: first.Claims,
 		Display: displayFor(c.metadata, c.configID, w.cfg.Locales), ValidUntil: earliestExpiry(copies),
 		StatusList: first.StatusList, StatusListCWT: first.StatusListCWT, GrantID: c.grantID,
+		CopiesCorrelated: copiesCorrelated(conf.Format, copies, claims),
 	}
 	if err := w.store(ctx, stored, c); err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -1332,6 +1363,38 @@ func callbackBinding(resumed bool) client.CallbackBinding {
 // of one batch: when and how long each is valid, its holder key, its
 // status list entry, its ID and a pseudonymous subject.
 var perCopyClaims = []string{"iat", "nbf", "exp", "cnf", "status", "jti", "sub"}
+
+// correlatingClaims are an SD-JWT VC's per-copy claims (perCopyClaims)
+// that, the same in two copies, identify the credential rather than the
+// copy: a Verifier shown either recognises the other.
+var correlatingClaims = []string{"jti", "sub"}
+
+// copiesCorrelated reports whether two of a batch's copies, in format,
+// with claims each, share what should set them apart — an SD-JWT VC's
+// jti or sub (correlatingClaims), or a status list entry, an mdoc's
+// too — so presenting different copies doesn't keep presentations
+// unlinkable. The copies are kept all the same: they're still valid.
+func copiesCorrelated(format string, copies []CredentialCopy, claims []map[string]any) bool {
+	for i := range copies {
+		for j := range i {
+			a, b := copies[i].StatusList, copies[j].StatusList
+			if a != nil && b != nil && *a == *b {
+				return true
+			}
+			if format != sdjwtvc.CredentialFormat {
+				continue
+			}
+			for _, name := range correlatingClaims {
+				va, okA := claims[i][name]
+				vb, okB := claims[j][name]
+				if okA && okB && reflect.DeepEqual(va, vb) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
 
 // sameHolderClaims reports whether two copies of a credential carry the
 // same claims, those that may differ per copy aside.

@@ -113,6 +113,7 @@ type Presentation struct {
 	req     wallet.AuthorizationRequest
 	queries []Query
 	byID    map[string]StoredCredential
+	order   []string // byID's IDs, in the CredentialStore's order
 	// registration is the Verifier's, checked when it started.
 	registration Registration
 
@@ -190,6 +191,7 @@ func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRe
 	byCredential := make(map[string]StoredCredential, len(stored))
 	for _, c := range stored {
 		p.byID[c.ID] = c
+		p.order = append(p.order, c.ID)
 		h := heldCredential(c, nil)
 		// Only what the Verifier says it can verify is offered
 		// (vp_formats_supported, OpenID4VP 1.0 §11.1).
@@ -253,10 +255,11 @@ func (p *Presentation) Linkable(id string) bool {
 
 // linkable reports whether presenting c to the Verifier whose
 // VerifierHash is verifier, under Config.CopyPolicy, would use a copy
-// another Verifier has seen.
+// another Verifier has seen, or one correlated with it
+// (StoredCredential.CopiesCorrelated).
 func (w *Wallet) linkable(c StoredCredential, verifier string) bool {
 	_, cp, _ := c.copyFor(w.cfg.CopyPolicy, verifier, w.deps.Clock())
-	return slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
+	return c.linkableTo(cp, verifier)
 }
 
 // Queries returns the request's Credential Queries, in its order, each
@@ -277,12 +280,14 @@ func (p *Presentation) CredentialSets() []CredentialSet {
 // DefaultSelection is the Selection the wallet would make itself, for an
 // application with no policy of its own, or to start from: the first
 // answerable option of each credential set, and each query's first
-// credential (all of them when it takes several). It returns
-// ErrNoMatchingCredential when the request can't be answered.
+// credential, as Queries lists them, even when it takes several: the
+// holder adds the others. It returns ErrNoMatchingCredential when the
+// request can't be answered.
 func (p *Presentation) DefaultSelection(ctx context.Context) (Selection, error) {
 	held := make([]wallet.HeldCredential, 0, len(p.byID))
 	byCredential := make(map[string]string, len(p.byID))
-	for id, c := range p.byID {
+	for _, id := range p.order {
+		c := p.byID[id]
 		h := heldCredential(c, nil)
 		// As the queries offer: what the Verifier can take.
 		if !p.req.VPFormats.Accepts(h) {
@@ -517,7 +522,13 @@ type reservedCopy struct {
 	wasPresented, wasShown bool
 	// linkable is a copy another Verifier has seen.
 	linkable bool
+	// seq orders reservations of one copy (Wallet.reservations).
+	seq uint64
 }
+
+// copyRef names one copy of a stored credential: its ID and the copy's
+// holder key.
+type copyRef struct{ id, keyID string }
 
 // reserve picks each selected credential's copy from the store, as it is
 // now, by Config.CopyPolicy, and marks it presented to this Verifier
@@ -610,17 +621,24 @@ func (w *Wallet) loadForReserve(ctx context.Context, id string) (StoredCredentia
 }
 
 // reserveCopy picks c's copy to answer query q with, by
-// Config.CopyPolicy, and marks it presented to verifier in c. toldLinkable
-// is whether the holder was told presenting it would be linkable.
+// Config.CopyPolicy, and marks it presented to verifier in c, with
+// credMu held. toldLinkable is whether the holder was told presenting it
+// would be linkable.
 func (w *Wallet) reserveCopy(c *StoredCredential, q, id, verifier string, toldLinkable bool) (reservedCopy, error) {
 	i, cp, reused := c.copyFor(w.cfg.CopyPolicy, verifier, w.deps.Clock())
-	linkable := slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
+	linkable := c.linkableTo(cp, verifier)
 	if linkable && !toldLinkable {
 		// What the holder saw said otherwise: don't send it.
 		return reservedCopy{}, fmt.Errorf("walletflow: credential %q: %w", id, ErrLinkable)
 	}
 	r := reservedCopy{query: q, id: id, index: i, keyID: cp.HolderKeyID, reused: reused,
 		wasPresented: cp.Presented, wasShown: slices.Contains(cp.ShownTo, verifier), linkable: linkable}
+	if w.reservations == nil {
+		w.reservations = map[copyRef]uint64{}
+	}
+	w.reserveSeq++
+	r.seq = w.reserveSeq
+	w.reservations[copyRef{id, cp.HolderKeyID}] = r.seq
 	c.Copies[i].Presented = true
 	if !r.wasShown {
 		c.Copies[i].ShownTo = append(slices.Clone(cp.ShownTo), verifier)
@@ -631,8 +649,11 @@ func (w *Wallet) reserveCopy(c *StoredCredential, q, id, verifier string, toldLi
 }
 
 // release undoes what reserve recorded for a response that wasn't
-// sent, unless the credential has changed since. It's best effort: a
-// copy left marked is one fewer to use, never one presented twice.
+// sent, unless the credential has changed since or another presentation
+// has reserved the copy since: what that one recorded, which release's
+// snapshot would undo, stands whether or not it was sent. It's best
+// effort: a copy left marked is one fewer to use, never one presented
+// twice.
 func (p *Presentation) release(ctx context.Context, reserved []reservedCopy) {
 	p.w.release(ctx, reserved, p.verifier())
 }
@@ -648,6 +669,11 @@ func (w *Wallet) release(ctx context.Context, reserved []reservedCopy, verifier 
 		if r.reused {
 			continue
 		}
+		ref := copyRef{r.id, r.keyID}
+		if w.reservations[ref] != r.seq {
+			continue
+		}
+		delete(w.reservations, ref)
 		c, ok := changed[r.id]
 		if !ok {
 			var err error

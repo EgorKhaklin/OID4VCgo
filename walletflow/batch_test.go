@@ -401,3 +401,49 @@ func TestBatch_JWTProofsWithKeyAttestation(t *testing.T) {
 		t.Errorf("key attestations = %d, want one for the batch", n)
 	}
 }
+
+// Copies an issuer gave the same jti are kept, but don't keep
+// presentations unlinkable: once one Verifier has seen a copy,
+// presenting another copy to a second Verifier is linkable.
+func TestCopiesCorrelated(t *testing.T) {
+	for name, tc := range map[string]struct {
+		plain      map[string]any
+		correlated bool
+	}{
+		"distinct copies": {nil, false},
+		"one jti":         {map[string]any{"jti": "urn:example:one"}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, walletflowtest.Options{BatchSize: 2, PlainClaims: tc.plain})
+			w, v1, v2 := twoVerifiersWallet(t, f, walletflow.CopyPerPresentation)
+			c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+			if len(c.Copies) != 2 || c.CopiesCorrelated != tc.correlated {
+				t.Fatalf("%d copies, CopiesCorrelated %v; want 2, %v", len(c.Copies), c.CopiesCorrelated, tc.correlated)
+			}
+			presentOnce(t, f, v1, w, c.ID)
+			ctx := context.Background()
+			_, link := v2.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
+			p, err := w.StartPresentation(ctx, link)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Linkable(c.ID) != tc.correlated {
+				t.Errorf("presenting the unused copy to v2: Linkable %v, want %v", p.Linkable(c.ID), tc.correlated)
+			}
+			presented, err := p.Respond(ctx, walletflow.Selection{"pid": {c.ID}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := slices.Contains(presented.Linkable, c.ID); got != tc.correlated {
+				t.Errorf("Presented.Linkable has it %v, want %v", got, tc.correlated)
+			}
+			stored, err := f.store.Get(ctx, c.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.Linkable() != tc.correlated {
+				t.Errorf("after both Verifiers: Linkable %v, want %v", stored.Linkable(), tc.correlated)
+			}
+		})
+	}
+}

@@ -154,8 +154,9 @@
 // Config.CopyPolicy CopyPerVerifier, a Verifier is shown the copy it has
 // seen before, and only a new Verifier a new copy. Each copy records
 // which Verifiers saw it, as hashes of their client_ids
-// (StoredCredential.ShownTo). Once every copy has been presented, the
-// one shown to the fewest Verifiers is reused, which those Verifiers can
+// (StoredCredential.ShownTo). Once every copy has been presented, a
+// copy only the same Verifier has seen is reused, if there is one, else
+// the one shown to the fewest Verifiers, which those Verifiers can
 // link. With Config.RequestRefresh, the authorization code
 // grant asks for a refresh token (offline_access), kept in a GrantStore,
 // and w.RefreshCredential(ctx, id) replaces a credential's copies with a

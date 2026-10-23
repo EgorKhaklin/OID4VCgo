@@ -73,6 +73,13 @@ type StoredCredential struct {
 	// it with, when its issuance kept one (Config.RequestRefresh); ""
 	// when it can't be refreshed, only received again.
 	GrantID string
+
+	// CopiesCorrelated is whether the issuer gave two of its copies the
+	// same jti, sub or status list entry: Verifiers shown different
+	// copies can link them all the same, so a copy another Verifier has
+	// seen of any of them makes a presentation linkable (Linkable). False
+	// for a credential stored before this was kept.
+	CopiesCorrelated bool
 }
 
 // CredentialCopy is one copy of a credential: the credential, the key
@@ -115,10 +122,31 @@ func (c StoredCredential) ShownTo(clientID string) bool {
 
 // Linkable reports whether presentations of c can already be linked: a
 // copy has been presented to more than one Verifier, so those Verifiers
-// hold the same credential. Refreshing (Wallet.RefreshCredential) gives
-// it copies no Verifier has seen.
+// hold the same credential — or, its copies correlated
+// (CopiesCorrelated), copies have between them. Refreshing
+// (Wallet.RefreshCredential) gives it copies no Verifier has seen.
 func (c StoredCredential) Linkable() bool {
+	if c.CopiesCorrelated {
+		shown := map[string]bool{}
+		for _, cp := range c.AllCopies() {
+			for _, h := range cp.ShownTo {
+				shown[h] = true
+			}
+		}
+		return len(shown) > 1
+	}
 	return slices.ContainsFunc(c.AllCopies(), func(cp CredentialCopy) bool { return len(cp.ShownTo) > 1 })
+}
+
+// linkableTo reports whether presenting cp, one of c's copies, to the
+// Verifier verifierHash names would let it link the holder with another
+// Verifier: one has seen cp, or, c's copies correlated, any copy.
+func (c StoredCredential) linkableTo(cp CredentialCopy, verifierHash string) bool {
+	other := func(h string) bool { return h != verifierHash }
+	if c.CopiesCorrelated {
+		return slices.ContainsFunc(c.AllCopies(), func(o CredentialCopy) bool { return slices.ContainsFunc(o.ShownTo, other) })
+	}
+	return slices.ContainsFunc(cp.ShownTo, other)
 }
 
 // copyFor is the copy to present to the Verifier verifierHash names
@@ -134,7 +162,7 @@ func (c StoredCredential) copyFor(policy CopyPolicy, verifierHash string, now ti
 			}
 		}
 	}
-	i, cp := c.nextCopy(now)
+	i, cp := c.nextCopy(verifierHash, now)
 	return i, cp, false
 }
 
@@ -167,14 +195,19 @@ func (c StoredCredential) CopiesLeft() int {
 	return n
 }
 
-// nextCopy is the copy to present next at now: the first not yet
-// presented, else (every copy has been) the one shown to the fewest
-// Verifiers, which Verifiers may link to earlier presentations: reusing
-// the least shown keeps each set of Verifiers that can link the holder
-// small. A copy still valid comes before an expired one, which a
-// Verifier would refuse after the holder disclosed its claims.
-func (c StoredCredential) nextCopy(now time.Time) (int, CredentialCopy) {
+// nextCopy is the copy to present next, to the Verifier verifierHash
+// names, at now: the first not yet presented, else (every copy has
+// been) one only that Verifier has seen, which links it to nothing it
+// can't link already, else the one shown to the fewest Verifiers, which
+// Verifiers may link to earlier presentations: reusing the least shown
+// keeps each set of Verifiers that can link the holder small. A copy
+// still valid comes before an expired one, which a Verifier would refuse
+// after the holder disclosed its claims.
+func (c StoredCredential) nextCopy(verifierHash string, now time.Time) (int, CredentialCopy) {
 	copies := c.AllCopies()
+	onlyThis := func(cp CredentialCopy) bool {
+		return !slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifierHash })
+	}
 	better := func(i, j int) bool { // i before j
 		ei, ej := c.copyExpired(copies[i], now), c.copyExpired(copies[j], now)
 		if ei != ej {
@@ -182,6 +215,9 @@ func (c StoredCredential) nextCopy(now time.Time) (int, CredentialCopy) {
 		}
 		if copies[i].Presented != copies[j].Presented {
 			return !copies[i].Presented
+		}
+		if oi, oj := onlyThis(copies[i]), onlyThis(copies[j]); oi != oj {
+			return oi
 		}
 		return len(copies[i].ShownTo) < len(copies[j].ShownTo)
 	}

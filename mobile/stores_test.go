@@ -80,6 +80,33 @@ func TestRecordCredentialIdentifier(t *testing.T) {
 	}
 }
 
+// TestRecordCopiesCorrelated: copies_correlated survives a record round
+// trip, and a record written before it was kept loads as false.
+func TestRecordCopiesCorrelated(t *testing.T) {
+	r, err := recordOf(walletflow.StoredCredential{ID: "a", Format: "dc+sd-jwt", CopiesCorrelated: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back credentialRecord
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := back.stored(); err != nil || !got.CopiesCorrelated {
+		t.Errorf("stored = %+v, %v", got, err)
+	}
+	var old credentialRecord
+	if err := json.Unmarshal([]byte(`{"id":"a","format":"dc+sd-jwt","credential":"x","holder_key_id":"k","received_at":"2026-10-01T00:00:00Z"}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := old.stored(); err != nil || got.CopiesCorrelated {
+		t.Errorf("an old record: %+v, %v", got, err)
+	}
+}
+
 // TestRecordCopyStatus: each copy's own status list entry and expiry
 // survive a record round trip.
 func TestRecordCopyStatus(t *testing.T) {

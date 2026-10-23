@@ -7,6 +7,7 @@ import (
 	"github.com/idfoundry/oid4vcgo"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +52,64 @@ func TestRequestUnits(t *testing.T) {
 	if want[0].key() == want[1].key() {
 		t.Error("two units share a key")
 	}
+}
+
+// An offer repeating a configuration requests it once.
+func TestRequestUnits_Distinct(t *testing.T) {
+	s := &Issuance{offer: oid4vci.CredentialOffer{CredentialConfigurationIDs: []string{"pid", "mdl", "pid"}}}
+	if got, want := s.requestUnits(), []requestUnit{{"pid", ""}, {"mdl", ""}}; !slices.Equal(got, want) {
+		t.Errorf("requestUnits = %v, want %v", got, want)
+	}
+}
+
+// An offer, which anyone can make, naming more credentials than one
+// issuance requests is refused before the holder sees it; one repeating
+// a configuration counts it once.
+func TestCheckOffered_RefusesTooManyCredentials(t *testing.T) {
+	w := &Wallet{}
+	ids := make([]string, MaxCredentialRequests+1)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("c%d", i)
+	}
+	if err := w.checkOffered(oid4vci.Metadata{}, ids); err == nil || !strings.Contains(err.Error(), "more than") {
+		t.Errorf("checkOffered(%d credentials) = %v, want refused for their number", len(ids), err)
+	}
+	repeated := slices.Repeat([]string{"c0"}, MaxCredentialRequests+1)
+	if err := w.checkOffered(oid4vci.Metadata{}, repeated); err == nil || strings.Contains(err.Error(), "more than") {
+		t.Errorf("checkOffered(one credential, repeated) = %v, want refused only as not in the metadata", err)
+	}
+}
+
+// A token granting more credential_identifiers than one issuance
+// requests is refused before any Credential Request: none is sent, and
+// no holder key made.
+func TestRequestCredentials_RefusesTooManyRequests(t *testing.T) {
+	keys := NewMemoryKeyStore()
+	s := &Issuance{
+		w:     &Wallet{deps: Dependencies{Keys: keys}},
+		step:  stepAuthorized,
+		offer: oid4vci.CredentialOffer{CredentialConfigurationIDs: []string{"a", "b", "c"}},
+		identifiers: map[string][]string{
+			"a": numbered("a", maxIdentifiersPerConfiguration),
+			"b": numbered("b", maxIdentifiersPerConfiguration),
+		},
+	}
+	got, err := s.RequestCredentials(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "more than") {
+		t.Fatalf("RequestCredentials = %v, want refused for the number of requests", err)
+	}
+	if len(got.Credentials)+len(got.Deferred)+len(got.Failed) != 0 || keys.Len() != 0 {
+		t.Errorf("obtained %+v, %d keys; want nothing", got, keys.Len())
+	}
+}
+
+// numbered is n IDs starting prefix.
+func numbered(prefix string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("%s-%d", prefix, i)
+	}
+	return out
 }
 
 // A refresh asks for the credential_identifier the credential was

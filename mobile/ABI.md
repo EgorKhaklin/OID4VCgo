@@ -135,8 +135,9 @@ A record is JSON the app needn't read: `id`, `credential_issuer`,
 `configuration_id`, `format`, `vct`, `doctype`, `credential`,
 `holder_key_id`, `received_at`, `claims`, `display`, `valid_until`,
 `status_list`, `status_list_cwt`, `status`, `grant_id` and
-`credential_identifier` (the dataset a refresh asks for again), and
-`copies` (each copy's `credential`, `holder_key_id`, `presented`,
+`credential_identifier` (the dataset a refresh asks for again),
+`copies_correlated` (the issuer gave two copies the same `jti`, `sub`
+or status list entry; absent when not), and `copies` (each copy's `credential`, `holder_key_id`, `presented`,
 `shown_to`, and its own `status_list` and `valid_until`). A record
 written before a field was kept lacks it.
 
@@ -332,8 +333,9 @@ Verifier is shown the copy it has seen before, and only a new Verifier
 an unused one: Verifiers can't link presentations to each other, but
 one can recognise a returning holder, and copies last longer. Each copy
 records the Verifiers it was shown to as hashes of their client_ids,
-never the client_ids. Once every copy has been presented, the one shown
-to the fewest Verifiers is reused.
+never the client_ids. Once every copy has been presented, a copy only
+the same Verifier has seen is reused, if there is one, else the one
+shown to the fewest Verifiers.
 
 `tls_pins` pins hosts' certificates for the wallet's HTTPS requests:
 host → base64 SHA-256 digests of a certificate's SubjectPublicKeyInfo
@@ -383,12 +385,15 @@ presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
   uses one of those, so presentations can't be linked by the
   credential. Once none is left, a copy is reused.
 - `linkable` is whether a copy has been presented to more than one
-  Verifier, so those Verifiers could link the holder's presentations.
-  Refreshing gives it copies no Verifier has seen.
+  Verifier, so those Verifiers could link the holder's presentations —
+  or, when the issuer gave its copies the same `jti`, `sub` or status
+  list entry, whether copies have between them. Refreshing gives it
+  copies no Verifier has seen.
 - `shown_to_verifier` and `linkable_here` are set only on a
   presentation's candidates (`Queries`): whether the Verifier asking has
   been shown this credential before, and whether presenting it now would
-  hand it a copy another Verifier has seen.
+  hand it a copy another Verifier has seen (or, copies correlated as
+  above, any copy another has seen).
 - `refreshable` is whether its issuance kept a refresh token
   (`request_refresh`), so `RefreshCredential` can replace its copies.
   The Authorization Server may still refuse it (`reissue_required`).
@@ -432,7 +437,7 @@ Steps: `Verifier` and `Queries`; choose a selection (or start from
 |---|---|
 | `Verifier()` | `{"client_id", "name", "response_uri", "registration": {"status", "name", "purpose", "privacy_policy", "registrar", "claims", "credentials", "expires"}}`: the registration is the Verifier's, from its request's `verifier_info`, checked against `registrar_roots` — `status` `"verified"` (with the rest: `claims` are the claims paths it's registered to request from any type of credential, and `credentials`, added within ABI version 12, those it's registered to request from given types: `[{"vct_values" or "doctype_value", "claims"}]`), `"invalid"` (it didn't verify, so isn't relied on), or `"none"` (none, or no `registrar_roots`) |
 | `Queries()` | `{"queries": [{"query_id", "multiple", "credentials": [summary], "unregistered": [path], "unregistered_all"}], "credential_sets": [{"options": [[query ID]], "required"}]}`: the request's credential queries in its order, each with the credentials that can answer it (none when nothing can), and its sets of alternatives (none: every query must be answered). For a Verifier with a verified registration, `unregistered` are the claims paths a query asks for beyond it, and `unregistered_all` whether it asks for every claim; nothing is refused for them — the holder decides |
-| `DefaultSelection()` | `{"selection": {query ID: [credential ID]}}`: what the wallet would choose itself, the first answerable option of each set and each query's first credential (all when `multiple`). `no_matching_credential` when the request can't be answered |
+| `DefaultSelection()` | `{"selection": {query ID: [credential ID]}}`: what the wallet would choose itself, the first answerable option of each set and each query's first credential, even when it takes several (`multiple`): the holder adds the others. `no_matching_credential` when the request can't be answered |
 | `Preview(selectionJSON)` | `{"disclosures": [{"query_id", "credential_id", "claims": [path], "always_disclosed": [path], "retained": [path]}]}`: `always_disclosed` are the SD-JWT VC claims the Verifier receives beyond `claims`: those its issuer didn't make selectively disclosable, and the plaintext members of a disclosed object a claim sits within; show them with `claims` (added within ABI 12). `retained` are the claims the Verifier says it will keep (an mdoc query's `intent_to_retain`, OpenID4VP Appendix B.2.4): show that with them (added within ABI 12, later) |
 | `Respond(op, selectionJSON)` | `{"query_ids", "redirect_uri"}`. A failure in transit, or a Verifier's server error, is `delivery_unknown`, and the presentation is then answered |
 | `Decline(op)` | `{"query_ids": [], "redirect_uri"}`. The refusal stands from the first call. If sending it failed in transit, call `Decline` again to send the same refusal |
