@@ -1566,9 +1566,9 @@ func TestRequestCredential_RefusesSharedStatusInBatch(t *testing.T) {
 }
 
 // attestationStatusFunc adapts a func to issuer.AttestationStatusChecker.
-type attestationStatusFunc func(context.Context, attestation.VerifiedClaims) error
+type attestationStatusFunc func(context.Context, issuer.VerifiedKeyAttestation) error
 
-func (f attestationStatusFunc) CheckAttestationStatus(ctx context.Context, c attestation.VerifiedClaims) error {
+func (f attestationStatusFunc) CheckAttestationStatus(ctx context.Context, c issuer.VerifiedKeyAttestation) error {
 	return f(ctx, c)
 }
 
@@ -1577,9 +1577,9 @@ func (f attestationStatusFunc) CheckAttestationStatus(ctx context.Context, c att
 func TestRequestCredential_AttestationStatus(t *testing.T) {
 	for name, revoked := range map[string]bool{"valid": false, "revoked": true} {
 		t.Run(name, func(t *testing.T) {
-			var checked []attestation.VerifiedClaims
+			var checked []issuer.VerifiedKeyAttestation
 			f := newCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
-				deps.AttestationStatus = attestationStatusFunc(func(_ context.Context, c attestation.VerifiedClaims) error {
+				deps.AttestationStatus = attestationStatusFunc(func(_ context.Context, c issuer.VerifiedKeyAttestation) error {
 					checked = append(checked, c)
 					if revoked {
 						return errors.New("revoked")
@@ -1595,8 +1595,11 @@ func TestRequestCredential_AttestationStatus(t *testing.T) {
 				Proofs:                    map[string][]string{oid4vci.ProofTypeAttestation: {att}},
 				SDJWTClaims:               testSDJWTClaims(),
 			})
-			if len(checked) != 1 || len(checked[0].AttestedKeys) != 2 {
+			if len(checked) != 1 || len(checked[0].Claims.AttestedKeys) != 2 {
 				t.Fatalf("status checker saw %d attestations, want the one verified attestation", len(checked))
+			}
+			if !f.attestationSigner.PublicKey.Equal(checked[0].SignerKey) || checked[0].SignerCertificates != nil {
+				t.Errorf("status checker saw signer %v and certificates %v, want the attestation's key and no x5c", checked[0].SignerKey, checked[0].SignerCertificates)
 			}
 			var ierr *issuer.Error
 			switch {
@@ -1677,7 +1680,7 @@ func TestRequestCredential_RequiredRequestEncryption(t *testing.T) {
 func TestRequestCredential_AttestationNonceBeforeStatus(t *testing.T) {
 	checked := 0
 	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
-		deps.AttestationStatus = attestationStatusFunc(func(context.Context, attestation.VerifiedClaims) error { checked++; return nil })
+		deps.AttestationStatus = attestationStatusFunc(func(context.Context, issuer.VerifiedKeyAttestation) error { checked++; return nil })
 	})
 	key := testP256Key(t)
 	_, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{

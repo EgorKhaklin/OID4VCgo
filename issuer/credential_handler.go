@@ -34,6 +34,13 @@ type AccessTokenVerifier interface {
 }
 
 // Grant is what a verified access token allows.
+//
+// Subject and Authorized.Subject must be equal: Prepare looks up what
+// to issue by the first, while deferred transactions and
+// notification_ids are bound to the second, so a Grant whose two differ
+// (or that sets only one) would issue one holder's Credentials under
+// another's, or no, binding. The handlers answer such a Grant with a
+// 500, as an AccessTokenVerifier misconfiguration.
 type Grant struct {
 	// Subject is who the token was issued for — for a token minted by
 	// ExchangePreAuthorizedCode, the redeemed PreAuthorizedCodeRecord's
@@ -41,7 +48,7 @@ type Grant struct {
 	Subject string
 
 	// Authorized is checked against the Credential Request by
-	// RequestCredential.
+	// RequestCredential. Its Subject must be Subject.
 	Authorized AuthorizedRequest
 
 	// DPoPNonce, if set, is sent as the response's DPoP-Nonce header,
@@ -64,10 +71,18 @@ type CredentialHandlerConfig struct {
 	// SDJWTClaims and MdocClaims, and PerCredential when each
 	// credential needs its own value (a status list index, for
 	// instance) — or sets req.Defer to defer issuance, which the
-	// handler answers with 202 and a transaction_id (§8.3). Returning a *Error — typically
+	// handler answers with 202 and a transaction_id (§8.3). Those are
+	// the only fields of req read after it; req.ResolvedConfigurationID
+	// names the configuration to build the claims of. Returning a *Error — typically
 	// NewError(ErrorCredentialRequestDenied, ...) — refuses the request
 	// with that error; any other error is a 500 whose detail the Wallet
 	// never sees. REQUIRED.
+	//
+	// The handler calls Prepare only for a request the access token
+	// authorizes, once its proofs are verified and its c_nonce
+	// consumed. The request can still fail after it — issuing fails, or
+	// the response can't be encrypted — so Prepare must not do anything
+	// done can't undo: reserve, and commit in done(true).
 	//
 	// done, if not nil, is called exactly once after Prepare succeeds,
 	// with whether the Credential Response was sent — the Credentials,
@@ -79,8 +94,9 @@ type CredentialHandlerConfig struct {
 // CredentialHandler serves the Credential Endpoint (§8). For each POST
 // it checks the access token with cfg.Tokens, reads and parses the
 // request (ParseCredentialRequest, decrypting it if it arrived
-// encrypted), lets cfg.Prepare fill in what to issue, issues it
-// (RequestCredential), and sends the Credential Response — encrypted
+// encrypted), checks it as RequestCredential does, lets cfg.Prepare
+// fill in what to issue once its proofs are verified, issues it, and
+// sends the Credential Response — encrypted
 // when the Wallet asked for that (EncryptResponseBody) — with
 // Cache-Control: no-store. Errors are Credential Error Responses
 // (WriteError).
@@ -110,19 +126,20 @@ func (iss *Issuer) serveCredential(w http.ResponseWriter, r *http.Request, cfg C
 		WriteError(w, err)
 		return
 	}
-	// For Prepare: which configuration's claims to build. A request that
-	// doesn't resolve fails in RequestCredential, with its own error.
-	req.ResolvedConfigurationID, _ = iss.ResolveCredentialConfiguration(grant.Authorized, req)
-	done, err := cfg.Prepare(r.Context(), grant, &req)
-	if err != nil {
-		writePrepareError(w, err)
-		return
+	var done func(issued bool)
+	prepare := func(ctx context.Context, req *CredentialRequest) error {
+		d, err := cfg.Prepare(ctx, grant, req)
+		if err != nil {
+			return fmt.Errorf("issuer: credential handler: prepare: %w", err)
+		}
+		done = d
+		return nil
 	}
+	status, encoded, contentType, err := iss.credentialResponse(r.Context(), grant, req, prepare)
 	issued := false
 	if done != nil {
 		defer func() { done(issued) }()
 	}
-	status, encoded, contentType, err := iss.credentialResponse(r.Context(), grant, req)
 	if err != nil {
 		WriteError(w, err)
 		return
@@ -157,6 +174,12 @@ func authorizePost(w http.ResponseWriter, r *http.Request, endpoint *url.URL, to
 	grant, err := tokens.Verify(r, endpoint)
 	if err != nil {
 		tokens.WriteError(w, err)
+		return Grant{}, nil, false
+	}
+	if grant.Subject != grant.Authorized.Subject {
+		// The verifier's own inconsistency, not the Wallet's: a 500
+		// that doesn't reveal either subject.
+		http.Error(w, "server_error", http.StatusInternalServerError)
 		return Grant{}, nil, false
 	}
 	if grant.DPoPNonce != "" {
@@ -331,10 +354,11 @@ func (iss *Issuer) NotificationEndpointHandler(cfg ProtectedEndpointConfig) (htt
 	}), nil
 }
 
-// credentialResponse issues (or defers) req and encodes the Credential
-// Response, encrypted when req asks for that, with its HTTP status.
-func (iss *Issuer) credentialResponse(ctx context.Context, grant Grant, req CredentialRequest) (int, []byte, string, error) {
-	result, err := iss.RequestCredential(ctx, grant.Authorized, req)
+// credentialResponse issues (or defers) req, with prepare filling in
+// what to issue once it's checked, and encodes the Credential Response,
+// encrypted when req asks for that, with its HTTP status.
+func (iss *Issuer) credentialResponse(ctx context.Context, grant Grant, req CredentialRequest, prepare preparer) (int, []byte, string, error) {
+	result, err := iss.requestCredentialAudited(ctx, grant.Authorized, req, prepare)
 	if err != nil {
 		return 0, nil, "", err
 	}

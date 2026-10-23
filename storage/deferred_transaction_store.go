@@ -118,6 +118,7 @@ func cloneDeferredRecord(r issuer.DeferredTransactionRecord) issuer.DeferredTran
 		}
 		r.BindingKeys = keys
 	}
+	r.KeyAttestations = cloneStrings(r.KeyAttestations)
 	return r
 }
 

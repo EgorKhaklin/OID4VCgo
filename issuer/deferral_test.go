@@ -27,10 +27,10 @@ type mutableClock struct{ now time.Time }
 
 func (c *mutableClock) Now() time.Time { return c.now }
 
-func newDeferralFixture(t *testing.T) deferralFixture {
+func newDeferralFixture(t *testing.T, mutate ...func(cfg *issuer.Config, deps *issuer.Dependencies)) deferralFixture {
 	t.Helper()
 	store, clock := newFakeDeferredTransactionStore(), &mutableClock{now: time.Now()}
-	f := newCredentialEndpointFixture(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
+	f := newCredentialEndpointFixture(t, append([]func(*issuer.Config, *issuer.Dependencies){func(cfg *issuer.Config, deps *issuer.Dependencies) {
 		cfg.Endpoints.DeferredCredential = mustEndpointURL(t, testDeferredCredentialEndpoint)
 		cfg.Endpoints.Notification = mustEndpointURL(t, testNotificationEndpoint)
 		cfg.Limits.DeferredIssuancePollInterval = 5 * time.Second
@@ -38,7 +38,7 @@ func newDeferralFixture(t *testing.T) deferralFixture {
 		deps.DeferredTransactions, deps.Notifications = store, newFakeNotificationStore()
 		deps.Clock = clock
 		clock.now = deps.Clock.Now()
-	})
+	}}, mutate...)...)
 	return deferralFixture{credentialEndpointFixture: f, store: store, clock: clock}
 }
 
@@ -149,6 +149,89 @@ func TestDeferral_DenyAndExpire(t *testing.T) {
 	}
 }
 
+// TestDeferral_RechecksKeyAttestation: a deferred request keeps the key
+// attestation that attested its binding keys, and IssueDeferredCredential
+// verifies it again: one that has expired or been revoked while the
+// transaction was pending denies the transaction instead of issuing.
+func TestDeferral_RechecksKeyAttestation(t *testing.T) {
+	for name, tc := range map[string]struct {
+		revoke  bool
+		advance time.Duration
+		denied  bool
+	}{
+		"still valid":    {},
+		"since revoked":  {revoke: true, denied: true},
+		"since expired":  {advance: 2 * time.Hour, denied: true},
+		"before its exp": {advance: 30 * time.Minute},
+	} {
+		t.Run(name, func(t *testing.T) {
+			revoked, checked := false, 0
+			f := newDeferralFixture(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
+				cfg.Limits.DeferredTransactionLifetime = 3 * time.Hour
+				deps.AttestationStatus = attestationStatusFunc(func(context.Context, issuer.VerifiedKeyAttestation) error {
+					checked++
+					if revoked {
+						return errors.New("revoked")
+					}
+					return nil
+				})
+			})
+			ctx := context.Background()
+			a, b := testP256Key(t), testP256Key(t)
+			n := f.issueNonce(t)
+			ka := keyAttestationForJWT(t, f.attestationSigner, n, false, &a.PublicKey, &b.PublicKey) // exp in an hour
+			resp, err := f.iss.RequestCredential(ctx, deferralAuth, issuer.CredentialRequest{
+				CredentialConfigurationID: testSDJWTConfigID,
+				Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {jwtProofWithKeyAttestation(t, a, n, ka), jwtProofWithKeyAttestation(t, b, n, ka)}},
+				Defer:                     &issuer.Deferral{},
+			})
+			if err != nil {
+				t.Fatalf("RequestCredential (deferred): %v", err)
+			}
+			record, err := f.store.Get(ctx, resp.TransactionID)
+			if err != nil || len(record.BindingKeys) != 2 || len(record.KeyAttestations) != 1 || record.KeyAttestations[0] != ka {
+				t.Fatalf("record = %+v, %v; want both keys and the key attestation, once", record, err)
+			}
+
+			revoked = tc.revoke
+			f.clock.now = f.clock.now.Add(tc.advance)
+			checked = 0
+			err = f.iss.IssueDeferredCredential(ctx, resp.TransactionID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()})
+			res, pollErr := f.iss.RequestDeferredCredential(ctx, deferralAuth, issuer.DeferredCredentialRequest{TransactionID: resp.TransactionID})
+			if tc.denied {
+				if !errors.Is(err, issuer.ErrDeferredKeyAttestation) {
+					t.Fatalf("IssueDeferredCredential = %v, want ErrDeferredKeyAttestation", err)
+				}
+				assertIssuerError(t, pollErr, issuer.ErrorCredentialRequestDenied)
+				return
+			}
+			if err != nil || checked != 1 {
+				t.Fatalf("IssueDeferredCredential = %v, status checked %d times; want issued after one check", err, checked)
+			}
+			if pollErr != nil || len(res.Credentials) != 2 {
+				t.Fatalf("poll = %+v, %v; want 2 credentials", res, pollErr)
+			}
+		})
+	}
+}
+
+// TestDeferral_NoKeyAttestationToRecheck: a transaction without key
+// attestations, from proofs that carried none or saved before
+// DeferredTransactionRecord had them, issues without a status check.
+func TestDeferral_NoKeyAttestationToRecheck(t *testing.T) {
+	checked := 0
+	f := newDeferralFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
+		deps.AttestationStatus = attestationStatusFunc(func(context.Context, issuer.VerifiedKeyAttestation) error { checked++; return nil })
+	})
+	txID, _ := f.deferOne(t)
+	if record, err := f.store.Get(context.Background(), txID); err != nil || record.KeyAttestations != nil {
+		t.Fatalf("record = %+v, %v; want no key attestations", record, err)
+	}
+	if err := f.iss.IssueDeferredCredential(context.Background(), txID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()}); err != nil || checked != 0 {
+		t.Fatalf("IssueDeferredCredential = %v, status checked %d times; want issued without a check", err, checked)
+	}
+}
+
 func TestDeferral_NeedsADeferredEndpoint(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 	_, err := f.iss.RequestCredential(context.Background(), deferralAuth, issuer.CredentialRequest{
@@ -173,7 +256,7 @@ func TestDeferral_NeedsADeferredEndpoint(t *testing.T) {
 func TestDeferral_Handlers(t *testing.T) {
 	f := newDeferralFixture(t)
 	h, err := f.iss.CredentialHandler(issuer.CredentialHandlerConfig{
-		URL: mustURL(t, testCredentialEndpoint), Tokens: &fakeTokens{grant: issuer.Grant{Authorized: deferralAuth}},
+		URL: mustURL(t, testCredentialEndpoint), Tokens: &fakeTokens{grant: issuer.Grant{Subject: deferralAuth.Subject, Authorized: deferralAuth}},
 		Prepare: func(_ context.Context, _ issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
 			req.Defer = &issuer.Deferral{}
 			return nil, nil

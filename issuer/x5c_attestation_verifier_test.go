@@ -5,8 +5,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"testing"
+	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
@@ -82,5 +85,40 @@ func TestX5CAttestationVerifier_RejectsUntrustedChain(t *testing.T) {
 
 	if _, _, err := verifier.ResolveAttestationKey(context.Background(), x5cKeyAttestation(t, leafKey, leaf)); err == nil {
 		t.Error("ResolveAttestationKey accepted a chain that doesn't lead to a trusted root")
+	}
+}
+
+// Dependencies.AttestationStatus sees the key that signed an x5c key
+// attestation and its certificate chain, so it can bind the Status List
+// Token's signer to the attestation's.
+func TestX5CAttestationVerifier_StatusCheckerSeesSigner(t *testing.T) {
+	ca, caKey := testcert.CA(t, "test-ca")
+	leaf, leafKey := testcert.Leaf(t, "test-leaf", ca, caKey)
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	var seen []issuer.VerifiedKeyAttestation
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
+		deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: roots}
+		deps.AttestationStatus = attestationStatusFunc(func(_ context.Context, a issuer.VerifiedKeyAttestation) error {
+			seen = append(seen, a)
+			return nil
+		})
+	})
+	attested := testP256Key(t)
+	att, err := attestation.Issue(leafKey, jose.ES256, attestation.Header{X5C: []string{base64.StdEncoding.EncodeToString(leaf.Raw)}}, attestation.Claims{
+		IssuedAt: time.Now().Unix(), AttestedKeys: []json.RawMessage{jwkJSON(t, &attested.PublicKey)}, Nonce: f.issueNonce(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.iss.RequestCredential(context.Background(), issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}}, issuer.CredentialRequest{
+		CredentialConfigurationID: testSDJWTConfigID,
+		Proofs:                    map[string][]string{oid4vci.ProofTypeAttestation: {att}},
+		SDJWTClaims:               testSDJWTClaims(),
+	}); err != nil {
+		t.Fatalf("RequestCredential: %v", err)
+	}
+	if len(seen) != 1 || !leafKey.PublicKey.Equal(seen[0].SignerKey) || len(seen[0].SignerCertificates) != 1 || !seen[0].SignerCertificates[0].Equal(leaf) {
+		t.Fatalf("status checker saw %+v, want the leaf's key and certificate", seen)
 	}
 }

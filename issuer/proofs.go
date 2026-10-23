@@ -57,15 +57,19 @@ func (iss *Issuer) resolveJWTProofKeys(
 				return nil, err
 			}
 			keys = appendUniqueKeys(keys, attested)
-			if limit := iss.maxBatchSize(); len(keys) > limit {
-				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: the key attestations attest more keys than this issuer's batch_size (%d)", i, limit), nil)
-			}
 		case ptc.KeyAttestationsRequired != nil:
 			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: this credential_configuration_id requires a key_attestation header", i), nil)
 		default:
 			// Not de-duplicated: checkDistinctKeys refuses one key proved
 			// twice.
 			keys = append(keys, resolvedKey{Public: pub, JWKRaw: jwkRaw})
+		}
+		// The running total, after every proof whatever its kind:
+		// checkBatchSize bounds the number of proofs, not the keys a
+		// key attestation adds, so proofs with and without one together
+		// could otherwise resolve more keys than batch_size.
+		if limit := iss.maxBatchSize(); len(keys) > limit {
+			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: the key attestations attest more keys than this issuer's batch_size (%d)", i, limit), nil)
 		}
 	}
 	return keys, nil
@@ -110,10 +114,11 @@ func (iss *Issuer) resolveKeyAttestationHeader(
 	if iss.deps.AttestationVerifier == nil {
 		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: key_attestation isn't supported by this issuer", i), nil)
 	}
-	verified, err := iss.verifyOneAttestation(ctx, compact, i, iss.deps.Clock.Now(), ptc.ProofSigningAlgValuesSupported)
+	signed, err := iss.verifyOneAttestation(ctx, compact, i, iss.deps.Clock.Now(), ptc.ProofSigningAlgValuesSupported)
 	if err != nil {
 		return nil, err
 	}
+	verified := signed.Claims
 	if verified.ExpiresAt == nil {
 		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: its key_attestation has no exp, which the jwt proof type requires (Appendix D.1)", i), nil)
 	}
@@ -130,12 +135,10 @@ func (iss *Issuer) resolveKeyAttestationHeader(
 	if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
 		return nil, err
 	}
-	if iss.deps.AttestationStatus != nil {
-		if err := iss.deps.AttestationStatus.CheckAttestationStatus(ctx, verified); err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: key_attestation status", i), err)
-		}
+	if err := iss.checkAttestationStatus(ctx, signed); err != nil {
+		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: key_attestation status", i), err)
 	}
-	return appendAttestedKeys(nil, verified, i, iss.maxBatchSize())
+	return appendAttestedKeys(nil, verified, compact, i, iss.maxBatchSize())
 }
 
 // appendUniqueKeys appends each of add to keys unless keys already has
@@ -398,10 +401,11 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 	var keys []resolvedKey
 
 	for i, raw := range values {
-		verified, err := iss.verifyOneAttestation(ctx, raw, i, now, ptc.ProofSigningAlgValuesSupported)
+		signed, err := iss.verifyOneAttestation(ctx, raw, i, now, ptc.ProofSigningAlgValuesSupported)
 		if err != nil {
 			return nil, err
 		}
+		verified := signed.Claims
 		// Freshness first: a replayed attestation is refused before its
 		// status is fetched, which would otherwise cost a Status List
 		// fetch for each replay of any attestation ever issued.
@@ -416,12 +420,10 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 		if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
 			return nil, err
 		}
-		if iss.deps.AttestationStatus != nil {
-			if err := iss.deps.AttestationStatus.CheckAttestationStatus(ctx, verified); err != nil {
-				return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: status", i), err)
-			}
+		if err := iss.checkAttestationStatus(ctx, signed); err != nil {
+			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: status", i), err)
 		}
-		keys, err = appendAttestedKeys(keys, verified, i, maxKeys)
+		keys, err = appendAttestedKeys(keys, verified, raw, i, maxKeys)
 		if err != nil {
 			return nil, err
 		}
@@ -443,23 +445,23 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 // in the proof_signing_alg_values_supported metadata parameter".
 // Checking the resolved algorithm covers the header too, since Verify
 // then requires the header's alg to equal it.
-func (iss *Issuer) verifyOneAttestation(ctx context.Context, raw string, i int, now time.Time, algs []string) (attestation.VerifiedClaims, error) {
+func (iss *Issuer) verifyOneAttestation(ctx context.Context, raw string, i int, now time.Time, algs []string) (VerifiedKeyAttestation, error) {
 	parsed, err := attestation.Parse(raw)
 	if err != nil {
-		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d is malformed", i), err)
+		return VerifiedKeyAttestation{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d is malformed", i), err)
 	}
 	pub, alg, err := iss.deps.AttestationVerifier.ResolveAttestationKey(certchain.WithTime(ctx, iss.deps.Clock.Now()), parsed)
 	if err != nil {
-		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: resolve trust key", i), err)
+		return VerifiedKeyAttestation{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: resolve trust key", i), err)
 	}
 	if !slices.Contains(algs, string(alg)) {
-		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: alg %q is not in proof_signing_alg_values_supported", i, alg), nil)
+		return VerifiedKeyAttestation{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: alg %q is not in proof_signing_alg_values_supported", i, alg), nil)
 	}
 	verified, err := parsed.Verify(pub, alg, attestation.VerifyOptions{Now: now})
 	if err != nil {
-		return attestation.VerifiedClaims{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: verification failed", i), err)
+		return VerifiedKeyAttestation{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: verification failed", i), err)
 	}
-	return verified, nil
+	return VerifiedKeyAttestation{Claims: verified, SignerKey: pub, SignerCertificates: signerCertificates(parsed, pub)}, nil
 }
 
 // appendAttestedKeys appends one resolvedKey per entry in verified's
@@ -496,7 +498,7 @@ func meetsKeyAttestationRequirement(verified attestation.VerifiedClaims, req *oi
 	return nil
 }
 
-func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims, i, maxKeys int) ([]resolvedKey, error) {
+func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims, compact string, i, maxKeys int) ([]resolvedKey, error) {
 	for j, attestedKeyRaw := range verified.AttestedKeys {
 		if len(keys) >= maxKeys {
 			return nil, newError(ErrorInvalidProof, 400,
@@ -506,9 +508,19 @@ func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims,
 		if err != nil {
 			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d]: parse jwk", i, j), err)
 		}
+		key.KeyAttestation = compact
 		keys = append(keys, key)
 	}
 	return keys, nil
+}
+
+// checkAttestationStatus runs Dependencies.AttestationStatus, when set,
+// on a verified key attestation.
+func (iss *Issuer) checkAttestationStatus(ctx context.Context, verified VerifiedKeyAttestation) error {
+	if iss.deps.AttestationStatus == nil {
+		return nil
+	}
+	return iss.deps.AttestationStatus.CheckAttestationStatus(ctx, verified)
 }
 
 // consumeNonce consumes nonce via NonceStore and checks it hasn't

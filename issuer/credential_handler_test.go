@@ -41,7 +41,7 @@ func newCredentialHandler(t *testing.T, f credentialEndpointFixture, prepareErr 
 	t.Helper()
 	run := &credentialHandlerRun{tokens: &fakeTokens{grant: issuer.Grant{
 		Subject: "holder-1", DPoPNonce: "next-nonce",
-		Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: []string{"identity_credential"}},
+		Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Subject: "holder-1", Scopes: []string{"identity_credential"}},
 	}}}
 	h, err := f.iss.CredentialHandler(issuer.CredentialHandlerConfig{
 		URL: mustURL(t, testCredentialEndpoint), Tokens: run.tokens,
@@ -120,6 +120,45 @@ func TestCredentialHandler_Issues(t *testing.T) {
 	}
 }
 
+// TestHandlers_RefuseInconsistentGrantSubjects: a Grant whose Subject
+// and Authorized.Subject differ, or that sets only one, is answered
+// with a 500 by every protected endpoint, before Prepare runs or
+// anything is read from the request.
+func TestHandlers_RefuseInconsistentGrantSubjects(t *testing.T) {
+	for name, grant := range map[string]issuer.Grant{
+		"differ":                  {Subject: "holder-1", Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Subject: "holder-2"}},
+		"only Subject":            {Subject: "holder-1", Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")}},
+		"only Authorized.Subject": {Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Subject: "holder-1"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newDeferralFixture(t)
+			h, run := newCredentialHandler(t, f.credentialEndpointFixture, nil)
+			run.tokens.grant = grant
+			if w := postCredentialRequest(t, h, sdjwtCredentialRequestBody(t, f.credentialEndpointFixture)); w.Code != http.StatusInternalServerError || run.prepared != nil {
+				t.Errorf("credential endpoint = %d, Prepare called: %v; want 500 without Prepare", w.Code, run.prepared != nil)
+			}
+			if _, err := f.nonces.Consume(context.Background(), issuer.NonceConsumption{Nonce: "test-nonce"}); err != nil {
+				t.Errorf("the refused request consumed the nonce: %v", err)
+			}
+			tokens := &fakeTokens{grant: grant}
+			dh, err := f.iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{ProtectedEndpointConfig: protectedEndpoint(t, tokens)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w := postCredentialRequest(t, dh, `{"transaction_id":"x"}`); w.Code != http.StatusInternalServerError {
+				t.Errorf("deferred credential endpoint = %d, want 500", w.Code)
+			}
+			nh, err := f.iss.NotificationEndpointHandler(protectedEndpoint(t, tokens))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w := postCredentialRequest(t, nh, `{"notification_id":"x","event":"credential_accepted"}`); w.Code != http.StatusInternalServerError {
+				t.Errorf("notification endpoint = %d, want 500", w.Code)
+			}
+		})
+	}
+}
+
 func TestCredentialHandler_Refusals(t *testing.T) {
 	f := newCredentialEndpointFixture(t)
 
@@ -154,12 +193,14 @@ func TestCredentialHandler_Refusals(t *testing.T) {
 	})
 
 	t.Run("denied by Prepare", func(t *testing.T) {
+		f := newCredentialEndpointFixture(t) // each consumes its nonce
 		h, _ := newCredentialHandler(t, f, issuer.NewError(issuer.ErrorCredentialRequestDenied, "already issued"))
 		w := postCredentialRequest(t, h, sdjwtCredentialRequestBody(t, f))
 		assertCredentialErrorResponse(t, w, http.StatusBadRequest, issuer.ErrorCredentialRequestDenied)
 	})
 
 	t.Run("Prepare failure stays private", func(t *testing.T) {
+		f := newCredentialEndpointFixture(t) // each consumes its nonce
 		h, _ := newCredentialHandler(t, f, errors.New("database password is hunter2"))
 		w := postCredentialRequest(t, h, sdjwtCredentialRequestBody(t, f))
 		if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "hunter2") {
@@ -167,14 +208,58 @@ func TestCredentialHandler_Refusals(t *testing.T) {
 		}
 	})
 
+	// Prepare runs only for a request the access token authorizes, once
+	// its proofs are verified.
+	for name, tc := range map[string]struct {
+		body   func() string
+		status int
+		code   issuer.ErrorCode
+	}{
+		"no proof": {body: func() string { return `{"credential_configuration_id":"` + testSDJWTConfigID + `"}` }, status: http.StatusBadRequest, code: issuer.ErrorInvalidProof},
+		"invalid proof": {body: func() string {
+			return `{"credential_configuration_id":"` + testSDJWTConfigID + `","proofs":{"jwt":["` + buildJWTProof(t, testP256Key(t), "https://other.example.com", f.issueNonce(t)) + `"]}}`
+		}, status: http.StatusBadRequest, code: issuer.ErrorInvalidProof},
+		"unauthorized configuration": {body: func() string { return `{"credential_configuration_id":"` + testMdocConfigID + `"}` }, status: http.StatusForbidden, code: issuer.ErrorInsufficientScope},
+		"unknown configuration":      {body: func() string { return `{"credential_configuration_id":"unknown"}` }, status: http.StatusBadRequest, code: issuer.ErrorUnknownCredentialConfig},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, run := newCredentialHandler(t, f, nil)
+			w := postCredentialRequest(t, h, tc.body())
+			assertCredentialErrorResponse(t, w, tc.status, tc.code)
+			if run.prepared != nil || len(run.outcome) != 0 {
+				t.Errorf("Prepare ran (done called with %v) for a request refused before issuing", run.outcome)
+			}
+		})
+	}
+
 	t.Run("issuing fails", func(t *testing.T) {
-		h, run := newCredentialHandler(t, f, nil)
-		w := postCredentialRequest(t, h, `{"credential_configuration_id":"`+testSDJWTConfigID+`"}`)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400 for a request without a proof", w.Code)
+		f := newCredentialEndpointFixture(t) // each consumes its nonce
+		var resolved string
+		var outcome []bool
+		h, err := f.iss.CredentialHandler(issuer.CredentialHandlerConfig{
+			URL: mustURL(t, testCredentialEndpoint),
+			Tokens: &fakeTokens{grant: issuer.Grant{Subject: "holder-1", Authorized: issuer.AuthorizedRequest{
+				ClientIdentity: issuer.KnownClientID("test-client"), Subject: "holder-1", Scopes: []string{"identity_credential"},
+			}}},
+			Prepare: func(_ context.Context, _ issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
+				resolved = req.ResolvedConfigurationID
+				req.SDJWTClaims = testSDJWTClaims()
+				req.PerCredential = func(context.Context, *issuer.CredentialInstance) error { return errors.New("status list full") }
+				return func(issued bool) { outcome = append(outcome, issued) }, nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
-		if len(run.outcome) != 1 || run.outcome[0] {
-			t.Errorf("done called with %v, want [false]", run.outcome)
+		w := postCredentialRequest(t, h, sdjwtCredentialRequestBody(t, f))
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500 when PerCredential fails", w.Code)
+		}
+		if resolved != testSDJWTConfigID {
+			t.Errorf("Prepare saw ResolvedConfigurationID %q, want %q", resolved, testSDJWTConfigID)
+		}
+		if len(outcome) != 1 || outcome[0] {
+			t.Errorf("done called with %v, want [false]", outcome)
 		}
 	})
 }
