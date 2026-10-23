@@ -41,6 +41,16 @@ internal interface ProximityTransport {
 }
 
 /**
+ * How many unread messages a BLE transport keeps. A session reads each
+ * message before the next is due, so more is a misbehaving peer, and the
+ * transport ends the session rather than buffer for it.
+ */
+internal const val INCOMING_MESSAGE_CAPACITY = 4
+
+/** The failure when a peer overruns [INCOMING_MESSAGE_CAPACITY]. */
+internal const val TOO_MANY_MESSAGES = "too many unread messages from the other device"
+
+/**
  * Several transports at once, for a holder offering both BLE modes: it
  * advertises and scans until a reader connects either way, keeps that
  * transport and closes the others. It fails only once every one has.

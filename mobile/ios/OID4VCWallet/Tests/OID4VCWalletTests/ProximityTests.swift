@@ -27,7 +27,7 @@ final class PipeTransport: ProximityTransport, @unchecked Sendable {
 
     func send(_ message: Data) async throws {
         guard let peer else { throw ProximityTransportError("the other end is gone", peerEnded: true) }
-        peer.inbox.push(message)
+        guard peer.inbox.push(message) else { throw ProximityTransportError("too many unread messages") }
     }
 
     func receive() async throws -> Data { try await inbox.receive() }
@@ -271,6 +271,19 @@ final class ProximityTests: XCTestCase {
         guard case .failed(let error) = h, let e = error as? ProximityError else { return XCTFail("holder: \(h)") }
         XCTAssertEqual(e.reason, .timedOut)
         _ = readerEnd
+    }
+
+    /// A peer sending messages faster than the session reads them is
+    /// refused once `capacity` are unread, and the queue drops them.
+    func testMessageQueueIsBounded() async throws {
+        let q = MessageQueue()
+        for i in 0..<MessageQueue.capacity { XCTAssertTrue(q.push(Data([UInt8(i)]))) }
+        XCTAssertFalse(q.push(Data([0xFF])))
+        q.end(ProximityTransportError("ended"))
+        do {
+            _ = try await q.receive()
+            XCTFail("receive returned a dropped message")
+        } catch is ProximityTransportError {}
     }
 
     func testChunks() throws {
