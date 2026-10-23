@@ -201,7 +201,7 @@ func TestRequestNotification_Expiry(t *testing.T) {
 	notify := func(iss *issuer.Issuer, id string) error {
 		return iss.RequestNotification(ctx, auth, issuer.NotificationRequest{NotificationID: id, Event: oid4vci.NotificationEventCredentialAccepted})
 	}
-	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	for _, lifetime := range []time.Duration{0, time.Hour} {
 		store := newFakeNotificationStore()
 		cfg := validConfig(t)
