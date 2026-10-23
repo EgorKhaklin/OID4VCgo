@@ -255,10 +255,11 @@ func (p *Presentation) Linkable(id string) bool {
 
 // linkable reports whether presenting c to the Verifier whose
 // VerifierHash is verifier, under Config.CopyPolicy, would use a copy
-// another Verifier has seen.
+// another Verifier has seen, or one correlated with it
+// (StoredCredential.CopiesCorrelated).
 func (w *Wallet) linkable(c StoredCredential, verifier string) bool {
 	_, cp, _ := c.copyFor(w.cfg.CopyPolicy, verifier, w.deps.Clock())
-	return slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
+	return c.linkableTo(cp, verifier)
 }
 
 // Queries returns the request's Credential Queries, in its order, each
@@ -625,7 +626,7 @@ func (w *Wallet) loadForReserve(ctx context.Context, id string) (StoredCredentia
 // would be linkable.
 func (w *Wallet) reserveCopy(c *StoredCredential, q, id, verifier string, toldLinkable bool) (reservedCopy, error) {
 	i, cp, reused := c.copyFor(w.cfg.CopyPolicy, verifier, w.deps.Clock())
-	linkable := slices.ContainsFunc(cp.ShownTo, func(h string) bool { return h != verifier })
+	linkable := c.linkableTo(cp, verifier)
 	if linkable && !toldLinkable {
 		// What the holder saw said otherwise: don't send it.
 		return reservedCopy{}, fmt.Errorf("walletflow: credential %q: %w", id, ErrLinkable)

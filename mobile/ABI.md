@@ -135,8 +135,9 @@ A record is JSON the app needn't read: `id`, `credential_issuer`,
 `configuration_id`, `format`, `vct`, `doctype`, `credential`,
 `holder_key_id`, `received_at`, `claims`, `display`, `valid_until`,
 `status_list`, `status_list_cwt`, `status`, `grant_id` and
-`credential_identifier` (the dataset a refresh asks for again), and
-`copies` (each copy's `credential`, `holder_key_id`, `presented`,
+`credential_identifier` (the dataset a refresh asks for again),
+`copies_correlated` (the issuer gave two copies the same `jti`, `sub`
+or status list entry; absent when not), and `copies` (each copy's `credential`, `holder_key_id`, `presented`,
 `shown_to`, and its own `status_list` and `valid_until`). A record
 written before a field was kept lacks it.
 
@@ -384,12 +385,15 @@ presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
   uses one of those, so presentations can't be linked by the
   credential. Once none is left, a copy is reused.
 - `linkable` is whether a copy has been presented to more than one
-  Verifier, so those Verifiers could link the holder's presentations.
-  Refreshing gives it copies no Verifier has seen.
+  Verifier, so those Verifiers could link the holder's presentations —
+  or, when the issuer gave its copies the same `jti`, `sub` or status
+  list entry, whether copies have between them. Refreshing gives it
+  copies no Verifier has seen.
 - `shown_to_verifier` and `linkable_here` are set only on a
   presentation's candidates (`Queries`): whether the Verifier asking has
   been shown this credential before, and whether presenting it now would
-  hand it a copy another Verifier has seen.
+  hand it a copy another Verifier has seen (or, copies correlated as
+  above, any copy another has seen).
 - `refreshable` is whether its issuance kept a refresh token
   (`request_refresh`), so `RefreshCredential` can replace its copies.
   The Authorization Server may still refuse it (`reissue_required`).

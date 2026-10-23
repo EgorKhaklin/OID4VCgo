@@ -73,6 +73,13 @@ type StoredCredential struct {
 	// it with, when its issuance kept one (Config.RequestRefresh); ""
 	// when it can't be refreshed, only received again.
 	GrantID string
+
+	// CopiesCorrelated is whether the issuer gave two of its copies the
+	// same jti, sub or status list entry: Verifiers shown different
+	// copies can link them all the same, so a copy another Verifier has
+	// seen of any of them makes a presentation linkable (Linkable). False
+	// for a credential stored before this was kept.
+	CopiesCorrelated bool
 }
 
 // CredentialCopy is one copy of a credential: the credential, the key
@@ -115,10 +122,31 @@ func (c StoredCredential) ShownTo(clientID string) bool {
 
 // Linkable reports whether presentations of c can already be linked: a
 // copy has been presented to more than one Verifier, so those Verifiers
-// hold the same credential. Refreshing (Wallet.RefreshCredential) gives
-// it copies no Verifier has seen.
+// hold the same credential — or, its copies correlated
+// (CopiesCorrelated), copies have between them. Refreshing
+// (Wallet.RefreshCredential) gives it copies no Verifier has seen.
 func (c StoredCredential) Linkable() bool {
+	if c.CopiesCorrelated {
+		shown := map[string]bool{}
+		for _, cp := range c.AllCopies() {
+			for _, h := range cp.ShownTo {
+				shown[h] = true
+			}
+		}
+		return len(shown) > 1
+	}
 	return slices.ContainsFunc(c.AllCopies(), func(cp CredentialCopy) bool { return len(cp.ShownTo) > 1 })
+}
+
+// linkableTo reports whether presenting cp, one of c's copies, to the
+// Verifier verifierHash names would let it link the holder with another
+// Verifier: one has seen cp, or, c's copies correlated, any copy.
+func (c StoredCredential) linkableTo(cp CredentialCopy, verifierHash string) bool {
+	other := func(h string) bool { return h != verifierHash }
+	if c.CopiesCorrelated {
+		return slices.ContainsFunc(c.AllCopies(), func(o CredentialCopy) bool { return slices.ContainsFunc(o.ShownTo, other) })
+	}
+	return slices.ContainsFunc(cp.ShownTo, other)
 }
 
 // copyFor is the copy to present to the Verifier verifierHash names
