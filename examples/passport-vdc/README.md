@@ -173,8 +173,14 @@ What the second path does and doesn't give you:
     Age claims use the youngest reading, so they can only understate
     age, never overstate it.
 - **Age claims go stale.** A child's `age_over_18: false` becomes wrong
-  on their 18th birthday, so the credential expires at the next age
-  threshold the holder crosses.
+  on their 18th birthday. Ending the credential's validity then would
+  put that birthday in its always-disclosed `exp` (and the mdoc's
+  `validUntil`), so instead a threshold the holder crosses within the
+  credential's year of validity gets no age claim at all: a 17-year-old
+  can't answer `age_over_18` until their next credential. Every
+  credential issued on a day is valid from that UTC day's start for a
+  year, whoever holds it, and the issuer's status page shows only that
+  day.
 - **Expired passports are accepted.** Expiry ends a passport's use for
   travel; it doesn't make the chip data any less authentic, and Passive
   Authentication verifies it just the same. The credential's validity

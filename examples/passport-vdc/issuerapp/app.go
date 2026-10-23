@@ -406,6 +406,12 @@ type issuerIdentity struct {
 // newIssuerIdentity generates an issuerIdentity. The certificates are
 // valid for two years so they outlive any credential the one-year
 // validity cap allows; the CA key is discarded.
+//
+// They're valid from certificateBackdate before now: an mdoc's MSO is
+// signed at the start of its issuance's UTC day (credential.ValidFrom),
+// and ISO/IEC 18013-5 §9.3.1 has that signed time fall within the
+// document signer certificate's validity. The CA's starts as early, so
+// the signer's doesn't start before its issuer's.
 func newIssuerIdentity(now time.Time) (issuerIdentity, error) {
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -414,7 +420,7 @@ func newIssuerIdentity(now time.Time) (issuerIdentity, error) {
 	var id issuerIdentity
 	id.caCert, err = democert.Create(&x509.Certificate{
 		Subject:   pkix.Name{CommonName: "passport-vdc demo CA", Organization: []string{"IDFoundry demo"}, Country: []string{demoCountry}},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(5, 0, 0),
+		NotBefore: now.Add(-certificateBackdate), NotAfter: now.AddDate(5, 0, 0),
 		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
 	}, nil, &caKey.PublicKey, caKey)
 	if err != nil {
@@ -428,6 +434,11 @@ func newIssuerIdentity(now time.Time) (issuerIdentity, error) {
 	}
 	return id, nil
 }
+
+// certificateBackdate is how far before its creation an issuerIdentity
+// is valid from: the whole UTC day an MSO's signed time is rounded down
+// across (see newIssuerIdentity), and an hour for clock skew.
+const certificateBackdate = 25 * time.Hour
 
 // demoCountry is the demo CA's and signers' countryName: ISO/IEC
 // 18013-5 Annex B makes it mandatory, and verifiers check that a
@@ -443,7 +454,7 @@ func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.
 	}
 	cert, err := democert.Create(&x509.Certificate{
 		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}, Country: []string{demoCountry}},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(2, 0, 0),
+		NotBefore: now.Add(-certificateBackdate), NotAfter: now.AddDate(2, 0, 0),
 		KeyUsage: x509.KeyUsageDigitalSignature,
 	}, ca, &key.PublicKey, caKey)
 	if err != nil {

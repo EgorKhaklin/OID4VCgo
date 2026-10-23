@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
 )
 
@@ -30,8 +31,10 @@ const (
 )
 
 // loadOrCreateIdentity returns the identity saved in dir, or generates
-// and saves a new one when there is none or its signers wouldn't outlive
-// a credential issued now (the one-year validity cap).
+// and saves a new one when there is none, its signers wouldn't outlive
+// a credential issued now (the one-year validity cap), or its document
+// signer isn't yet valid at the start of today (UTC), when an mdoc
+// issued now is signed (see newIssuerIdentity).
 func loadOrCreateIdentity(dir string, now time.Time) (issuerIdentity, error) {
 	path := filepath.Join(dir, identityFile)
 	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied state directory
@@ -43,7 +46,8 @@ func loadOrCreateIdentity(dir string, now time.Time) (issuerIdentity, error) {
 		}
 		// An identity from before the CA carried a countryName is made
 		// again: verifiers refuse its mdocs.
-		if id.documentSignerCert.NotAfter.After(now.AddDate(1, 0, 0)) && len(id.caCert.Subject.Country) > 0 {
+		if id.documentSignerCert.NotAfter.After(now.AddDate(1, 0, 0)) && len(id.caCert.Subject.Country) > 0 &&
+			!id.documentSignerCert.NotBefore.After(credential.ValidFrom(now)) {
 			return id, nil
 		}
 	case !errors.Is(err, fs.ErrNotExist):

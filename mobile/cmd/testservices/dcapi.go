@@ -16,14 +16,19 @@ import (
 // it, its button asks for family_name (from an SD-JWT VC, the default,
 // or an mdoc with format=mso_mdoc) with a signed OpenID4VP request, and the page
 // shows what the Verifier made of the answer. The request is bound to
-// the page's own origin, the control endpoint's.
+// the origin the services were configured with (-dcapi-origin, or the
+// control endpoint's own), never the request's Host: a page elsewhere
+// relaying requests here would otherwise get them bound to an origin
+// of its choosing, and its visitors' answers would verify.
 //
 //	POST /dcapi/request?format=<fmt> → {"id", "protocol", "data"}
 //	POST /dcapi/response/{id}        (the credential's data) → {"status": "done", "claims"} | {"status": "error", "error"}
 //	GET  /dcapi/result/{id}          → the same, for tests
 type dcapiRequests struct {
-	v  *walletflowtest.Verifier
-	mu sync.Mutex
+	v *walletflowtest.Verifier
+	// origin is the page's origin; empty refuses every request.
+	origin string
+	mu     sync.Mutex
 	// by ID: the request, and what its answer came to once it came.
 	requests map[string]*walletflowtest.DCAPIRequest
 	results  map[string]map[string]any
@@ -35,6 +40,10 @@ func (d *dcapiRequests) routes(mux *http.ServeMux, env *walletflowtest.Env) {
 		_, _ = io.WriteString(w, dcapiPage)
 	})
 	mux.HandleFunc("POST /dcapi/request", func(w http.ResponseWriter, r *http.Request) {
+		if d.origin == "" {
+			http.Error(w, "no Digital Credentials API origin is configured", http.StatusInternalServerError)
+			return
+		}
 		format := r.URL.Query().Get("format")
 		if format == "" {
 			format = "dc+sd-jwt"
@@ -44,7 +53,7 @@ func (d *dcapiRequests) routes(mux *http.ServeMux, env *walletflowtest.Env) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		req, err := d.v.BeginDCAPI(q, "https://"+r.Host)
+		req, err := d.v.BeginDCAPI(q, d.origin)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

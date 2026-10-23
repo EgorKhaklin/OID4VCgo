@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 )
 
 // TestIdentity_PersistsInStateDir: a second load returns the same CA and
@@ -45,6 +47,34 @@ func TestIdentity_RenewsWhenSignersWouldExpire(t *testing.T) {
 	}
 	if renewed.caCert.Equal(old.caCert) {
 		t.Error("an identity about to expire was reused")
+	}
+}
+
+// TestIdentity_ValidFromBeforeToday: an mdoc issued now is signed at the
+// start of today (UTC), so the document signer must be valid from then:
+// a new identity is, and a saved one that isn't is replaced.
+func TestIdentity_ValidFromBeforeToday(t *testing.T) {
+	now := time.Now()
+	dir := t.TempDir()
+	id, err := loadOrCreateIdentity(dir, now)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if nb := id.documentSignerCert.NotBefore; nb.After(credential.ValidFrom(now)) {
+		t.Errorf("document signer valid from %v, after the start of today", nb)
+	}
+
+	dir = t.TempDir()
+	late, err := loadOrCreateIdentity(dir, now.Add(48*time.Hour))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	renewed, err := loadOrCreateIdentity(dir, now)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if renewed.documentSignerCert.Equal(late.documentSignerCert) {
+		t.Error("an identity not yet valid at the start of today was reused")
 	}
 }
 
@@ -166,5 +196,31 @@ func TestStatusPage_HidesIndices(t *testing.T) {
 	}
 	if bits, _ := s.snapshot(); bits[idx] != 1 {
 		t.Error("the handle didn't revoke its entry")
+	}
+}
+
+// TestStatusPage_ShowsIssuanceDayOnly: the revocation page dates an
+// entry by its UTC day, which every credential issued that day shares,
+// not by a time a verifier could match a presented credential to.
+func TestStatusPage_ShowsIssuanceDayOnly(t *testing.T) {
+	s := newStatusList()
+	issued := time.Date(2026, 9, 26, 13, 47, 5, 0, time.UTC)
+	if _, err := s.allocate("mso_mdoc", false, issued); err != nil {
+		t.Fatal(err)
+	}
+	_, entries := s.snapshot()
+	var page strings.Builder
+	if err := statusTemplate.Execute(&page, struct {
+		URI           string
+		Entries       []IssuedStatus
+		Notifications []NotificationEvent
+	}{"https://issuer.example/statuslists/1", entries, nil}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(page.String(), ">2026-09-26<") {
+		t.Error("the revocation page doesn't date the entry by its day")
+	}
+	if strings.Contains(page.String(), "13:47") {
+		t.Error("the revocation page shows the time of issuance")
 	}
 }

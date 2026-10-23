@@ -21,6 +21,10 @@ func fullDate(t time.Time) cbor.Tag {
 // MdocClaims encodes e as a Photo ID mdoc (see DocType). DeviceKey is
 // left unset: issuer.RequestCredential binds each issued instance to
 // the Wallet's own key.
+//
+// The MSO's signed and validFrom are ValidFrom(o.Now), the start of the
+// UTC day, not the signing instant (see ValidFrom): the document
+// signer's certificate must be valid from before that day began.
 func MdocClaims(e passport.Evidence, o Options) (*mdoc.Claims, error) {
 	validUntil, err := ValidUntil(e, o)
 	if err != nil {
@@ -29,6 +33,7 @@ func MdocClaims(e passport.Evidence, o Options) (*mdoc.Claims, error) {
 	if len(e.File) == 0 {
 		return nil, fmt.Errorf("credential: evidence is missing the passport file")
 	}
+	validFrom := ValidFrom(o.Now)
 
 	id := e.Identity
 	iso := map[string]interface{}{
@@ -37,7 +42,7 @@ func MdocClaims(e passport.Evidence, o Options) (*mdoc.Claims, error) {
 		Sex:              isoSex(id.Sex),
 		Nationality:      id.Nationality,
 		IssuingAuthority: IssuingAuthorityName,
-		IssueDate:        fullDate(o.Now),
+		IssueDate:        fullDate(validFrom),
 		ExpiryDate:       fullDate(validUntil),
 	}
 	if o.IssuingCountry != "" {
@@ -49,7 +54,7 @@ func MdocClaims(e passport.Evidence, o Options) (*mdoc.Claims, error) {
 	if len(e.Portrait) > 0 {
 		iso[Portrait] = e.Portrait
 	}
-	for threshold, over := range ageClaims(e, o) {
+	for threshold, over := range ageClaims(e, o, validUntil) {
 		iso[fmt.Sprintf("%s%02d", mdocAgeOverPrefix, threshold)] = over
 	}
 
@@ -61,8 +66,8 @@ func MdocClaims(e passport.Evidence, o Options) (*mdoc.Claims, error) {
 			DemoNamespace:    {NamesFromMRZ: id.NamesFromMRZ, PassportExpiryDate: fullDate(id.ExpiryDate)},
 			FileNamespace:    {PassportFile: e.File},
 		},
-		Signed:     o.Now,
-		ValidFrom:  o.Now,
+		Signed:     validFrom,
+		ValidFrom:  validFrom,
 		ValidUntil: validUntil,
 	}, nil
 }

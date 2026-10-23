@@ -113,6 +113,14 @@ func TestEndToEnd_IssuesBothFormats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mdoc.Verify: %v", err)
 	}
+	// Signed at the start of the UTC day, within the document signer's
+	// validity however soon after its creation.
+	if signed := verified.ValidityInfo.Signed; !signed.Equal(credential.ValidFrom(signed)) {
+		t.Errorf("MSO signed = %v, want the start of a UTC day", signed)
+	}
+	if _, err := mdoc.CheckDocumentSigner(verified, [][]*x509.Certificate{{env.Issuer.IssuerCertificate(), env.Issuer.IssuerCACertificate()}}); err != nil {
+		t.Errorf("CheckDocumentSigner: %v", err)
+	}
 	if verified.NameSpaces[credential.ISONamespace][credential.FamilyName] != "DOE" {
 		t.Errorf("mdoc family_name = %v", verified.NameSpaces[credential.ISONamespace][credential.FamilyName])
 	}
@@ -130,6 +138,9 @@ func TestEndToEnd_IssuesBothFormats(t *testing.T) {
 	}
 	if payload["vct"] != env.IssuerURL+issuerapp.VCTPath || payload[credential.FamilyName] != "DOE" || payload[credential.PassportFile] == nil {
 		t.Errorf("sd-jwt payload = %v", payload)
+	}
+	if exp, _ := payload["exp"].(float64); int64(exp)%(24*60*60) != 0 {
+		t.Errorf("sd-jwt exp = %v, want the start of a UTC day", payload["exp"])
 	}
 }
 

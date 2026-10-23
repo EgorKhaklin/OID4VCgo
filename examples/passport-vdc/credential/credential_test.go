@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"errors"
 	"math/big"
 	"strings"
 	"testing"
@@ -65,7 +66,7 @@ func testIssuer(t *testing.T) (*ecdsa.PrivateKey, []byte) {
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "passport-vdc test issuer"},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(10, 0, 0),
+		NotBefore: today.Add(-time.Hour), NotAfter: now.AddDate(10, 0, 0),
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
@@ -74,6 +75,10 @@ func testIssuer(t *testing.T) (*ecdsa.PrivateKey, []byte) {
 	return key, der
 }
 
+// today is the start of now's UTC day, where every credential issued
+// at now starts its validity.
+var today = date("2026-09-26")
+
 func TestValidUntil(t *testing.T) {
 	cases := []struct {
 		name string
@@ -81,14 +86,14 @@ func TestValidUntil(t *testing.T) {
 		o    Options
 		want time.Time
 	}{
-		{name: "default one-year cap", e: adult(), o: Options{Now: now}, want: now.Add(365 * 24 * time.Hour)},
+		{name: "default one-year validity", e: adult(), o: Options{Now: now}, want: today.Add(365 * 24 * time.Hour)},
 		{
 			name: "passport expiry doesn't limit it", e: adult(), o: Options{Now: now, MaxValidity: 10 * 365 * 24 * time.Hour},
-			want: now.Add(10 * 365 * 24 * time.Hour),
+			want: today.Add(10 * 365 * 24 * time.Hour),
 		},
-		// The child turns 13 on 2027-06-15, when age_over_13 = false
-		// would become wrong.
-		{name: "next age threshold wins", e: child(), o: Options{Now: now}, want: date("2027-06-15")},
+		// The child turns 13 on 2027-06-15, within the year: that
+		// birthday doesn't end the validity.
+		{name: "an age threshold doesn't shorten it", e: child(), o: Options{Now: now}, want: today.Add(365 * 24 * time.Hour)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,6 +106,39 @@ func TestValidUntil(t *testing.T) {
 			}
 		})
 	}
+	if _, err := ValidUntil(adult(), Options{Now: now, MaxValidity: time.Hour}); !errors.Is(err, ErrNoValidity) {
+		t.Errorf("ValidUntil ending before now = %v, want ErrNoValidity", err)
+	}
+}
+
+// TestValidityDoesNotRevealBirthDate: a 17-year-old's always-disclosed
+// exp and MSO validity are the same as anyone's issued that day, so a
+// verifier asking only for age_over_16 can't read the date of birth
+// from them, nor link copies issued seconds apart.
+func TestValidityDoesNotRevealBirthDate(t *testing.T) {
+	teen := adult()
+	teen.Identity.BirthDate = passport.BirthDate{Resolution: passport.BirthDateExact, Date: date("2009-03-04"), Youngest: date("2009-03-04")}
+	later := Options{Now: now.Add(7*time.Hour + 13*time.Second)}
+	until := today.Add(365 * 24 * time.Hour)
+
+	for _, o := range []Options{{Now: now}, later} {
+		for name, e := range map[string]passport.Evidence{"teen": teen, "adult": adult(), "child": child()} {
+			sd, err := SDJWTClaims(e, testVCT, o)
+			if err != nil {
+				t.Fatalf("%s SDJWTClaims: %v", name, err)
+			}
+			if *sd.Exp != until.Unix() {
+				t.Errorf("%s exp = %v, want %v for everyone issued that day", name, time.Unix(*sd.Exp, 0).UTC(), until)
+			}
+			md, err := MdocClaims(e, o)
+			if err != nil {
+				t.Fatalf("%s MdocClaims: %v", name, err)
+			}
+			if !md.Signed.Equal(today) || !md.ValidFrom.Equal(today) || !md.ValidUntil.Equal(until) {
+				t.Errorf("%s MSO signed/validFrom/validUntil = %v/%v/%v, want the day's", name, md.Signed, md.ValidFrom, md.ValidUntil)
+			}
+		}
+	}
 }
 
 // TestExpiredPassportStillIssues: an expired passport's data is still
@@ -110,7 +148,7 @@ func TestExpiredPassportStillIssues(t *testing.T) {
 	e := adult()
 	e.Identity.ExpiryDate = date("2020-01-01")
 	got, err := ValidUntil(e, Options{Now: now})
-	if err != nil || !got.Equal(now.Add(365*24*time.Hour)) {
+	if err != nil || !got.Equal(today.Add(365*24*time.Hour)) {
 		t.Fatalf("ValidUntil = %v, %v; want the default one-year validity", got, err)
 	}
 	claims, err := MdocClaims(e, Options{Now: now})
@@ -123,17 +161,46 @@ func TestExpiredPassportStillIssues(t *testing.T) {
 }
 
 func TestAgeClaimsUseYoungestReading(t *testing.T) {
-	ages := ageClaims(child(), Options{Now: now})
-	for threshold, want := range map[int]bool{13: false, 16: false, 18: false, 21: false, 65: false} {
-		if ages[threshold] != want {
-			t.Errorf("age_over_%d = %v, want %v (youngest reading: age 12)", threshold, ages[threshold], want)
+	until := today.Add(365 * 24 * time.Hour)
+	ages := ageClaims(child(), Options{Now: now}, until)
+	for threshold, want := range map[int]bool{16: false, 18: false, 21: false, 65: false} {
+		if got, ok := ages[threshold]; !ok || got != want {
+			t.Errorf("age_over_%d = %v (issued %v), want %v (youngest reading: age 12)", threshold, got, ok, want)
 		}
 	}
-	ages = ageClaims(adult(), Options{Now: now})
+	ages = ageClaims(adult(), Options{Now: now}, until)
 	for threshold, want := range map[int]bool{13: true, 18: true, 21: true, 65: false} {
 		if ages[threshold] != want {
 			t.Errorf("adult age_over_%d = %v, want %v", threshold, ages[threshold], want)
 		}
+	}
+}
+
+// TestAgeClaimsOmitThresholdsCrossedWithinValidity: a false age claim
+// that would become wrong before the credential expires isn't issued,
+// so the credential needn't expire on that birthday. A true one never
+// becomes wrong.
+func TestAgeClaimsOmitThresholdsCrossedWithinValidity(t *testing.T) {
+	until := today.Add(365 * 24 * time.Hour)
+	// The child (youngest reading 2014-06-15) turns 13 on 2027-06-15.
+	if v, ok := ageClaims(child(), Options{Now: now}, until)[13]; ok {
+		t.Errorf("age_over_13 = %v issued for a holder who turns 13 within the validity", v)
+	}
+	// Turning 18 the day the credential expires: a minor throughout,
+	// so age_over_18 = false stays right.
+	e := adult()
+	e.Identity.BirthDate = passport.BirthDate{Resolution: passport.BirthDateExact, Date: date("2009-09-27"), Youngest: date("2009-09-27")}
+	ages := ageClaims(e, Options{Now: now}, until)
+	if v, ok := ages[18]; !ok || v {
+		t.Errorf("age_over_18 = %v (issued %v), want false", v, ok)
+	}
+	if v, ok := ages[16]; !ok || !v {
+		t.Errorf("age_over_16 = %v (issued %v), want true", v, ok)
+	}
+	// Turning 18 the day before it expires: left out.
+	e.Identity.BirthDate = passport.BirthDate{Resolution: passport.BirthDateExact, Date: date("2009-09-25"), Youngest: date("2009-09-25")}
+	if v, ok := ageClaims(e, Options{Now: now}, until)[18]; ok {
+		t.Errorf("age_over_18 = %v issued for a holder who turns 18 within the validity", v)
 	}
 }
 
@@ -198,6 +265,9 @@ func TestMdocClaims_Adult(t *testing.T) {
 	if iss, _ := identity[IssueDate].(cbor.Tag); iss.Content != now.Format(time.DateOnly) {
 		t.Errorf("issue_date = %v, want %s", identity[IssueDate], now.Format(time.DateOnly))
 	}
+	if exp, _ := identity[ExpiryDate].(cbor.Tag); exp.Content != "2027-09-26" {
+		t.Errorf("expiry_date = %v, want 2027-09-26", identity[ExpiryDate])
+	}
 	if bd := birthDateOf(t, identity); bd.date != "1980-01-01" || bd.mask != "" {
 		t.Errorf("birth_date = %+v, want 1980-01-01 with no mask", bd)
 	}
@@ -227,11 +297,12 @@ func TestMdocClaims_ChildMasksTheCentury(t *testing.T) {
 	if bd := birthDateOf(t, identity); !strings.HasPrefix(bd.date, "2014-") || bd.mask != "11000000" {
 		t.Errorf("birth_date = %+v, want the youngest reading with the century masked", bd)
 	}
-	if identity["age_over_18"] != false || identity["age_over_13"] != false {
-		t.Errorf("age_over_13/18 = %v/%v, want false/false", identity["age_over_13"], identity["age_over_18"])
+	if identity["age_over_18"] != false {
+		t.Errorf("age_over_18 = %v, want false", identity["age_over_18"])
 	}
-	if !claims.ValidUntil.Equal(date("2027-06-15")) {
-		t.Errorf("ValidUntil = %v, want the 13th birthday", claims.ValidUntil)
+	// The child turns 13 within the validity.
+	if v, ok := identity["age_over_13"]; ok {
+		t.Errorf("age_over_13 = %v, want it left out", v)
 	}
 }
 
@@ -290,8 +361,11 @@ func TestSDJWTClaims_ChildOmitsBirthDate(t *testing.T) {
 	if ages["18"] != false {
 		t.Errorf("age_equal_or_over.18 = %v, want false", ages["18"])
 	}
-	if exp, _ := payload["exp"].(float64); int64(exp) != date("2027-06-15").Unix() {
-		t.Errorf("exp = %v, want the 13th birthday", payload["exp"])
+	if _, ok := ages["13"]; ok {
+		t.Errorf("age_equal_or_over.13 = %v, want it left out: the child turns 13 within the validity", ages["13"])
+	}
+	if exp, _ := payload["exp"].(float64); int64(exp) != today.Add(365*24*time.Hour).Unix() {
+		t.Errorf("exp = %v, want a year from the start of the issuance day, not a birthday", payload["exp"])
 	}
 }
 
