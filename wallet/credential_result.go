@@ -45,6 +45,10 @@ const maxCredentialResponseBytes = jwe.MaxCompactBytes + (1 << 16)
 //     set — pass TransactionID to RequestDeferredCredential again once
 //     Interval has elapsed. Credentials and NotificationID are both
 //     zero.
+//
+// Credentials are unverified: nothing here checks their signatures or
+// what they claim. Pass each through VerifyIssuedCredential before
+// storing, showing or presenting it.
 type CredentialResult struct {
 	Credentials    []oid4vci.IssuedCredential
 	NotificationID string
