@@ -66,6 +66,11 @@ development only.
   so presentations stay unlinkable; warn the holder when one wouldn't
   be (``CredentialSummary/linkableHere``).
 - Log ``WalletError/message``, never claims or credentials.
+- Cover the window when the scene isn't active, so the app switcher's
+  snapshot shows no claims or portraits.
+- Fetch an issuer's ``Logo`` once, when the holder accepts the
+  credential, and keep it: loading it on the offer's preview tells
+  whoever serves it that the offer was opened.
 
 ### The build
 

@@ -100,7 +100,8 @@ takes the holder's QR code and what to ask for.
 
 ```swift
 /// Reads an mDL's name and portrait from the holder whose QR code was
-/// scanned. Returns the verified mdoc, or nil if the holder declined.
+/// scanned. Returns the verified mdoc, or nil if the holder declined or
+/// the mdoc isn't known to be unrevoked.
 func readInPerson(qrCode: String, issuerRoots: String) async throws -> VerifiedMdoc? {
     let reader = try ProximityReader(configuration: ProximityReaderConfiguration(issuerRoots: issuerRoots))
     let session = try reader.start(qrCode: qrCode, docType: "org.iso.18013.5.1.mDL",
@@ -108,7 +109,8 @@ func readInPerson(qrCode: String, issuerRoots: String) async throws -> VerifiedM
     for await state in session.states {
         switch state {
         case .verified(let mdoc):
-            return mdoc
+            let status = try await session.checkStatus()
+            return status == .valid || status == .noStatus ? mdoc : nil
         case .failed(let error):
             throw error
         case let state where state.isFinal:
@@ -122,6 +124,15 @@ func readInPerson(qrCode: String, issuerRoots: String) async throws -> VerifiedM
 ```
 
 ``VerifiedMdoc`` carries the disclosed elements, the document signer
-and the IACA it chains to, and its validity. Its
-``VerifiedMdoc/statusList`` is unchecked: check it before relying on
-the document.
+and the IACA it chains to, and its validity. Decide which issuers to
+accept on ``VerifiedMdoc/issuerChain``, the verified certificate path:
+``VerifiedMdoc/issuer`` and ``VerifiedMdoc/trustAnchor`` are names any
+document signer under a trusted IACA can choose, for display.
+
+The session doesn't check revocation itself:
+``ProximityReaderSession/checkStatus()`` does, once the session is
+`.verified`. It fetches the issuer's status list over the network, so
+the reader needs a connection then, and verifies the list is signed
+under the certificate the document names or the CA that signed the
+document signer (ISO/IEC 18013-5 §12.3.6). Rely on the document only
+when it's ``MdocStatus/valid`` or ``MdocStatus/noStatus``.

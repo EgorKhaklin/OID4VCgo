@@ -812,6 +812,19 @@ public class ProximityReaderSession internal constructor(
         transport.close()
         scope.cancel()
     }
+
+    /**
+     * Checks the revocation status of the mdoc the session verified: fetches the Token Status List
+     * its MSO names, over https from a public address, and verifies it's signed under the
+     * certificate the MSO names or else under the CA that signed the document signer (ISO/IEC
+     * 18013-5 §12.3.6). Rely on the document only when this is [MdocStatus.Valid] or
+     * [MdocStatus.NoStatus]. Call it once the session is [State.Verified]; before, it throws a
+     * [WalletException] with code `wrong_step`. A failed fetch is `network`, a list that doesn't
+     * verify `protocol`; cancelling the coroutine cancels it. The list covers many documents, so
+     * fetching it doesn't tell its publisher which one was presented.
+     */
+    public suspend fun checkStatus(): MdocStatus =
+        mdocStatusOf(decode<MdocStatusJSON>(OID4VC.cancellable { op -> handle.checkStatus(op) }).status)
 }
 
 /** A verified mdoc, as a [ProximityReaderSession] received it. */
@@ -822,9 +835,12 @@ public data class VerifiedMdoc(
     val claims: JsonObject,
     /** Any device-signed elements. */
     val deviceSignedClaims: JsonObject?,
-    /** The document signer certificate's subject common name. */
+    /**
+     * The document signer certificate's subject common name, for display: any document signer
+     * under a trusted IACA can choose it, so decide on [issuerChain].
+     */
     val issuer: String,
-    /** The common name of the IACA it chains to. */
+    /** The common name of the IACA it chains to, for display. */
     val trustAnchor: String,
     /** When the mdoc's signed data (its MSO) became valid. */
     val validFrom: Instant,
@@ -833,10 +849,16 @@ public data class VerifiedMdoc(
     /** "signature" or "mac". */
     val deviceAuth: String,
     /**
-     * The MSO's status list reference, unchecked: check it before relying
-     * on the document.
+     * The MSO's status list reference, unchecked: call
+     * [ProximityReaderSession.checkStatus] before relying on the document.
      */
     val statusList: StatusListReference?,
+    /**
+     * The document signer's verified certificate path, leaf first, ending at the IACA in
+     * [ProximityReaderConfiguration.issuerRoots] it chains to: decide which issuers to accept on
+     * it.
+     */
+    val issuerChain: List<X509Certificate> = emptyList(),
 ) {
     /**
      * Where the mdoc's status is published: a Token Status List at [uri], and the mdoc's [index]
@@ -876,12 +898,62 @@ internal data class VerifiedJSON(
     @SerialName("valid_until") @Serializable(InstantSerializer::class) val validUntil: Instant,
     @SerialName("device_auth") val deviceAuth: String,
     val status: StatusJSON? = null,
+    @SerialName("issuer_chain") val issuerChain: List<String> = emptyList(),
 ) {
+    /** [idx] is left out when 0, and an identifier list has none. */
     @Serializable
-    data class StatusJSON(val uri: String, val idx: Long)
+    data class StatusJSON(val type: String? = null, val uri: String, val idx: Long = 0)
 
-    fun toVerified(): VerifiedMdoc = VerifiedMdoc(
-        doctype, claims, deviceSignedClaims, issuer, trustAnchor, validFrom, validUntil, deviceAuth,
-        status?.let { VerifiedMdoc.StatusListReference(it.uri, it.idx) },
-    )
+    fun toVerified(): VerifiedMdoc {
+        val factory = CertificateFactory.getInstance("X.509")
+        val chain = issuerChain.mapNotNull { der ->
+            runCatching { factory.generateCertificate(ByteArrayInputStream(Base64.getDecoder().decode(der))) as X509Certificate }.getOrNull()
+        }
+        return VerifiedMdoc(
+            doctype, claims, deviceSignedClaims, issuer, trustAnchor, validFrom, validUntil, deviceAuth,
+            status?.takeIf { it.type == null || it.type == "status_list" }?.let { VerifiedMdoc.StatusListReference(it.uri, it.idx) },
+            chain,
+        )
+    }
 }
+
+/** A verified mdoc's revocation status, as [ProximityReaderSession.checkStatus] found it. */
+public sealed interface MdocStatus {
+    /** Neither revoked nor suspended. */
+    public data object Valid : MdocStatus
+
+    /** Revoked for good (the list's `invalid`). */
+    public data object Revoked : MdocStatus
+
+    /** Suspended, for now. */
+    public data object Suspended : MdocStatus
+
+    /**
+     * A status the issuer's list defines itself, as "0x" and its value.
+     *
+     * @property value The status, as "0x" and its value.
+     */
+    public data class Other(val value: String) : MdocStatus
+
+    /** The MSO names no revocation list. */
+    public data object NoStatus : MdocStatus
+
+    /**
+     * The MSO names an identifier list (ISO/IEC 18013-5 §12.3.6.3), which isn't checked: the
+     * status isn't known.
+     */
+    public data object Unknown : MdocStatus
+}
+
+/** [text], CheckStatus's status, as an [MdocStatus]. */
+internal fun mdocStatusOf(text: String): MdocStatus = when (text) {
+    "valid" -> MdocStatus.Valid
+    "invalid" -> MdocStatus.Revoked
+    "suspended" -> MdocStatus.Suspended
+    "none" -> MdocStatus.NoStatus
+    "unknown" -> MdocStatus.Unknown
+    else -> MdocStatus.Other(text)
+}
+
+@Serializable
+internal data class MdocStatusJSON(val status: String)

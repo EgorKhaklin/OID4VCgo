@@ -50,7 +50,7 @@ internal class GattServerTransport(
     private val serviceAdded = CompletableDeferred<Unit>()
     private val advertising = CompletableDeferred<Unit>()
     private val started = CompletableDeferred<Unit>()
-    private val incoming = Channel<ByteArray>(Channel.UNLIMITED)
+    private val incoming = Channel<ByteArray>(INCOMING_MESSAGE_CAPACITY)
     private val notified = Channel<Int>(Channel.CONFLATED)
     private val sending = Mutex()
     private val reassembler = BleChunks.Reassembler()
@@ -145,7 +145,10 @@ internal class GattServerTransport(
                         fail(ProximityTransportException("the other device ended the session", peerEnded = true))
                 }
                 characteristics.client2Server -> try {
-                    reassembler.add(value)?.let { incoming.trySend(it) }
+                    reassembler.add(value)?.let { message ->
+                        val sent = incoming.trySend(message)
+                        if (sent.isFailure && !sent.isClosed) fail(ProximityTransportException(TOO_MANY_MESSAGES))
+                    }
                 } catch (e: IOException) {
                     fail(ProximityTransportException("a malformed chunk: ${e.message}", cause = e))
                 }

@@ -3,13 +3,17 @@
 package mobile
 
 import (
+	"context"
 	"crypto/ecdsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/proximity"
 )
 
@@ -53,6 +57,7 @@ type readerEvent struct {
 			URI string
 			Idx uint64
 		}
+		IssuerChain []string `json:"issuer_chain"`
 	}
 }
 
@@ -107,6 +112,9 @@ func TestSessions_ProximityReader(t *testing.T) {
 	if _, err := s.Request("org.example.test.1", `{"org.example.test.1": ["family_name"]}`); code(err) != CodeWrongStep {
 		t.Errorf("a second Request: %v, want %s", err, CodeWrongStep)
 	}
+	if _, err := s.CheckStatus(NewOperation(0)); code(err) != CodeWrongStep {
+		t.Errorf("CheckStatus before a verified mdoc: %v, want %s", err, CodeWrongStep)
+	}
 	ev := decode[proximityEvent](t, holder.HandleMessage(NewOperation(0), sent(t, decode[struct{ Send string }](t, req).Send)))
 	if ev.Event != "request" {
 		t.Fatalf("holder: %+v", ev)
@@ -127,6 +135,88 @@ func TestSessions_ProximityReader(t *testing.T) {
 	if v.DocType != "org.example.test.1" || v.Claims["org.example.test.1"]["family_name"] != "Doe" || len(v.Claims["org.example.test.1"]) != 1 ||
 		v.DeviceAuth != "signature" || v.Issuer == "" || v.TrustAnchor == "" || v.ValidFrom == "" || v.Status == nil || v.Status.URI == "" {
 		t.Errorf("verified = %+v", v)
+	}
+	// issuer_chain is the verified path, leaf first, ending at the root.
+	if len(v.IssuerChain) < 2 {
+		t.Fatalf("issuer_chain = %v", v.IssuerChain)
+	}
+	certs := make([]*x509.Certificate, len(v.IssuerChain))
+	for i, b64 := range v.IssuerChain {
+		der, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if certs[i], err = x509.ParseCertificate(der); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if certs[0].Subject.CommonName != v.Issuer || certs[len(certs)-1].Subject.CommonName != v.TrustAnchor ||
+		!strings.Contains(issuerRootsPEM(t, h), string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certs[len(certs)-1].Raw}))) {
+		t.Errorf("issuer_chain runs from %q to %q", certs[0].Subject.CommonName, certs[len(certs)-1].Subject.CommonName)
+	}
+
+	// CheckStatus reads the status list the MSO names, and sees a
+	// revocation.
+	checkStatus := func() string {
+		t.Helper()
+		got := decode[struct {
+			ABI    int
+			Status string
+		}](t, mustText(t)(s.CheckStatus(NewOperation(0))))
+		if got.ABI != ABIVersion {
+			t.Errorf("CheckStatus abi = %d", got.ABI)
+		}
+		return got.Status
+	}
+	if got := checkStatus(); got != "valid" {
+		t.Errorf("CheckStatus = %q, want valid", got)
+	}
+	h.env.Revoke()
+	if got := checkStatus(); got != "invalid" {
+		t.Errorf("CheckStatus after Revoke = %q, want invalid", got)
+	}
+	cancelled := NewOperation(0)
+	cancelled.Cancel()
+	if _, err := s.CheckStatus(cancelled); code(err) != CodeCancelled {
+		t.Errorf("CheckStatus cancelled: %v, want %s", err, CodeCancelled)
+	}
+}
+
+// A document without a status list, or with an identifier list, which
+// the reader can't check, isn't fetched.
+func TestProximityReader_CheckStatusWithoutList(t *testing.T) {
+	r := &ProximityReader{clock: time.Now}
+	for name, tc := range map[string]struct {
+		status *mdoc.Status
+		want   string
+	}{
+		"no status":       {nil, "none"},
+		"empty status":    {&mdoc.Status{}, "none"},
+		"identifier list": {&mdoc.Status{IdentifierList: &mdoc.IdentifierListRef{ID: []byte{1}, URI: "https://status.example/ids"}}, "unknown"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := r.checkStatus(context.Background(), proximity.Verified{Status: tc.status})
+			if err != nil || got != tc.want {
+				t.Errorf("checkStatus = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+	// A status list with no issuer chain to bind its signer to fails
+	// rather than trusting any signer.
+	ref := &mdoc.Status{StatusList: &mdoc.StatusListRef{URI: "https://status.example/list", Idx: 1}}
+	if _, err := r.checkStatus(context.Background(), proximity.Verified{Status: ref}); err == nil {
+		t.Error("checkStatus without an issuer chain succeeded")
+	}
+}
+
+// The status list fetcher, outside the test build, connects to public
+// addresses only.
+func TestProximityReader_StatusFetcherDefaults(t *testing.T) {
+	saved := testHTTP.Load()
+	testHTTP.Store(nil)
+	defer testHTTP.Store(saved)
+	if f := statusFetcher(); f.AllowLoopback || f.AllowPrivate || f.AllowProxy || f.UncheckedTransport || f.HTTP != nil {
+		t.Errorf("statusFetcher = %+v", f)
 	}
 }
 

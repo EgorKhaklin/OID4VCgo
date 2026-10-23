@@ -66,7 +66,7 @@ internal class GattClientTransport(
      * This connection attempt's messages, and its chunks so far: a failed
      * attempt closes its channel for good, so each attempt starts anew.
      */
-    @Volatile private var incoming = Channel<ByteArray>(Channel.UNLIMITED)
+    @Volatile private var incoming = Channel<ByteArray>(INCOMING_MESSAGE_CAPACITY)
     private val sending = Mutex()
     @Volatile private var reassembler = BleChunks.Reassembler()
 
@@ -140,7 +140,10 @@ internal class GattClientTransport(
                 fail(ProximityTransportException("the other device ended the session", peerEnded = true))
             }
             characteristics.server2Client -> try {
-                reassembler.add(value)?.let { incoming.trySend(it) }
+                reassembler.add(value)?.let { message ->
+                    val sent = incoming.trySend(message)
+                    if (sent.isFailure && !sent.isClosed) fail(ProximityTransportException(TOO_MANY_MESSAGES))
+                }
             } catch (e: IOException) {
                 fail(ProximityTransportException("a malformed chunk: ${e.message}", cause = e))
             }
@@ -156,7 +159,7 @@ internal class GattClientTransport(
             if (closed) throw ProximityTransportException(SESSION_ENDED)
             // A device that failed before (disconnecting mid-setup,
             // leaving half a message) mustn't spoil this attempt.
-            incoming = Channel(Channel.UNLIMITED)
+            incoming = Channel(INCOMING_MESSAGE_CAPACITY)
             reassembler = BleChunks.Reassembler()
             val status = tryDevice(scan())
             if (status == BluetoothGatt.GATT_SUCCESS) return

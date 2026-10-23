@@ -96,6 +96,7 @@ Start with <doc:GettingStarted>, then the article for each task.
 - ``ProximityReaderConfiguration``
 - ``ProximityReaderSession``
 - ``VerifiedMdoc``
+- ``MdocStatus``
 
 ### Errors and the framework
 

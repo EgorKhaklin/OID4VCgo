@@ -353,6 +353,75 @@ func TestDeclined(t *testing.T) {
 	}
 }
 
+// A closed session keeps no ephemeral key or session key, whichever way
+// it closed, and refuses further use.
+func TestClosedSessionsDropSecrets(t *testing.T) {
+	fx := issueFixture(t, mDL)
+	requested := map[string][]string{mDLNS: {"age_over_18"}}
+	holderCleared := func(t *testing.T, s *DeviceSession) {
+		t.Helper()
+		if s.eDeviceKey != nil || s.cipher != nil || s.eReaderKey != nil || !s.closed {
+			t.Errorf("holder session keeps eDeviceKey %v, cipher %v, eReaderKey %v (closed %v)", s.eDeviceKey != nil, s.cipher != nil, s.eReaderKey != nil, s.closed)
+		}
+		if _, _, err := s.HandleSessionData(StatusMessage(StatusSessionTermination)); !errors.Is(err, ErrSessionClosed) {
+			t.Errorf("holder HandleSessionData after close: %v, want ErrSessionClosed", err)
+		}
+		if _, err := s.Encrypt([]byte{0xa0}, false); !errors.Is(err, ErrSessionClosed) {
+			t.Errorf("holder Encrypt after close: %v, want ErrSessionClosed", err)
+		}
+	}
+	readerCleared := func(t *testing.T, r *ReaderSession) {
+		t.Helper()
+		if r.eReaderKey != nil || r.cipher != nil || !r.closed {
+			t.Errorf("reader session keeps eReaderKey %v, cipher %v (closed %v)", r.eReaderKey != nil, r.cipher != nil, r.closed)
+		}
+		if _, err := r.Verify(nil, fx.roots, time.Now()); !errors.Is(err, ErrSessionClosed) {
+			t.Errorf("reader Verify after close: %v, want ErrSessionClosed", err)
+		}
+	}
+
+	t.Run("response", func(t *testing.T) {
+		f := establish(t, mDL, requested)
+		if _, err := f.reader.Verify(f.respond(t, fx, [][2]string{{mDLNS, "age_over_18"}}), fx.roots, time.Now()); err != nil {
+			t.Fatalf("Verify: %v", err)
+		}
+		readerCleared(t, f.reader)
+		// The holder, which sent its response without ending the
+		// session, closes on the reader's termination.
+		if _, status, err := f.holder.HandleSessionData(f.reader.Termination()); err != nil || status == nil {
+			t.Fatalf("HandleSessionData = %v, %v", status, err)
+		}
+		holderCleared(t, f.holder)
+	})
+	t.Run("declined", func(t *testing.T) {
+		f := establish(t, mDL, requested)
+		if _, err := f.reader.Verify(f.holder.Termination(), fx.roots, time.Now()); !errors.Is(err, ErrDeclined) {
+			t.Fatalf("Verify: %v, want ErrDeclined", err)
+		}
+		holderCleared(t, f.holder)
+		readerCleared(t, f.reader)
+	})
+	t.Run("reader ended", func(t *testing.T) {
+		f := establish(t, mDL, requested)
+		if _, status, err := f.holder.HandleSessionData(f.reader.Termination()); err != nil || status == nil {
+			t.Fatalf("HandleSessionData = %v, %v", status, err)
+		}
+		holderCleared(t, f.holder)
+		readerCleared(t, f.reader)
+	})
+	t.Run("bad message", func(t *testing.T) {
+		f := establish(t, mDL, requested)
+		if _, _, err := f.holder.HandleSessionData([]byte{0x01}); err == nil {
+			t.Fatal("HandleSessionData accepted a malformed message")
+		}
+		holderCleared(t, f.holder)
+		if _, err := f.reader.Verify([]byte{0x01}, fx.roots, time.Now()); err == nil {
+			t.Fatal("Verify accepted a malformed message")
+		}
+		readerCleared(t, f.reader)
+	})
+}
+
 func TestStatusReply(t *testing.T) {
 	fx := issueFixture(t, mDL)
 	f := establish(t, mDL, map[string][]string{mDLNS: {"age_over_18"}})

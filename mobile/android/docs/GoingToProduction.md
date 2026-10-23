@@ -63,7 +63,12 @@ wallet's provider attests anything, and is for development only.
 - Request batches of copies (`batchSize`) and refresh them as they're
   used up (`requestRefresh`), so presentations stay unlinkable; warn the
   holder when one wouldn't be (`linkableHere`).
-- Log `WalletException.message`, never claims or credentials.
+- Log `WalletException.message`, never claims, credentials or QR codes.
+- Set `FLAG_SECURE` on windows that show credentials, so the recents
+  thumbnail and screenshots show no claims or portraits.
+- Fetch an issuer's `Logo` once, when the holder accepts the credential,
+  and keep it: loading it on the offer's preview tells whoever serves it
+  that the offer was opened.
 
 ## The build
 

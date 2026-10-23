@@ -263,7 +263,10 @@ public struct WalletConfiguration: Codable, Sendable {
 }
 
 /// An image the issuer names for display: an https URL or a data: image
-/// (nothing else reaches the app), with alternative text.
+/// (nothing else reaches the app, nor an https URL naming an IP address or
+/// localhost), with alternative text. Loading the URL tells whoever serves
+/// it that the holder is looking: fetch it once, when the holder accepts
+/// the credential rather than on the offer's preview, and keep it.
 public struct Logo: Decodable, Equatable, Sendable {
     /// The image: an https URL or a `data:` URL.
     public let uri: String

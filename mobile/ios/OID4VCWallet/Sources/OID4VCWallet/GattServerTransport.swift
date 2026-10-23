@@ -191,7 +191,9 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
                 }
             case characteristics.client2Server:
                 do {
-                    if let message = try reassembler.add(value) { incoming.push(message) }
+                    if let message = try reassembler.add(value), !incoming.push(message) {
+                        fail(ProximityTransportError("too many unread messages from the other device"))
+                    }
                 } catch {
                     fail(ProximityTransportError("a malformed chunk: \(error)"))
                 }

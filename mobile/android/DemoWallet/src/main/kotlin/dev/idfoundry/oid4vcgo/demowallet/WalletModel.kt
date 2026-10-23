@@ -873,11 +873,6 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             }
             inPerson = p
             refreshNfcForeground()
-            // For driving two emulators: the QR code's text, an ephemeral
-            // key and a service UUID, in debug builds.
-            if (getApplication<Application>().applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
-                android.util.Log.d("DemoWallet", "in person: ${p.qrCode}")
-            }
             inPersonJob = viewModelScope.launch {
                 p.state.collect { s ->
                     inPersonState = s

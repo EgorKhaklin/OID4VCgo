@@ -171,22 +171,36 @@ struct GattCharacteristics: @unchecked Sendable {
 
 /// Whole messages waiting for `receive`, and the error that ended them.
 final class MessageQueue: @unchecked Sendable {
+    /// How many unread messages it keeps. A session reads each message
+    /// before the next is due, so more is a misbehaving peer, not one to
+    /// buffer for.
+    static let capacity = 4
+
     private let lock = NSLock()
     private var messages: [Data] = []
     private var waiter: CheckedContinuation<Data, any Error>?
     private var ended: (any Error)?
 
-    func push(_ message: Data) {
+    /// Queues message for `receive`. False when `capacity` messages are
+    /// already unread: they're dropped, and the transport should end the
+    /// session.
+    func push(_ message: Data) -> Bool {
         lock.lock()
-        if ended != nil { lock.unlock(); return }
+        if ended != nil { lock.unlock(); return true }
         if let w = waiter {
             waiter = nil
             lock.unlock()
             w.resume(returning: message)
-            return
+            return true
+        }
+        guard messages.count < Self.capacity else {
+            messages.removeAll()
+            lock.unlock()
+            return false
         }
         messages.append(message)
         lock.unlock()
+        return true
     }
 
     /// Ends the queue: `receive` throws `error` once the messages run out.

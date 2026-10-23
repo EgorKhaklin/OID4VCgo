@@ -30,6 +30,18 @@ build it first with `../../build-xcframework.sh`. At launch it deletes
 any key none of its credentials is bound to, which an issuance the app
 quit in the middle of leaves behind.
 
+## Screen privacy
+
+iOS snapshots an app as it leaves the foreground, for the app switcher,
+and that snapshot would show whatever was on screen: a portrait, a
+passport's claims. The demo covers its window whenever the scene isn't
+active (`PrivacyCover` in `DemoWalletApp.swift`), so the snapshot shows
+the cover. An app on the library should do the same. Issuer logos are
+URLs the issuer chose: fetch one once, when the holder accepts the
+credential, and keep it, rather than loading it on the offer's preview
+(which tells the issuer, or a tracker it names, that the offer was
+opened).
+
 ## Configuration
 
 The app takes its configuration from the `OID4VC_DEMO_CONFIG`

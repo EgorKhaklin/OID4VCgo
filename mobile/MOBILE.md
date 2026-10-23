@@ -703,8 +703,13 @@ What a wallet's UI needs to show a credential, from the SDK:
     the same language, then the issuer's entry without a locale.
   - **Logos:** only an https URL or a `data:` image is passed on, since
     an `http`, `javascript:` or custom-scheme logo would be the app's
-    to refuse. The app loads logos itself (`AsyncImage`); Go fetches
-    none.
+    to refuse. An https URL naming an IP address or `localhost` is
+    dropped too: an offer's QR code would otherwise make the phone
+    request hosts on its own network. The app loads logos itself
+    (`AsyncImage`); Go fetches none. Loading one tells whoever serves
+    it that the holder is looking, so fetch it once, when the holder
+    accepts the credential rather than on the offer's preview, and
+    keep it, rather than on every screen that shows it.
 - **Expiry:** an SD-JWT VC's `exp`, or an mdoc's
   `validityInfo.validUntil`, is kept as `valid_until`.
 - **Revocation status:**
@@ -1160,8 +1165,17 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   the GATT server and serves the Ident characteristic. The holder side
   offered peripheral server mode only at first; it offers either, or
   both, now.
-- **Revocation isn't checked:** the result carries the MSO's status
-  list reference for the app to check, as `proximity.Verify` leaves it.
+- **Revocation is a separate call:** `HandleMessage` reports the MSO's
+  status reference unchecked, as `proximity.Verify` leaves it, since it
+  runs on the BLE path and a status list is a network fetch. At first
+  that was all, and the result carried only the issuer's and trust
+  anchor's common names, so an app couldn't bind a status list's signer
+  to the document's CA (ISO/IEC 18013-5 §12.3.6) itself. The result now
+  carries `issuer_chain`, and `ProximityReaderSession.CheckStatus(op)`
+  fetches and verifies the list (`statuslist.Checker` with
+  `mdoc.StatusTrust`, under the root the document chained to, public
+  addresses only), reporting `valid`, `invalid`, `suspended`, `none` or
+  `unknown` (an identifier list, which isn't checked).
 
 ### Phase 10 findings: the Android SDK
 

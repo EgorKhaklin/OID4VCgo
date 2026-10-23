@@ -213,7 +213,7 @@ func (s *DeviceSession) HandleSessionEstablishment(msg []byte) (deviceRequest []
 	}
 	defer func() {
 		if err != nil {
-			s.closed = true
+			s.close()
 		}
 	}()
 
@@ -258,8 +258,18 @@ func (s *DeviceSession) HandleSessionEstablishment(msg []byte) (deviceRequest []
 // EReaderKey is the reader's ephemeral public key from its
 // SessionEstablishment, which MAC device authentication
 // (BuildDeviceResponseMAC) agrees a key with; nil until
-// HandleSessionEstablishment succeeds.
+// HandleSessionEstablishment succeeds, and again once the session is
+// closed.
 func (s *DeviceSession) EReaderKey() *ecdsa.PublicKey { return s.eReaderKey }
+
+// close ends the session and drops its secrets: EDeviceKey, the session
+// keys, and the reader's ephemeral key it agreed them with. A closed
+// session refuses every further message, so nothing needs them, and a
+// later compromise of the process can't decrypt what was recorded.
+func (s *DeviceSession) close() {
+	s.closed = true
+	s.eDeviceKey, s.cipher, s.eReaderKey = nil, nil, nil
+}
 
 // HandleSessionData processes a later message from the reader
 // (§9.1.1.4): data is the decrypted payload, if any, and status the
@@ -274,7 +284,7 @@ func (s *DeviceSession) HandleSessionData(msg []byte) (data []byte, status *uint
 	}
 	defer func() {
 		if err != nil || status != nil {
-			s.closed = true
+			s.close()
 		}
 	}()
 	return receive(s.cipher, msg)
@@ -295,7 +305,7 @@ func (s *DeviceSession) Encrypt(plaintext []byte, terminate bool) ([]byte, error
 		return nil, err
 	}
 	if terminate {
-		s.closed = true
+		s.close()
 	}
 	return msg, nil
 }
@@ -323,6 +333,6 @@ type errorDeviceResponse struct {
 // the session — the reply when the user declines or nothing matches
 // the request, and the normal end of a session.
 func (s *DeviceSession) Termination() []byte {
-	s.closed = true
+	s.close()
 	return StatusMessage(StatusSessionTermination)
 }

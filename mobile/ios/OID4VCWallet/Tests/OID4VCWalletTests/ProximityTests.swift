@@ -27,7 +27,7 @@ final class PipeTransport: ProximityTransport, @unchecked Sendable {
 
     func send(_ message: Data) async throws {
         guard let peer else { throw ProximityTransportError("the other end is gone", peerEnded: true) }
-        peer.inbox.push(message)
+        guard peer.inbox.push(message) else { throw ProximityTransportError("too many unread messages") }
     }
 
     func receive() async throws -> Data { try await inbox.receive() }
@@ -144,8 +144,17 @@ final class ProximityTests: XCTestCase {
         XCTAssertNil(v.claims[Self.namespace]?["given_name"])
         XCTAssertEqual(v.deviceAuth, "signature")
         XCTAssertNotNil(v.statusList)
+        XCTAssertGreaterThanOrEqual(v.issuerChain.count, 2)
         let held = try await final(holder.states) { $0.isFinal }
         guard case .presented(linkable: false) = held else { return XCTFail("holder: \(held)") }
+
+        // The reader checks the status list the MSO names, and sees a
+        // revocation.
+        let status = try await reader.checkStatus()
+        XCTAssertEqual(status, .valid)
+        s.env.env.revoke()
+        let revoked = try await reader.checkStatus()
+        XCTAssertEqual(revoked, .revoked)
     }
 
     /// With MAC preferred, the holder key agrees a key with the reader's
@@ -262,6 +271,19 @@ final class ProximityTests: XCTestCase {
         guard case .failed(let error) = h, let e = error as? ProximityError else { return XCTFail("holder: \(h)") }
         XCTAssertEqual(e.reason, .timedOut)
         _ = readerEnd
+    }
+
+    /// A peer sending messages faster than the session reads them is
+    /// refused once `capacity` are unread, and the queue drops them.
+    func testMessageQueueIsBounded() async throws {
+        let q = MessageQueue()
+        for i in 0..<MessageQueue.capacity { XCTAssertTrue(q.push(Data([UInt8(i)]))) }
+        XCTAssertFalse(q.push(Data([0xFF])))
+        q.end(ProximityTransportError("ended"))
+        do {
+            _ = try await q.receive()
+            XCTFail("receive returned a dropped message")
+        } catch is ProximityTransportError {}
     }
 
     func testChunks() throws {
