@@ -25,14 +25,13 @@ import (
 var EKU = asn1.ObjectIdentifier{1, 0, 18013, 5, 1, 6}
 
 // RequireEKU is a Trust.LeafPolicy refusing a reader certificate
-// without EKU.
-func RequireEKU(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
-	for _, eku := range leaf.UnknownExtKeyUsage {
-		if eku.Equal(EKU) {
-			return nil
-		}
+// without EKU, or whose every verified path has an intermediate CA
+// whose own extended key usage excludes it (certchain.EKUInPath).
+func RequireEKU(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+	if err := certchain.EKUInPath(leaf, chains, EKU); err != nil {
+		return fmt.Errorf("the reader certificate isn't an mdoc reader authentication certificate (1.0.18013.5.1.6): %w", err)
 	}
-	return errors.New("the reader certificate lacks the mdoc reader authentication extended key usage (1.0.18013.5.1.6)")
+	return nil
 }
 
 // Trust is which mdoc readers a holder recognizes.
