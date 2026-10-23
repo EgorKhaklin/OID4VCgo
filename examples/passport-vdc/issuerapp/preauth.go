@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/server"
 	"github.com/idfoundry/fapigo/storage"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
@@ -28,6 +30,37 @@ const preAuthorizedCodeGrantType = "urn:ietf:params:oauth:grant-type:pre-authori
 // preAuthorizedCodeTxCodeDescription tells the wallet where the PIN is
 // (§4.1.1).
 const preAuthorizedCodeTxCodeDescription = "The PIN shown on the issuer's offer page"
+
+// Bounds on the openid_credential authorization_details a token
+// carries: one entry per credential configuration, each a type, a
+// configuration ID and its credential_identifiers.
+const (
+	maxCredentialAuthorizationDetails = 2
+	maxAuthorizationDetailBytes       = 4 << 10
+	maxAuthorizationDetailsBytes      = maxCredentialAuthorizationDetails * maxAuthorizationDetailBytes
+	maxAuthorizationDetailsDepth      = 4
+)
+
+// credentialAuthorizationDetails registers the openid_credential
+// authorization details type (§5.1.1) with the Authorization Server.
+// A wallet's pre-authorized code Token Request may name the
+// configurations it wants in authorization_details (§6.1.1); the
+// access token, any refresh token and the Token Response then carry the
+// entries RedeemPreAuthorizedCode minted for them, with their
+// credential_identifiers (§6.2). fapigo/server issues no token carrying
+// a type Config.RAR doesn't register or the client's registration
+// doesn't list, and IssueAccessToken runs only once the code is
+// redeemed: without this, such a request spent the code and got an
+// error. PAR still refuses authorization_details — no
+// AuthorizationCodeRARPolicy is set — so the authorization code flow
+// stays scope-based.
+func credentialAuthorizationDetails() (*extension.RARRegistry, error) {
+	return extension.NewRARRegistry(maxAuthorizationDetailsBytes, maxAuthorizationDetailsDepth, extension.RARDefinition[oid4vci.AuthorizationDetail]{
+		Type:              oid4vci.AuthorizationDetailsTypeOpenIDCredential,
+		MaxObjects:        maxCredentialAuthorizationDetails,
+		MaxBytesPerObject: maxAuthorizationDetailBytes,
+	})
+}
 
 // preAuthorizedOffer records a claimed transaction's pre-authorized code,
 // redeemable with its PIN, and returns the Credential Offer for it.
