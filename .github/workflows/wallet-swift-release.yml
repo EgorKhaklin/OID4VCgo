@@ -10,6 +10,10 @@
 # that repository's gh-pages branch, under the version and latest/,
 # keeping earlier versions: GitHub Pages serves it, from that branch.
 #
+# With documentation_only, it publishes only the documentation of the
+# latest release, built from the commit that release was built from:
+# for when the last step failed after the release was made.
+#
 # The Swift package is versioned on its own, apart from this module's
 # release-please versions. Run it by hand (Actions → wallet-swift-release
 # → Run workflow) from main.
@@ -29,6 +33,10 @@ on:
       version:
         description: "The Swift package's version: 1.2.3, no v"
         required: true
+      documentation_only:
+        description: "Only publish the documentation of the latest release, this version"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -60,6 +68,7 @@ jobs:
           fetch-depth: 0 # the release notes list the commits since the previous release's
 
       - name: check the version is new
+        if: ${{ !inputs.documentation_only }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -67,8 +76,26 @@ jobs:
           if gh release view "$VERSION" --repo "$REPO" >/dev/null 2>&1; then
             echo "::error::$REPO already has release $VERSION"; exit 1
           fi
+          echo "SOURCE_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
+
+      # The documentation of the latest release only, as latest/ is
+      # rewritten too, and from the commit on main it was built from,
+      # which its notes name.
+      - name: check the version is the latest release
+        if: ${{ inputs.documentation_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh release view --repo "$REPO" --json tagName --jq .tagName)
+          [ "$latest" = "$VERSION" ] || { echo "::error::$REPO's latest release is $latest, not $VERSION"; exit 1; }
+          sha=$(gh release view "$VERSION" --repo "$REPO" --json body --jq .body | sed -n 's|.*IDFoundry/OID4VCgo/commit/\([0-9a-f]\{40\}\)).*|\1|p' | head -1)
+          [ -n "$sha" ] || { echo "::error::release $VERSION's notes name no commit"; exit 1; }
+          git merge-base --is-ancestor "$sha" HEAD || { echo "::error::$sha isn't on main"; exit 1; }
+          git checkout -q "$sha"
+          echo "SOURCE_SHA=$sha" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ !inputs.documentation_only }}
         with:
           repository: IDFoundry/OID4VCgo-wallet-swift
           token: ${{ secrets.WALLET_SWIFT_TOKEN }}
@@ -82,12 +109,14 @@ jobs:
           cache-dependency-path: mobile/go.sum
 
       - name: build and lay out the package
+        if: ${{ !inputs.documentation_only }}
         run: mobile/ios/package-swift-release.sh "$VERSION" wallet-swift "$RUNNER_TEMP/assets" | tee "$RUNNER_TEMP/summary.txt"
 
       # What's new since the previous release, whose notes name the commit
       # it was built from. Before anything is published, so a failure here
       # publishes nothing.
       - name: what's new
+        if: ${{ !inputs.documentation_only }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -105,20 +134,27 @@ jobs:
             fi
           } | tee "$RUNNER_TEMP/whats-new.md"
 
+      - name: build the framework
+        if: ${{ inputs.documentation_only }}
+        run: mobile/build-xcframework.sh
+
       - name: build the documentation
         run: |
           DOCC_OUTPUT="$RUNNER_TEMP/OID4VCWallet.doccarchive" mobile/ios/check-docs.sh
           mobile/ios/docs-site.sh "$VERSION" "$RUNNER_TEMP/OID4VCWallet.doccarchive" "$RUNNER_TEMP/docs"
 
       - name: checksums
+        if: ${{ !inputs.documentation_only }}
         working-directory: ${{ runner.temp }}/assets
         run: shasum -a 256 Mobile.xcframework.zip | tee SHA256SUMS
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: ${{ !inputs.documentation_only }}
         with:
           subject-path: ${{ runner.temp }}/assets/Mobile.xcframework.zip
 
       - name: commit, tag and release
+        if: ${{ !inputs.documentation_only }}
         working-directory: wallet-swift
         env:
           GH_TOKEN: ${{ secrets.WALLET_SWIFT_TOKEN }}
@@ -144,6 +180,7 @@ jobs:
             --notes-file "$RUNNER_TEMP/notes.md"
 
       - name: check the published framework is the one built
+        if: ${{ !inputs.documentation_only }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -166,6 +203,12 @@ jobs:
           rm -rf "$VERSION" latest
           cp -R "$RUNNER_TEMP/docs/$VERSION" "$RUNNER_TEMP/docs/latest" "$RUNNER_TEMP/docs/index.html" "$RUNNER_TEMP/docs/.nojekyll" .
           git add -A
-          git commit -q -m "Documentation for OID4VCWallet $VERSION from IDFoundry/OID4VCgo@$GITHUB_SHA"
+          git commit -q -m "Documentation for OID4VCWallet $VERSION from IDFoundry/OID4VCgo@$SOURCE_SHA"
           auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
-          git -c "http.https://github.com/.extraheader=$auth" push origin gh-pages
+          # A push this size can time out (HTTP 408): try it again.
+          for attempt in 1 2 3; do
+            if git -c "http.https://github.com/.extraheader=$auth" push origin gh-pages; then exit 0; fi
+            [ "$attempt" = 3 ] || sleep 30
+          done
+          echo "::error::couldn't push the documentation: run again with documentation_only"
+          exit 1
