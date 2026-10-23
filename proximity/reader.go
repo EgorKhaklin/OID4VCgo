@@ -332,6 +332,7 @@ func (r *ReaderSession) Verify(msg []byte, roots *x509.CertPool, now time.Time) 
 		return Verified{}, fmt.Errorf("proximity: no request sent")
 	}
 	r.closed = true
+	defer r.close()
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -456,6 +457,15 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 // Termination builds a SessionData carrying only status 20 and closes
 // the session.
 func (r *ReaderSession) Termination() []byte {
-	r.closed = true
+	r.close()
 	return StatusMessage(StatusSessionTermination)
+}
+
+// close ends the session and drops its secrets: EReaderKey and the
+// session keys. A closed session refuses every further message, so
+// nothing needs them, and a later compromise of the process can't
+// decrypt what was recorded.
+func (r *ReaderSession) close() {
+	r.closed = true
+	r.eReaderKey, r.cipher = nil, nil
 }
