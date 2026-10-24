@@ -65,8 +65,7 @@ type App struct {
 	transactions     *transactions
 	consent          *interactioncookie.Cookie    // the approval step's state, sealed in the browser
 	metadataHandler  http.Handler                 // the Credential Issuer Metadata, signed by the metadata signer
-	providerRoots    *x509.CertPool               // the Wallet Provider CA: Wallet and Key Attestations
-	providerAnchors  server.StaticAttesterAnchors // the same CA, bound to Wallet.ProviderIssuer
+	providerAnchors  server.StaticAttesterAnchors // the Wallet Provider CA, bound to Wallet.ProviderIssuer
 	documentSigner   *ecdsa.PrivateKey            // signs credentials and the status list
 	documentCert     *x509.Certificate
 	caCert           *x509.Certificate
@@ -98,9 +97,6 @@ func New(cfg Config) (*App, error) {
 	a.preAuthCodes = oid4vcgostorage.NewPreAuthorizedCodeStore()
 	a.notifications = &notifications{now: a.now}
 	if a.providerAnchors, err = attesterAnchors(cfg.Wallet.ProviderCA, cfg.Wallet.ProviderIssuer); err != nil {
-		return nil, err
-	}
-	if a.providerRoots, err = certPool(cfg.Wallet.ProviderCA); err != nil {
 		return nil, err
 	}
 
@@ -374,7 +370,12 @@ func (a *App) buildIssuer() error {
 		NotificationHandler: a.notifications,
 		Clock:               issuer.ClockFunc(a.now),
 		Random:              rand.Reader,
-		AttestationVerifier: issuer.X5CAttestationVerifier{Roots: a.providerRoots},
+		// Key Attestations are bound to the provider CA as Wallet
+		// Attestations are: their iss must be Wallet.ProviderIssuer,
+		// named by the signing certificate.
+		AttestationVerifier: issuer.X5CAttestationVerifier{
+			IssuerBinding: issuer.AttestationIssuerBoundToAnchor, Anchors: keyAttestationAnchors(a.providerAnchors),
+		},
 		SDJWTSigner: &issuer.SDJWTSigner{
 			Signer: id.documentSigner, Alg: oid4vci.ES256, IssuerCertificate: id.documentSignerCert,
 		},
@@ -471,7 +472,6 @@ func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.
 	return key, cert, nil
 }
 
-// certPool parses the PEM certificates in data into a pool.
 // attesterAnchors is each certificate in the PEM data, bound to vouch
 // for the Wallet Provider providerIssuer alone.
 func attesterAnchors(data []byte, providerIssuer string) (server.StaticAttesterAnchors, error) {
@@ -497,12 +497,14 @@ func attesterAnchors(data []byte, providerIssuer string) (server.StaticAttesterA
 	return anchors, nil
 }
 
-func certPool(data []byte) (*x509.CertPool, error) {
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(data) {
-		return nil, fmt.Errorf("issuerapp: Wallet.ProviderCA holds no PEM certificate")
+// keyAttestationAnchors is anchors, the Wallet Attestations' bound
+// anchors, for the issuer's Key Attestations.
+func keyAttestationAnchors(anchors server.StaticAttesterAnchors) []issuer.AttestationAnchor {
+	out := make([]issuer.AttestationAnchor, len(anchors))
+	for i, a := range anchors {
+		out[i] = issuer.AttestationAnchor{Certificate: a.Certificate, Issuers: a.Issuers}
 	}
-	return pool, nil
+	return out
 }
 
 // IssuerCertificate is this process's document signer certificate,

@@ -101,7 +101,9 @@ type WalletClient struct {
 	//   - Key Attestations, which every credential request must prove
 	//     its holder key with (in jwt proofs' key_attestation header,
 	//     OID4VCI 1.0 Appendix D.1 and F.1, or the attestation proof
-	//     type, Appendix F.3).
+	//     type, Appendix F.3), held to the same binding: their iss is
+	//     ProviderIssuer, which the signing certificate names, and the
+	//     chain ends at this CA (issuer.AttestationIssuerBoundToAnchor).
 	ProviderCA []byte
 }
 

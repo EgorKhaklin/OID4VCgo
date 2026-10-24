@@ -42,7 +42,7 @@ func (f *fakePreAuthorizedCodeStore) Issue(_ context.Context, code string, recor
 	return nil
 }
 
-func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string, maxAttempts int) (issuer.PreAuthorizedCodeRecord, int, error) {
+func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string, maxAttempts int, accept func(issuer.PreAuthorizedCodeRecord) error) (issuer.PreAuthorizedCodeRecord, int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	record, ok := f.issued[code]
@@ -65,6 +65,11 @@ func (f *fakePreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode
 			delete(f.issued, code)
 		}
 		return issuer.PreAuthorizedCodeRecord{}, f.attempts[code], issuer.ErrWrongTxCode
+	}
+	if accept != nil {
+		if err := accept(record); err != nil {
+			return issuer.PreAuthorizedCodeRecord{}, 0, err
+		}
 	}
 	delete(f.issued, code)
 	delete(f.attempts, code)

@@ -372,9 +372,14 @@ func New(opts Options) (env *Env, err error) {
 		PreAuthorizedCodes:   e.preAuthCodes, AccessTokens: accessTokenAdapter{inner: e.accessTokens},
 		Notifications: oid4vcgostorage.NewNotificationStore(), NotificationHandler: notificationRecorder{e},
 		Clock: issuer.ClockFunc(time.Now), Random: rand.Reader, DPoPReplay: oid4vcgostorage.NewDPoPReplayChecker(),
-		AttestationVerifier: issuer.X5CAttestationVerifier{Roots: e.Provider.Roots},
-		SDJWTSigner:         &issuer.SDJWTSigner{Signer: signerKey, Alg: oid4vci.ES256, IssuerCertificate: signerCert},
-		MdocSigner:          &issuer.MdocSigner{Signer: signerKey, Alg: haip.RecommendedCOSEAlgorithm, X5Chain: [][]byte{signerCert.Raw}},
+		// The Wallet Provider CA may vouch for the Wallet Provider's Key
+		// Attestations alone, as for its Wallet Attestations.
+		AttestationVerifier: issuer.X5CAttestationVerifier{
+			IssuerBinding: issuer.AttestationIssuerBoundToAnchor,
+			Anchors:       []issuer.AttestationAnchor{{Certificate: e.Provider.CA, Issuers: []string{ProviderIssuer}}},
+		},
+		SDJWTSigner: &issuer.SDJWTSigner{Signer: signerKey, Alg: oid4vci.ES256, IssuerCertificate: signerCert},
+		MdocSigner:  &issuer.MdocSigner{Signer: signerKey, Alg: haip.RecommendedCOSEAlgorithm, X5Chain: [][]byte{signerCert.Raw}},
 	})
 	must(err)
 

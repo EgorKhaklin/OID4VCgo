@@ -528,7 +528,9 @@ type Dependencies struct {
 	// AttestationVerifier resolves the trust key for a Key Attestation
 	// JWT's signature. Required when any
 	// Config.CredentialConfigurationsSupported entry supports the
-	// "attestation" proof type.
+	// "attestation" proof type. X5CAttestationVerifier verifies HAIP's
+	// x5c; with anchors that certify more than one Wallet Provider, set
+	// its IssuerBinding, or any of them can attest in another's name.
 	//
 	// An attestation-type proof is signed by the attester, not by the
 	// keys it attests, and carries no audience: its only freshness and
@@ -653,6 +655,9 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 	}
 
 	if err := validateSignerDependencies(cfg, deps); err != nil {
+		return nil, fmt.Errorf("issuer: dependencies: %w", err)
+	}
+	if err := validateAttestationVerifier(deps.AttestationVerifier); err != nil {
 		return nil, fmt.Errorf("issuer: dependencies: %w", err)
 	}
 

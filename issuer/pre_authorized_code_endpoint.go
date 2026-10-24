@@ -68,13 +68,11 @@ type ExchangePreAuthorizedCodeRequest struct {
 	// then carries a credential_identifier for each, and the Token
 	// Response echoes them (§6.2: "REQUIRED when the
 	// authorization_details parameter is used in ... the Token Request").
-	// Their form is checked before the code is consumed; whether the
-	// code grants them, after, so a request for more than it grants
-	// spends it: what a code grants is in its PreAuthorizedCodeRecord,
-	// which PreAuthorizedCodeStore hands over only by consuming the code
-	// (Consume), the single atomic step that also keeps it single-use.
-	// A Wallet that names only the offer's credential_configuration_ids
-	// never meets this.
+	// Their form, and whether the code grants them, are checked before
+	// the code is consumed — the latter by PreAuthorizedCodeStore.Consume's
+	// accept, in the same atomic step that keeps the code single-use —
+	// so a request for more than the code grants is refused with
+	// invalid_authorization_details and leaves the code redeemable.
 	AuthorizationDetails []oid4vci.AuthorizationDetail
 }
 
@@ -274,10 +272,11 @@ type VerifiedTokenRequest struct {
 // It verifies req.DPoPProof via internal/dpop.Verify (using
 // Config.Limits' own MaxDPoPProofAge/MaxDPoPClockSkew and
 // Dependencies.DPoPReplay for jti-replay detection), and — only once
-// that succeeds — consumes req.PreAuthorizedCode via
-// Dependencies.PreAuthorizedCodes (§6.1's own single-use nature), checks
-// the resulting record hasn't expired and its own TxCode (if any)
-// matches req.TxCode exactly, and mints an access token via
+// that succeeds — redeems req.PreAuthorizedCode via
+// Dependencies.PreAuthorizedCodes (§6.1's own single-use nature),
+// checking its record's own TxCode (if any) matches req.TxCode exactly,
+// and that the record hasn't expired and grants any requested
+// authorization_details, before the code is consumed, and mints an access token via
 // Dependencies.AccessTokens bound to the proof's own key by its RFC
 // 7638 thumbprint.
 //
@@ -407,9 +406,11 @@ type RedeemedPreAuthorizedCode struct {
 // grant (GrantID), so that revoking the grant ends it.
 //
 // It needs VerifiedPreAuthorizedCode, and does what ExchangePreAuthorizedCode
-// does but issue the token: it consumes req.PreAuthorizedCode once,
-// checks its expiry and tx_code (and bounds wrong tx_code attempts), and
-// mints the authorization_details. The caller then issues the access
+// does but issue the token: it checks req.PreAuthorizedCode's tx_code
+// (bounding wrong tx_code attempts), its expiry, and that it grants
+// req.AuthorizationDetails, consumes it once all of them pass — a
+// refused request leaves it redeemable — and mints the
+// authorization_details. The caller then issues the access
 // token for the result's Subject, Scope and AuthorizationDetails, bound
 // to the request's DPoP key, and writes the Token Response with the
 // authorization_details in it. A failure to issue after this succeeded
@@ -467,28 +468,17 @@ func (iss *Issuer) redeemPreAuthorizedCode(ctx context.Context, req ExchangePreA
 		return RedeemedPreAuthorizedCode{}, err
 	}
 
-	record, err := iss.consumePreAuthorizedCode(ctx, req)
+	// Everything that depends on the record is checked by the store's
+	// Consume, before it consumes the code: a request the code doesn't
+	// allow is refused and leaves the code for one it does.
+	var authDetails []oid4vci.AuthorizationDetail
+	record, err := iss.consumePreAuthorizedCode(ctx, req, func(record PreAuthorizedCodeRecord) error {
+		details, refused := iss.acceptPreAuthorizedCode(record, requested, now)
+		authDetails = details
+		return refused
+	})
 	if err != nil {
 		return RedeemedPreAuthorizedCode{}, err
-	}
-	if now.After(record.ExpiresAt) {
-		return RedeemedPreAuthorizedCode{}, newError(ErrorInvalidGrant, 400, "pre-authorized_code has expired", nil)
-	}
-	mint := record.CredentialConfigurationIDs
-	if requested != nil {
-		for _, id := range requested {
-			if !iss.recordGrants(record, id) {
-				return RedeemedPreAuthorizedCode{}, newError(ErrorInvalidAuthorizationDetails, 400, fmt.Sprintf("the pre-authorized_code doesn't grant %q", id), nil)
-			}
-		}
-		mint = requested
-	}
-	var authDetails []oid4vci.AuthorizationDetail
-	if len(mint) > 0 {
-		authDetails, err = iss.mintAuthorizationDetails(mint)
-		if err != nil {
-			return RedeemedPreAuthorizedCode{}, fmt.Errorf("issuer: exchange pre-authorized code: %w", err)
-		}
 	}
 	return RedeemedPreAuthorizedCode{
 		ClientID: binding.ClientID, Subject: record.Subject, Scope: record.Scopes, AuthorizationDetails: authDetails,
@@ -544,13 +534,28 @@ func (iss *Issuer) preAuthorizedBinding(ctx context.Context, req ExchangePreAuth
 }
 
 // consumePreAuthorizedCode redeems req's pre-authorized_code against
-// PreAuthorizedCodes, turning a wrong tx_code, too many wrong tx_code
-// attempts, or an unknown/used code into the right Token Error — split
-// out of exchangePreAuthorizedCode purely to keep its cognitive
-// complexity manageable.
-func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest) (PreAuthorizedCodeRecord, error) {
-	record, wrongAttempts, err := iss.deps.PreAuthorizedCodes.Consume(ctx, req.PreAuthorizedCode, req.TxCode, iss.cfg.Limits.MaxTxCodeAttempts)
+// PreAuthorizedCodes, with accept checking its record before it's
+// consumed, turning a wrong tx_code, too many wrong tx_code attempts,
+// or an unknown/used code into the right Token Error — split out of
+// exchangePreAuthorizedCode purely to keep its cognitive complexity
+// manageable. accept's own error is returned as it is. A store that
+// reports success without accept having accepted the record is refused
+// too, though the code is then spent: none of accept's checks ran.
+func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePreAuthorizedCodeRequest, accept func(PreAuthorizedCodeRecord) error) (PreAuthorizedCodeRecord, error) {
+	var refused error
+	accepted := false
+	record, wrongAttempts, err := iss.deps.PreAuthorizedCodes.Consume(ctx, req.PreAuthorizedCode, req.TxCode, iss.cfg.Limits.MaxTxCodeAttempts, func(r PreAuthorizedCodeRecord) error {
+		refused = accept(r)
+		accepted = refused == nil
+		return refused
+	})
+	if err == nil && !accepted {
+		return PreAuthorizedCodeRecord{}, fmt.Errorf("issuer: exchange pre-authorized code: dependencies.pre_authorized_codes consumed the code without calling accept")
+	}
 	if err != nil {
+		if refused != nil && errors.Is(err, refused) {
+			return PreAuthorizedCodeRecord{}, refused
+		}
 		if errors.Is(err, ErrTxCodeRequired) {
 			return PreAuthorizedCodeRecord{}, newError(ErrorInvalidTokenRequest, 400, "tx_code is required", err)
 		}
@@ -585,13 +590,6 @@ func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePre
 	return record, nil
 }
 
-// mintAuthorizationDetails builds one AuthorizationDetail per configID,
-// each with a single freshly generated credential_identifier (§6.2).
-// Every configID is checked against Config.CredentialConfigurationsSupported
-// first — a PreAuthorizedCodeRecord naming one this issuer doesn't
-// actually support is this deployment's own bug, not anything the
-// Wallet did wrong, so this returns a plain error rather than a
-// wallet-facing *Error.
 // requestedConfigurations checks a Token Request's authorization_details
 // by their form, before the code is consumed, and returns the
 // configurations they name (nil for none): openid_credential entries
@@ -625,6 +623,35 @@ func (iss *Issuer) requestedConfigurations(details []oid4vci.AuthorizationDetail
 	return ids, nil
 }
 
+// acceptPreAuthorizedCode checks a pre-authorized code's record against
+// the request before the store consumes the code — it hasn't expired,
+// and grants every configuration requested (requestedConfigurations's
+// result, nil for none) — and mints the authorization_details for the
+// token: one per requested configuration or, with none requested, per
+// the record's CredentialConfigurationIDs.
+func (iss *Issuer) acceptPreAuthorizedCode(record PreAuthorizedCodeRecord, requested []string, now time.Time) ([]oid4vci.AuthorizationDetail, error) {
+	if now.After(record.ExpiresAt) {
+		return nil, newError(ErrorInvalidGrant, 400, "pre-authorized_code has expired", nil)
+	}
+	mint := record.CredentialConfigurationIDs
+	if requested != nil {
+		for _, id := range requested {
+			if !iss.recordGrants(record, id) {
+				return nil, newError(ErrorInvalidAuthorizationDetails, 400, fmt.Sprintf("the pre-authorized_code doesn't grant %q", id), nil)
+			}
+		}
+		mint = requested
+	}
+	if len(mint) == 0 {
+		return nil, nil
+	}
+	details, err := iss.mintAuthorizationDetails(mint)
+	if err != nil {
+		return nil, fmt.Errorf("issuer: exchange pre-authorized code: %w", err)
+	}
+	return details, nil
+}
+
 // recordGrants reports whether a pre-authorized code's record grants
 // configuration id: by its credential identifiers, or its scope.
 func (iss *Issuer) recordGrants(record PreAuthorizedCodeRecord, id string) bool {
@@ -635,6 +662,13 @@ func (iss *Issuer) recordGrants(record PreAuthorizedCodeRecord, id string) bool 
 	return scope != "" && slices.Contains(record.Scopes, scope)
 }
 
+// mintAuthorizationDetails builds one AuthorizationDetail per configID,
+// each with a single freshly generated credential_identifier (§6.2).
+// Every configID is checked against Config.CredentialConfigurationsSupported
+// first — a PreAuthorizedCodeRecord naming one this issuer doesn't
+// actually support is this deployment's own bug, not anything the
+// Wallet did wrong, so this returns a plain error rather than a
+// wallet-facing *Error.
 func (iss *Issuer) mintAuthorizationDetails(configIDs []string) ([]oid4vci.AuthorizationDetail, error) {
 	details := make([]oid4vci.AuthorizationDetail, len(configIDs))
 	for i, configID := range configIDs {

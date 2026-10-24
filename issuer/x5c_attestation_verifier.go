@@ -6,7 +6,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"slices"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
@@ -91,9 +93,25 @@ func signerCertificates(a attestation.KeyAttestation, signer crypto.PublicKey) [
 // "trust_chain" (KeyAttestation.TrustChain) needs its own
 // AttestationVerifier implementation instead — see that interface's
 // own doc comment.
+//
+// A valid chain proves only that some Wallet Provider certified under
+// Roots signed the attestation, not which one: its "iss", and the
+// key_storage and user_authentication levels it asserts, are whatever
+// that provider wrote. With roots shared between Wallet Providers (a
+// trust list's CA, one pool for several providers' CAs), any of them
+// could sign an attestation in another's name. IssuerBinding ties the
+// signing certificate to the attestation's "iss", the choice
+// fapigo/server.X5CAttesterChain's IssuerBinding makes for a Wallet
+// Attestation. It's opt-in, and AssuranceProduction doesn't require
+// it: a deployment whose providers' certificates name no identifier,
+// or whose attestations carry no "iss", would otherwise stop accepting
+// every key attestation. Set AttestationIssuerBoundToAnchor whenever
+// the anchors certify more than one Wallet Provider.
 type X5CAttestationVerifier struct {
 	// Roots is the trust anchor set a presented x5c chain must
-	// validate against. REQUIRED.
+	// validate against. Required unless IssuerBinding is
+	// AttestationIssuerBoundToAnchor, which builds it from Anchors
+	// instead and refuses Roots.
 	Roots *x509.CertPool
 	// LeafPolicy, if set, is run on the chain-verified leaf and its
 	// verified paths, and can refuse it. Chain validation accepts a
@@ -102,18 +120,147 @@ type X5CAttestationVerifier struct {
 	// would otherwise be accepted too: prefer Roots that anchor only
 	// this role's certificates, and use LeafPolicy to require what
 	// distinguishes them (an extended key usage, a certificate policy)
-	// where the anchors are shared.
+	// where the anchors are shared. Under AttestationIssuerBoundToAnchor
+	// only a path LeafPolicy approves on its own can end at the bound
+	// anchor.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+
+	// IssuerBinding decides what ties the signing certificate to the
+	// attestation's "iss". The zero value, AttestationIssuerUnbound,
+	// ties nothing — see AttestationIssuerBinding.
+	IssuerBinding AttestationIssuerBinding
+
+	// Anchors are the trust anchors, each bound to the attestation
+	// issuers it may vouch for, under AttestationIssuerBoundToAnchor.
+	// Required for that binding, and must be empty under the others.
+	Anchors []AttestationAnchor
+}
+
+// AttestationIssuerBinding decides what ties an X5CAttestationVerifier
+// signing certificate to the Key Attestation's "iss" (OpenID4VCI
+// Appendix D.1), the Wallet Provider it claims to come from.
+type AttestationIssuerBinding uint8
+
+const (
+	// AttestationIssuerUnbound ties nothing in the certificate to the
+	// attestation's "iss": any certificate chaining to Roots may sign an
+	// attestation naming any issuer, or none. Sound only when Roots
+	// anchor a single Wallet Provider's certificates.
+	AttestationIssuerUnbound AttestationIssuerBinding = iota
+
+	// AttestationIssuerInCertificate requires the attestation to carry
+	// an "iss" its signing certificate names: a URI subject alternative
+	// name exactly equal to it or, for a "dns:" iss, a DNS name — the
+	// rule an SD-JWT VC's iss is held to against its x5c. That stops a
+	// provider from signing in another's name only while it can't get
+	// that name into a certificate: under roots shared by providers, one
+	// that runs a CA under them (or holds an intermediate without name
+	// constraints) can issue itself a certificate naming another. Choose
+	// AttestationIssuerBoundToAnchor for a trust list of several
+	// providers' own CAs; this suits roots that certify only names they
+	// have vetted.
+	AttestationIssuerInCertificate
+
+	// AttestationIssuerBoundToAnchor requires what
+	// AttestationIssuerInCertificate does and, in addition, that the
+	// chain verify to one of Anchors bound to the attestation's "iss",
+	// so a CA under provider A's anchor can't sign an attestation in
+	// provider B's name even with every provider's anchor trusted.
+	AttestationIssuerBoundToAnchor
+)
+
+// AttestationAnchor is a trust anchor bound to the Key Attestation
+// issuers it may vouch for, for AttestationIssuerBoundToAnchor: a chain
+// ending at Certificate is accepted only for an attestation whose "iss"
+// is one of Issuers (and which the signing certificate names) — the
+// shape of fapigo/server.AttesterAnchor, so a deployment that binds its
+// Wallet Attestations' anchors can bind its Key Attestations' the same
+// way.
+type AttestationAnchor struct {
+	// Certificate is the anchor. Required.
+	Certificate *x509.Certificate
+
+	// Issuers are the attestation "iss" values this anchor may vouch
+	// for. At least one, none empty.
+	Issuers []string
+}
+
+// validate checks the fields v.IssuerBinding reads: Anchors set, and
+// usable, exactly when it's AttestationIssuerBoundToAnchor, and Roots
+// not set then. A nil Roots otherwise is refused when a chain is
+// verified, as it always has been.
+func (v X5CAttestationVerifier) validate() error {
+	switch v.IssuerBinding {
+	case AttestationIssuerUnbound, AttestationIssuerInCertificate:
+		if len(v.Anchors) != 0 {
+			return errors.New("X5CAttestationVerifier.Anchors applies only to AttestationIssuerBoundToAnchor; use Roots")
+		}
+		return nil
+	case AttestationIssuerBoundToAnchor:
+	default:
+		return fmt.Errorf("X5CAttestationVerifier.IssuerBinding %d is unknown", v.IssuerBinding)
+	}
+	if v.Roots != nil {
+		return errors.New("AttestationIssuerBoundToAnchor builds its roots from X5CAttestationVerifier.Anchors; leave Roots nil")
+	}
+	if len(v.Anchors) == 0 {
+		return errors.New("AttestationIssuerBoundToAnchor needs X5CAttestationVerifier.Anchors")
+	}
+	for i, a := range v.Anchors {
+		if a.Certificate == nil {
+			return fmt.Errorf("X5CAttestationVerifier.Anchors[%d] has no certificate", i)
+		}
+		if len(a.Issuers) == 0 || slices.Contains(a.Issuers, "") {
+			return fmt.Errorf("X5CAttestationVerifier.Anchors[%d] (%s) must be bound to at least one issuer, none empty", i, a.Certificate.Subject)
+		}
+	}
+	return nil
+}
+
+// validateAttestationVerifier runs X5CAttestationVerifier's own
+// configuration check when av is one, so New refuses a misconfigured
+// binding rather than every key attestation afterwards.
+func validateAttestationVerifier(av AttestationVerifier) error {
+	var v X5CAttestationVerifier
+	switch t := av.(type) {
+	case X5CAttestationVerifier:
+		v = t
+	case *X5CAttestationVerifier:
+		if t == nil {
+			return errors.New("attestation_verifier is a nil *X5CAttestationVerifier")
+		}
+		v = *t
+	default:
+		return nil
+	}
+	if err := v.validate(); err != nil {
+		return fmt.Errorf("attestation_verifier: %w", err)
+	}
+	return nil
 }
 
 // ResolveAttestationKey implements AttestationVerifier.
+//
+// Under an IssuerBinding it reads the attestation's "iss" before the
+// signature is verified. That's sound: the issuer verifies the
+// signature with the key returned here, the certificate's, so an "iss"
+// that key didn't sign is refused then.
 func (v X5CAttestationVerifier) ResolveAttestationKey(ctx context.Context, a attestation.KeyAttestation) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
+	if err := v.validate(); err != nil {
+		return nil, "", fmt.Errorf("issuer: %w", err)
+	}
 	x5c := a.X5C()
 	entries := make([]any, len(x5c))
 	for i, s := range x5c {
 		entries[i] = s
 	}
-	leaf, err := resolveX5CLeaf(ctx, entries, v.Roots, v.LeafPolicy)
+	var leaf *x509.Certificate
+	var err error
+	if v.IssuerBinding == AttestationIssuerUnbound {
+		leaf, err = resolveX5CLeaf(ctx, entries, v.Roots, v.LeafPolicy)
+	} else {
+		leaf, err = v.resolveBoundLeaf(ctx, entries, a.Issuer())
+	}
 	if err != nil {
 		return nil, "", err
 	}
@@ -122,6 +269,56 @@ func (v X5CAttestationVerifier) ResolveAttestationKey(ctx context.Context, a att
 		return nil, "", err
 	}
 	return leaf.PublicKey, alg, nil
+}
+
+// resolveBoundLeaf verifies x5c as resolveX5CLeaf does, then holds its
+// leaf to v.IssuerBinding for iss: the leaf names iss and, under
+// AttestationIssuerBoundToAnchor, a path LeafPolicy approves ends at an
+// anchor bound to iss.
+func (v X5CAttestationVerifier) resolveBoundLeaf(ctx context.Context, x5c []any, iss string) (*x509.Certificate, error) {
+	if iss == "" {
+		return nil, errors.New("issuer: key attestation has no iss to bind its signing certificate to")
+	}
+	roots := v.Roots
+	if v.IssuerBinding == AttestationIssuerBoundToAnchor {
+		roots = x509.NewCertPool()
+		for _, anchor := range v.Anchors {
+			roots.AddCert(anchor.Certificate)
+		}
+	}
+	leaf, chains, err := resolveX5CChains(ctx, x5c, roots)
+	if err != nil {
+		return nil, err
+	}
+	approved, err := certchain.ApprovedChains(leaf, chains, v.LeafPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("issuer: %w", err)
+	}
+	if err := certchain.CheckIssuerName(leaf, iss); err != nil {
+		return nil, fmt.Errorf("issuer: key attestation signing certificate: %w", err)
+	}
+	if v.IssuerBinding == AttestationIssuerBoundToAnchor && !chainEndsAtAnchorFor(approved, v.Anchors, iss) {
+		return nil, fmt.Errorf("issuer: key attestation signing certificate chain doesn't end at a trust anchor bound to iss %q", iss)
+	}
+	return leaf, nil
+}
+
+// chainEndsAtAnchorFor reports whether one of chains — each leaf first,
+// anchor last, as x509.Certificate.Verify returns them — ends at one of
+// anchors bound to iss.
+func chainEndsAtAnchorFor(chains [][]*x509.Certificate, anchors []AttestationAnchor, iss string) bool {
+	for _, chain := range chains {
+		if len(chain) == 0 {
+			continue
+		}
+		root := chain[len(chain)-1]
+		for _, a := range anchors {
+			if a.Certificate.Equal(root) && slices.Contains(a.Issuers, iss) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Capabilities implements KeySourceAssurance: validating an

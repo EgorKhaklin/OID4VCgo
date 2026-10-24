@@ -99,9 +99,9 @@ type PreAuthorizedCodeStore interface {
 
 	// Consume retrieves code and checks it against wantTxCode
 	// (ExchangePreAuthorizedCodeRequest.TxCode) in one atomic step —
-	// but must invalidate code only when the check actually succeeds.
-	// A record whose own TxCode is empty is consumed on a successful
-	// lookup when wantTxCode is empty too; a non-empty wantTxCode is
+	// but must invalidate code only when the check actually succeeds
+	// (and accept, below, accepts the record). A record whose own
+	// TxCode is empty passes the check when wantTxCode is empty too; a non-empty wantTxCode is
 	// refused with ErrTxCodeUnexpected and code left in place. A record
 	// whose own TxCode is non-empty and an empty wantTxCode returns
 	// ErrTxCodeRequired, counting no attempt and leaving code in place.
@@ -114,8 +114,23 @@ type PreAuthorizedCodeStore interface {
 	// before checking TxCode). Returns a different (non-ErrWrongTxCode)
 	// error if code is unknown or already consumed — expiry
 	// (PreAuthorizedCodeRecord.ExpiresAt) is checked by
-	// ExchangePreAuthorizedCode itself once Consume returns a record,
-	// not by Consume.
+	// ExchangePreAuthorizedCode, in accept, not by Consume itself.
+	//
+	// accept, when non-nil, is the caller's check of the record before
+	// code is consumed. Once the tx_code check passes — never for an
+	// unknown code, a missing, unexpected or wrong tx_code, or a code
+	// with too many wrong attempts — Consume calls accept with a copy
+	// of the record, in the same atomic step, and invalidates code only
+	// if accept returns nil. When accept returns an error, Consume
+	// returns that error (so that errors.Is and errors.As find it),
+	// leaves code in place and counts no wrong attempt: the tx_code was
+	// right, and the request was refused for something else.
+	// ExchangePreAuthorizedCode checks there the code's expiry and that
+	// it grants the requested authorization_details, so a request the
+	// code doesn't allow doesn't spend it. accept doesn't call the store
+	// and returns promptly, so a store may run it while holding its own
+	// lock (or a row lock in a transaction). A store that retries its
+	// atomic step may call accept again on each retry.
 	//
 	// wrongAttempts is code's own running count of ErrWrongTxCode
 	// outcomes so far (including this one), atomically incremented as
@@ -135,7 +150,7 @@ type PreAuthorizedCodeStore interface {
 	// Concurrent guesses against one code must each observe a distinct,
 	// correctly incrementing count, and at most maxAttempts of them may
 	// be compared.
-	Consume(ctx context.Context, code, wantTxCode string, maxAttempts int) (record PreAuthorizedCodeRecord, wrongAttempts int, err error)
+	Consume(ctx context.Context, code, wantTxCode string, maxAttempts int, accept func(PreAuthorizedCodeRecord) error) (record PreAuthorizedCodeRecord, wrongAttempts int, err error)
 
 	// Invalidate permanently invalidates code, the same way a
 	// successful Consume already does. ExchangePreAuthorizedCode also

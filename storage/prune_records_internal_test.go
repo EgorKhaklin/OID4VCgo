@@ -42,12 +42,12 @@ func TestIssuerRecordStoresPruneExpiredEntries(t *testing.T) {
 	for i := range n {
 		code := fmt.Sprint("old-", i)
 		_ = codes.Issue(ctx, code, issuer.PreAuthorizedCodeRecord{TxCode: "123456", ExpiresAt: past})
-		_, _, _ = codes.Consume(ctx, code, "000000", 3)
+		_, _, _ = codes.Consume(ctx, code, "000000", 3, nil)
 	}
 	if len(codes.issued) >= minPruneAt*2 || len(codes.attempts) >= minPruneAt*2 {
 		t.Errorf("pre-authorized code store holds %d codes, %d attempt counts after %d expired codes", len(codes.issued), len(codes.attempts), n)
 	}
-	if _, _, err := codes.Consume(ctx, "live", "123456", 3); err != nil {
+	if _, _, err := codes.Consume(ctx, "live", "123456", 3, nil); err != nil {
 		t.Errorf("the live code: %v", err)
 	}
 

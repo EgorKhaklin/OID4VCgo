@@ -57,10 +57,10 @@ func (s *PreAuthorizedCodeStore) Issue(_ context.Context, code string, record is
 // mutex-held critical section makes this atomic with the check itself,
 // so concurrent wrong guesses against the same code each observe a
 // distinct, correctly-incrementing count. A record with no TxCode
-// requirement is always consumed on a successful lookup, the same
-// unconditional-delete-on-success shape NonceStore.Consume already
-// establishes.
-func (s *PreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string, maxAttempts int) (issuer.PreAuthorizedCodeRecord, int, error) {
+// requirement passes the check on a successful lookup. accept runs
+// under the same mutex, on a copy of the record, so no concurrent
+// Consume can redeem the code between accept's check and the delete.
+func (s *PreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode string, maxAttempts int, accept func(issuer.PreAuthorizedCodeRecord) error) (issuer.PreAuthorizedCodeRecord, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, ok := s.issued[code]
@@ -87,9 +87,15 @@ func (s *PreAuthorizedCodeStore) Consume(_ context.Context, code, wantTxCode str
 		}
 		return issuer.PreAuthorizedCodeRecord{}, attempts, issuer.ErrWrongTxCode
 	}
+	record.Scopes = cloneStrings(record.Scopes)
+	record.CredentialConfigurationIDs = cloneStrings(record.CredentialConfigurationIDs)
+	if accept != nil {
+		if err := accept(record); err != nil {
+			return issuer.PreAuthorizedCodeRecord{}, 0, err
+		}
+	}
 	delete(s.issued, code)
 	delete(s.attempts, code)
-	record.Scopes = cloneStrings(record.Scopes)
 	return record, 0, nil
 }
 
