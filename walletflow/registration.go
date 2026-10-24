@@ -61,7 +61,7 @@ func (p *Presentation) checkRegistration(ctx context.Context, now time.Time) Reg
 	if p.w.cfg.RegistrarRoots == nil {
 		return Registration{Status: RegistrationNone}
 	}
-	out, applies := p.verifyRegistrations(now)
+	out, applies := p.verifyRegistrations(ctx, now)
 	if out.Status != RegistrationVerified {
 		return out
 	}
@@ -103,11 +103,11 @@ func disclosedAlong(ctx context.Context, cq dcql.CredentialQuery, c StoredCreden
 // library's format, returning the first that verifies (or whether any
 // failed), and for each Credential Query ID the first verified one
 // applying to it.
-func (p *Presentation) verifyRegistrations(now time.Time) (Registration, map[string]*registration.Registration) {
+func (p *Presentation) verifyRegistrations(ctx context.Context, now time.Time) (Registration, map[string]*registration.Registration) {
 	out := Registration{Status: RegistrationNone}
 	applies := map[string]*registration.Registration{}
 	for _, vi := range p.req.VerifierInfo {
-		reg, recognized, err := p.verifyEntry(vi, now)
+		reg, recognized, err := p.verifyEntry(ctx, vi, now)
 		switch {
 		case !recognized:
 			continue
@@ -135,12 +135,13 @@ func (p *Presentation) verifyRegistrations(now time.Time) (Registration, map[str
 // verifyEntry verifies one verifier_info entry as a registration:
 // recognized is false for an attestation in another format, which is
 // ignored (OpenID4VP 1.0 §5.11).
-func (p *Presentation) verifyEntry(vi wallet.VerifierInfo, now time.Time) (reg registration.Registration, recognized bool, err error) {
+func (p *Presentation) verifyEntry(ctx context.Context, vi wallet.VerifierInfo, now time.Time) (reg registration.Registration, recognized bool, err error) {
 	data, ok := vi.DataString()
 	if !ok || !registration.Recognize(vi.Format, data) {
 		return registration.Registration{}, false, nil
 	}
-	reg, err = registration.VerifyWithPolicy(data, p.w.cfg.RegistrarRoots, p.req.ClientID, now, p.w.cfg.RegistrarLeafPolicy)
+	registrars := registration.Registrars{Roots: p.w.cfg.RegistrarRoots, LeafPolicy: p.w.cfg.RegistrarLeafPolicy, Revocation: p.w.cfg.RegistrarRevocation}
+	reg, err = registrars.Verify(ctx, data, p.req.ClientID, now)
 	if err == nil && signedBySelf(reg, p.req.VerifierCertificate) {
 		err = errSelfRegistered
 	}
