@@ -34,7 +34,7 @@ func newRegistrar(t *testing.T) registrar {
 	ca := mustCert(t, &x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test registrar CA"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true,
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign, IsCA: true, BasicConstraintsValid: true,
 	}, nil, &caKey.PublicKey, caKey)
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	registrarURI, _ := url.Parse("https://registrar.example")
