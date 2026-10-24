@@ -13,6 +13,7 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
@@ -60,6 +61,16 @@ type VerifyIssuedCredentialParams struct {
 	// the certificates an IACA issues for other jobs; a policy that's
 	// set replaces it.
 	IssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+
+	// IssuerRevocation, if set, checks the credential's issuer
+	// certificate chain for revocation (a CRL that lists its signing
+	// certificate or an intermediate, say): only a verified path that
+	// passes both IssuerLeafPolicy and IssuerRevocation is accepted, and
+	// the mdoc document signer checks run on those paths. A revoked
+	// certificate is refused with an error wrapping
+	// certrevocation.ErrRevoked. nil checks no revocation; see
+	// certrevocation.
+	IssuerRevocation certrevocation.Checker
 
 	// RequireIssuerName refuses an SD-JWT VC whose iss its signing
 	// certificate doesn't name, as verifier.X5CIssuerKeyResolver's
@@ -132,6 +143,9 @@ func VerifyIssuedCredential(ctx context.Context, p VerifyIssuedCredentialParams)
 	if p.HolderKey == nil && len(p.Configuration.CryptographicBindingMethodsSupported) > 0 {
 		return VerifiedIssuedCredential{}, errors.New("wallet: verify issued credential: HolderKey is required for a credential with cryptographic binding")
 	}
+	if err := certchain.ValidateRevocation(p.IssuerRevocation); err != nil {
+		return VerifiedIssuedCredential{}, fmt.Errorf("wallet: verify issued credential: IssuerRevocation: %w", err)
+	}
 	now := p.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -140,9 +154,9 @@ func VerifyIssuedCredential(ctx context.Context, p VerifyIssuedCredentialParams)
 	var err error
 	switch p.Configuration.Format {
 	case sdjwtvc.CredentialFormat:
-		verified, err = verifyIssuedSDJWTVC(p, now)
+		verified, err = verifyIssuedSDJWTVC(ctx, p, now)
 	case mdoc.CredentialFormat:
-		verified, err = verifyIssuedMdoc(p, now)
+		verified, err = verifyIssuedMdoc(ctx, p, now)
 	default:
 		err = fmt.Errorf("unsupported format %q", p.Configuration.Format)
 	}
@@ -152,7 +166,7 @@ func VerifyIssuedCredential(ctx context.Context, p VerifyIssuedCredentialParams)
 	return verified, nil
 }
 
-func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (VerifiedIssuedCredential, error) {
+func verifyIssuedSDJWTVC(ctx context.Context, p VerifyIssuedCredentialParams, now time.Time) (VerifiedIssuedCredential, error) {
 	pres, err := sdjwtvc.Parse(p.Credential)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("parse: %w", err)
@@ -175,7 +189,7 @@ func verifyIssuedSDJWTVC(p VerifyIssuedCredentialParams, now time.Time) (Verifie
 	if err := certchain.CheckNoAnchor(chain); err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
-	leaf, err := certchain.VerifyLeafWithPolicyAt(chain, p.IssuerRoots, p.IssuerLeafPolicy, now)
+	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, p.IssuerRoots, p.IssuerLeafPolicy, p.IssuerRevocation, now)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
@@ -261,7 +275,7 @@ func numericDate(v any) time.Time {
 	return t.UTC()
 }
 
-func verifyIssuedMdoc(p VerifyIssuedCredentialParams, now time.Time) (VerifiedIssuedCredential, error) {
+func verifyIssuedMdoc(ctx context.Context, p VerifyIssuedCredentialParams, now time.Time) (VerifiedIssuedCredential, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(p.Credential)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("decode: %w", err)
@@ -279,13 +293,10 @@ func verifyIssuedMdoc(p VerifyIssuedCredentialParams, now time.Time) (VerifiedIs
 	if policy == nil {
 		policy = mdoc.DefaultDocumentSignerPolicy
 	}
-	leaf, chains, err := certchain.VerifyChainsAt(chain, p.IssuerRoots, now)
+	// Only the paths the policy approves on their own, and revocation
+	// passes: the document signer checks below must pass on one of them.
+	leaf, chains, err := certchain.VerifyTrustedChainsAt(ctx, chain, p.IssuerRoots, policy, p.IssuerRevocation, now)
 	if err != nil {
-		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
-	}
-	// Only the paths the policy approves on their own: the document
-	// signer checks below must pass on one of them.
-	if chains, err = certchain.ApprovedChains(leaf, chains, policy); err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
 	alg, err := coseAlgForKey(leaf.PublicKey)

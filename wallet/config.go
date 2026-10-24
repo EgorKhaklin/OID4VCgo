@@ -12,6 +12,8 @@ import (
 	"github.com/idfoundry/fapigo/fapihttp"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
@@ -76,6 +78,13 @@ type Config struct {
 	// certificates with, so one issued under the same roots for another
 	// role, such as a Verifier's, can't vouch for an issuer.
 	IssuerMetadataLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// IssuerMetadataRevocation, if set, checks the metadata signer's
+	// certificate chain for revocation: signed metadata is used only
+	// through a path that passes it, and one signed by a revoked
+	// certificate is refused with an error wrapping
+	// certrevocation.ErrRevoked. nil checks no revocation; see
+	// certrevocation.
+	IssuerMetadataRevocation certrevocation.Checker
 
 	// RequireSignedIssuerMetadata refuses Credential Issuer Metadata
 	// that isn't signed by a certificate chaining to
@@ -192,6 +201,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err := checkIssuerMetadataConfig(cfg); err != nil {
 		return nil, err
 	}
+	if err := validateVerifierTrust(cfg.VerifierTrust); err != nil {
+		return nil, err
+	}
 
 	fetcher, err := fapihttp.New(deps.HTTP, cfg.Fetch)
 	if err != nil {
@@ -235,6 +247,9 @@ func checkIssuerMetadataConfig(cfg Config) error {
 	}
 	if cfg.MaxIssuerMetadataAge < 0 {
 		return fmt.Errorf("wallet: config: max_issuer_metadata_age must not be negative")
+	}
+	if err := certchain.ValidateRevocation(cfg.IssuerMetadataRevocation); err != nil {
+		return fmt.Errorf("wallet: config: issuer_metadata_revocation: %w", err)
 	}
 	return nil
 }
