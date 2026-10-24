@@ -9,6 +9,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/readerauth"
 )
 
@@ -24,6 +25,14 @@ type ReaderTrust struct {
 	// RequireReaderAuthenticationEKU requires what Annex B profiles a
 	// reader authentication certificate with.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// Revocation, if set, checks the reader's certificate chain for
+	// revocation: only a verified path LeafPolicy approves and
+	// Revocation passes recognizes the reader, and a revoked
+	// certificate leaves it unrecognized, with an error wrapping
+	// certrevocation.ErrRevoked. Its context is context.Background():
+	// a certrevocation.CRLs's Lists should keep its lists in memory.
+	// nil checks no revocation; see certrevocation.
+	Revocation certrevocation.Checker
 	// Now is when the certificates must be valid; zero: the current
 	// time.
 	Now time.Time
@@ -117,7 +126,7 @@ func VerifyReaderAuth(req DocRequest, sessionTranscriptBytes []byte, t ReaderTru
 	if err := readerauth.VerifySignature(req.ReaderAuth, detached, chain[0]); err != nil {
 		return ReaderAuthentication{Status: ReaderInvalid, Chain: chain, Err: err}
 	}
-	if _, err := readerauth.VerifyTrust(ders, readerauth.Trust{Roots: t.Roots, LeafPolicy: t.LeafPolicy, Now: t.Now}); err != nil {
+	if _, err := readerauth.VerifyTrust(ders, readerauth.Trust{Roots: t.Roots, LeafPolicy: t.LeafPolicy, Revocation: t.Revocation, Now: t.Now}); err != nil {
 		return ReaderAuthentication{Status: ReaderUntrusted, Chain: chain, Err: err}
 	}
 	return ReaderAuthentication{Status: ReaderTrusted, Chain: chain}

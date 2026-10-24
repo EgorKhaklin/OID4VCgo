@@ -1,6 +1,7 @@
 package proximity
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
@@ -32,6 +34,7 @@ type ReaderSession struct {
 	readerAuth             *readerKey
 	maxClockSkew           time.Duration
 	signerPolicy           func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	issuerRevocation       certrevocation.Checker
 	rootsByDocType         map[string]*x509.CertPool
 
 	docType   string
@@ -41,10 +44,11 @@ type ReaderSession struct {
 }
 
 type readerConfig struct {
-	readerAuth     *readerKey
-	maxClockSkew   time.Duration
-	signerPolicy   func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
-	rootsByDocType map[string]*x509.CertPool
+	readerAuth       *readerKey
+	maxClockSkew     time.Duration
+	signerPolicy     func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	issuerRevocation certrevocation.Checker
+	rootsByDocType   map[string]*x509.CertPool
 }
 
 // ReaderOption configures NewReaderSession.
@@ -83,6 +87,20 @@ func WithMaxClockSkew(d time.Duration) ReaderOption {
 // intermediate, and AnyDocumentSigner checks nothing.
 func WithDocumentSignerPolicy(policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) ReaderOption {
 	return func(c *readerConfig) { c.signerPolicy = policy }
+}
+
+// WithIssuerRevocation checks the document signer's certificate chain
+// for revocation with checker: Verify accepts the document only through
+// a verified path the document signer policy approves and checker
+// passes, and refuses one whose signer or intermediate is revoked with
+// an error wrapping certrevocation.ErrRevoked. Verify takes no context,
+// so checker is asked with context.Background(): a certrevocation.CRLs
+// should keep its lists in memory. Without it, or with nil, no
+// revocation is checked; see certrevocation. It's the document
+// signer's certificate; the document's own revocation is its status
+// list (Verified.Status).
+func WithIssuerRevocation(checker certrevocation.Checker) ReaderOption {
+	return func(c *readerConfig) { c.issuerRevocation = checker }
 }
 
 // WithIssuerRootsByDocType holds each document type to its own trust
@@ -161,13 +179,16 @@ func configureReader(r *ReaderSession, cfg readerConfig) error {
 	if cfg.signerPolicy == nil {
 		cfg.signerPolicy = DefaultDocumentSignerPolicy
 	}
+	if err := certchain.ValidateRevocation(cfg.issuerRevocation); err != nil {
+		return fmt.Errorf("proximity: issuer revocation: %w", err)
+	}
 	if cfg.readerAuth != nil {
 		if _, err := readerauth.CheckKey(cfg.readerAuth.signer, cfg.readerAuth.chain); err != nil {
 			return fmt.Errorf("proximity: reader authentication: %w", err)
 		}
 	}
 	r.readerAuth, r.maxClockSkew, r.signerPolicy = cfg.readerAuth, cfg.maxClockSkew, cfg.signerPolicy
-	r.rootsByDocType = cfg.rootsByDocType
+	r.rootsByDocType, r.issuerRevocation = cfg.rootsByDocType, cfg.issuerRevocation
 	return nil
 }
 
@@ -315,8 +336,9 @@ type Verified struct {
 //     device-signed elements are within the MSO's key authorizations;
 //   - every returned element was requested.
 //
-// It doesn't check revocation: Verified.Status is the reference to
-// check. Nor that the requested elements came back: the holder may
+// It doesn't check the document's revocation: Verified.Status is the
+// reference to check. Its signer's certificates are checked only with
+// WithIssuerRevocation. Nor that the requested elements came back: the holder may
 // withhold any of them, and an empty Claims verifies. Check each
 // element you need is there.
 //
@@ -380,9 +402,13 @@ func (r *ReaderSession) verifyDocument(doc responseDocument, roots *x509.CertPoo
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: issuer certificate: %w", err)
 	}
-	// Only the paths the policy approves on their own: the issuer chain
-	// reported, and the status list's signer bound to, is one of them.
+	// Only the paths the policy approves on their own, and revocation
+	// passes: the issuer chain reported, and the status list's signer
+	// bound to, is one of them.
 	if chains, err = certchain.ApprovedChains(leaf, chains, r.signerPolicy); err != nil {
+		return Verified{}, fmt.Errorf("proximity: document signer certificate: %w", err)
+	}
+	if chains, err = certchain.NotRevokedChains(context.Background(), chains, r.issuerRevocation, now); err != nil {
 		return Verified{}, fmt.Errorf("proximity: document signer certificate: %w", err)
 	}
 	// The algorithm is the verified certificate's key's (ISO/IEC
