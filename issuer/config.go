@@ -660,6 +660,9 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 	if err := validateAttestationVerifier(deps.AttestationVerifier); err != nil {
 		return nil, fmt.Errorf("issuer: dependencies: %w", err)
 	}
+	if err := validateProofBindingKeys(deps.ProofBindingKeys); err != nil {
+		return nil, fmt.Errorf("issuer: dependencies: %w", err)
+	}
 
 	if err := cfg.RequestEncryption.validate(); err != nil {
 		return nil, fmt.Errorf("issuer: config: request_encryption: %w", err)
