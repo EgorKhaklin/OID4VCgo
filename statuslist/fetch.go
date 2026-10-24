@@ -189,10 +189,11 @@ func (c Checker) check(ctx context.Context, ref StatusListRef, cwt bool) (Status
 	if err != nil {
 		return 0, TokenClaims{}, err
 	}
+	// check's result is failClosed by Check.
 	if cwt {
-		return CheckCWTX5Chain(token, c.Roots, ref, c.Options)
+		return checkCWTX5Chain(ctx, token, c.Roots, ref, c.Options)
 	}
-	return CheckX5C(string(token), c.Roots, ref, c.Options)
+	return checkX5C(ctx, string(token), c.Roots, ref, c.Options)
 }
 
 // NotValidError is RequireValid's error for a Referenced Token whose

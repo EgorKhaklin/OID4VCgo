@@ -8,6 +8,7 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
@@ -102,6 +103,16 @@ type VerifyOptions struct {
 	// tie, or the signer's role (an extended key usage, a certificate
 	// policy), where the roots are shared.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+
+	// Revocation, used by CheckX5C/CheckCWTX5Chain only, checks the
+	// token signer's certificate chain for revocation: the token is
+	// accepted only through a verified path LeafPolicy approves and
+	// Revocation passes, and one signed by a revoked certificate is
+	// refused with an error wrapping certrevocation.ErrRevoked.
+	// Checker.Check asks it with its own context, CheckX5C and
+	// CheckCWTX5Chain with context.Background(). nil checks no
+	// revocation; see certrevocation.
+	Revocation certrevocation.Checker
 
 	// Issuer, if set, is the Referenced Token's issuer: its iss, or
 	// the URI its signing certificate names. CheckX5C then refuses a
