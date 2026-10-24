@@ -88,6 +88,16 @@ func TestCheckRoleRoots(t *testing.T) {
 		"issuer EKU is the reader's":     {cfg: config{IssuerRoots: shared, IssuerRequireEKU: mdocReaderAuthEKU, MdocReaderRoots: shared, MdocReaderRequireEKU: true}, refused: "same extended key usage"},
 		"metadata shares with issuer":    {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.5", IssuerMetadataRoots: shared}, refused: "issuer_metadata_require_eku"},
 		"metadata has its EKU":           {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.5", IssuerMetadataRoots: shared, IssuerMetadataRequireEKU: "1.2.6"}},
+		"issuers of both formats share":  {cfg: config{IssuerRoots: shared, MdocIssuerRoots: shared, MdocIssuerRootsByDocType: map[string]string{"a": shared}}},
+		"the same EKU for both formats":  {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.5", MdocIssuerRoots: shared, MdocIssuerRequireEKU: "1.2.5"}},
+		"mdoc issuer shares with verifier": {cfg: config{IssuerRoots: other, MdocIssuerRoots: shared, VerifierRoots: shared, VerifierRequireEKU: "1.2.3"},
+			refused: "mdoc_issuer_require_eku"},
+		"mdoc issuer has its EKU": {cfg: config{MdocIssuerRoots: shared, MdocIssuerRequireEKU: "1.0.18013.5.1.2", VerifierRoots: shared, VerifierRequireEKU: "1.2.3"}},
+		"a document type's roots share with a reader": {cfg: config{MdocIssuerRootsByDocType: map[string]string{"a": shared}, MdocReaderRoots: shared, MdocReaderRequireEKU: true},
+			refused: "mdoc_issuer_require_eku"},
+		"mdoc EKU under issuer_roots is the verifier's": {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.5", MdocIssuerRequireEKU: "1.2.3", VerifierRoots: shared, VerifierRequireEKU: "1.2.3"},
+			refused: "mdoc_issuer_require_eku"},
+		"mdoc and SD-JWT EKUs under issuer_roots": {cfg: config{IssuerRoots: shared, IssuerRequireEKU: "1.2.5", MdocIssuerRequireEKU: "1.0.18013.5.1.2", VerifierRoots: shared, VerifierRequireEKU: "1.2.3"}},
 	} {
 		err := checkRoleRoots(tc.cfg)
 		switch {

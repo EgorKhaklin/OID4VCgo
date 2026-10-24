@@ -1279,11 +1279,12 @@ func (w *Wallet) verifyCopy(ctx context.Context, issuer string, conf oid4vci.Cre
 	if w.cfg.AllowForeignIss {
 		issuer = ""
 	}
+	roots, policy := w.cfg.issuerTrust(conf.Format, conf.DocType)
 	var lastErr error
 	for _, k := range keys {
 		verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
 			Configuration: conf, Credential: credential, HolderKey: k.Public(),
-			IssuerRoots: w.cfg.IssuerRoots, IssuerLeafPolicy: w.cfg.IssuerLeafPolicy, Now: now, RequireIssuerName: w.cfg.RequireIssuerName,
+			IssuerRoots: roots, IssuerLeafPolicy: policy, Now: now, RequireIssuerName: w.cfg.RequireIssuerName,
 			CredentialIssuer: issuer,
 		})
 		if err == nil {

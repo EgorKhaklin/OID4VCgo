@@ -14,9 +14,9 @@ import (
 // certificate under the IACA is refused (mdoc.DefaultDocumentSignerPolicy);
 // an IssuerLeafPolicy that's set replaces the check.
 func TestVerifyIssuedCredential_MdocDefaultSignerPolicy(t *testing.T) {
-	ca, caKey := testcert.CA(t, "IACA")
+	ca, caKey := testcert.CAWithSubject(t, pkix.Name{CommonName: "IACA", Country: []string{"SG"}})
 	ocsp, ocspKey := testcert.Issue(t, &x509.Certificate{
-		Subject:  pkix.Name{CommonName: "OCSP responder"},
+		Subject:  pkix.Name{CommonName: "OCSP responder", Country: []string{"SG"}},
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning},
 	}, ca, caKey)
 	roots := x509.NewCertPool()

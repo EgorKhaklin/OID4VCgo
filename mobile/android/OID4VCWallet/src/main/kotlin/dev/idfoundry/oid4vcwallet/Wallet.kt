@@ -203,6 +203,26 @@ public data class WalletConfiguration(
      * alone.
      */
     @SerialName("allow_foreign_iss") val allowForeignIss: Boolean = false,
+    /**
+     * PEM certificates: the IACAs a received mdoc must chain to, in place
+     * of [issuerRoots], so an [issuerRoots] anchor alone, an SD-JWT VC
+     * issuer's CA say, can't sign an mDL. Empty: mdocs chain to
+     * [issuerRoots].
+     */
+    @SerialName("mdoc_issuer_roots") val mdocIssuerRoots: String = "",
+    /**
+     * Each document type's own IACAs, as PEM certificates: an mdoc of a
+     * type named here must chain to them, not to [mdocIssuerRoots] or
+     * [issuerRoots]. A type named with an empty string is refused.
+     */
+    @SerialName("mdoc_issuer_roots_by_doctype") val mdocIssuerRootsByDocType: Map<String, String> = emptyMap(),
+    /**
+     * A dotted object identifier: recognizes only document signer
+     * certificates with that extended key usage (the mDL's is
+     * 1.0.18013.5.1.2), in place of [issuerRequireEKU], so a wallet
+     * receiving both formats can require each its own.
+     */
+    @SerialName("mdoc_issuer_require_eku") val mdocIssuerRequireEKU: String = "",
 ) {
     /** How an in-person response authenticates the mdoc (ISO/IEC 18013-5 §9.1.3). */
     @Serializable

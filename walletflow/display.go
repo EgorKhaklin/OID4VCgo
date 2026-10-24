@@ -195,7 +195,8 @@ type CredentialStatus struct {
 }
 
 // CheckStatus fetches the issuer's status list for the credential id
-// names, checks it's signed by a certificate chaining to IssuerRoots,
+// names, checks it's signed by a certificate chaining to the issuer
+// roots the credential was received under (IssuerRoots, or an mdoc's),
 // and records the credential's status in it: the stored credential is
 // returned with its Status. A credential without a status list has
 // nothing to check, and is returned as it is, as is an expired one: it
@@ -212,9 +213,11 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	if len(live) == 0 {
 		return c, nil
 	}
+	// The roots the credential itself was checked against on receipt.
+	roots, _ := w.cfg.issuerTrust(c.Format, c.DocType)
 	checker := statuslist.Checker{
 		Fetcher: statuslist.Fetcher{HTTP: w.deps.HTTP, AllowLoopback: w.cfg.Development},
-		Roots:   w.cfg.IssuerRoots,
+		Roots:   roots,
 		Options: statuslist.VerifyOptions{Now: w.deps.Clock},
 	}
 	// Its status is its issuer's to sign, or one of its Status Issuers',

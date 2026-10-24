@@ -49,15 +49,23 @@ func TestVerifyResponse_ChecksTrustedAuthorities_Accepts(t *testing.T) {
 	}
 	fixture := newSDJWTVCPresentationWithIssuerOpts(t, leafKey, sdjwtvc.IssueOptions{IssuerCertificate: leaf}, v.ClientID(), built.Nonce)
 
-	result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query:              query,
-		Response:           verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
-		ExpectedNonce:      built.Nonce,
-		IssuerKeys:         fixedSDJWTVCIssuerKeyResolver{pub: &leafKey.PublicKey, alg: jose.ES256},
-		MaxKeyBindingAge:   time.Hour,
-		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Roots: rootsOf(ca)},
-	})
-	testverify.RequireOneCredential(t, result, err, "identity_credential")
+	// Roots, or the same anchors as certificates.
+	for name, checker := range map[string]dcql.AKITrustedAuthoritiesChecker{
+		"Roots":   {Roots: rootsOf(ca)},
+		"Anchors": {Anchors: []*x509.Certificate{ca}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+				Query:              query,
+				Response:           verifier.ParsedResponse{VPToken: map[string][]string{"identity_credential": {fixture.compact}}},
+				ExpectedNonce:      built.Nonce,
+				IssuerKeys:         fixedSDJWTVCIssuerKeyResolver{pub: &leafKey.PublicKey, alg: jose.ES256},
+				MaxKeyBindingAge:   time.Hour,
+				TrustedAuthorities: checker,
+			})
+			testverify.RequireOneCredential(t, result, err, "identity_credential")
+		})
+	}
 }
 
 func TestVerifyResponse_ChecksTrustedAuthorities_RejectsWrongAKI(t *testing.T) {

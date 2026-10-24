@@ -6,6 +6,7 @@ import (
 	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -74,6 +75,11 @@ const mdocReaderAuthEKU = "1.0.18013.5.1.6"
 // certificates when they share an anchor, and whenever either holds an
 // intermediate: where that chains to can't be known from the roots
 // alone, so it may be the other's.
+//
+// The credential issuers' roots, issuer_roots and the mdoc ones, are
+// one role: an ecosystem's CA may certify both its SD-JWT VC issuers
+// and its document signers, told apart by their extended key usages,
+// so they aren't checked against each other.
 func checkRoleRoots(cfg config) error {
 	if cfg.Development {
 		return nil
@@ -83,14 +89,30 @@ func checkRoleRoots(cfg config) error {
 		mdocEKU = mdocReaderAuthEKU
 	}
 	roles := []roleRoots{
-		{"verifier_roots", cfg.VerifierRoots, cfg.VerifierRequireEKU},
-		{"registrar_roots", cfg.RegistrarRoots, cfg.RegistrarRequireEKU},
-		{"issuer_roots", cfg.IssuerRoots, cfg.IssuerRequireEKU},
-		{"issuer_metadata_roots", cfg.IssuerMetadataRoots, cfg.IssuerMetadataRequireEKU},
-		{"mdoc_reader_roots", cfg.MdocReaderRoots, mdocEKU},
+		{name: "verifier_roots", roots: cfg.VerifierRoots, eku: cfg.VerifierRequireEKU},
+		{name: "registrar_roots", roots: cfg.RegistrarRoots, eku: cfg.RegistrarRequireEKU},
+		{name: "issuer_roots", roots: cfg.IssuerRoots, eku: cfg.IssuerRequireEKU, family: roleIssuer},
+		{name: "issuer_metadata_roots", roots: cfg.IssuerMetadataRoots, eku: cfg.IssuerMetadataRequireEKU},
+		{name: "mdoc_reader_roots", roots: cfg.MdocReaderRoots, eku: mdocEKU},
+		{name: "mdoc_issuer_roots", roots: cfg.MdocIssuerRoots, eku: cfg.MdocIssuerRequireEKU, family: roleIssuer},
+	}
+	if cfg.MdocIssuerRoots == "" && cfg.MdocIssuerRequireEKU != "" {
+		// Then mdocs are received under issuer_roots, recognized by
+		// mdoc_issuer_require_eku: that pair must be told apart from the
+		// other roles too, beside issuer_roots' own.
+		roles = append(roles, roleRoots{name: "issuer_roots", roots: cfg.IssuerRoots, eku: cfg.MdocIssuerRequireEKU, ekuName: "mdoc_issuer_require_eku", family: roleIssuer})
+	}
+	for _, docType := range slices.Sorted(maps.Keys(cfg.MdocIssuerRootsByDocType)) {
+		roles = append(roles, roleRoots{
+			name: fmt.Sprintf("mdoc_issuer_roots_by_doctype[%q]", docType), roots: cfg.MdocIssuerRootsByDocType[docType],
+			eku: cfg.MdocIssuerRequireEKU, ekuName: "mdoc_issuer_require_eku", family: roleIssuer,
+		})
 	}
 	for i, a := range roles {
 		for _, b := range roles[i+1:] {
+			if a.family != "" && a.family == b.family {
+				continue
+			}
 			if err := checkRolePair(a, b); err != nil {
 				return err
 			}
@@ -99,11 +121,26 @@ func checkRoleRoots(cfg config) error {
 	return nil
 }
 
+// roleIssuer is the family of the credential issuers' roots.
+const roleIssuer = "issuer"
+
 // roleRoots is one role's roots configuration key, its roots and its
-// extended key usage, for checkRoleRoots.
+// extended key usage, for checkRoleRoots: ekuName is the key setting
+// it, when it isn't ekuKey(name), and family the roles, if any, whose
+// roots may share anchors.
 type roleRoots struct {
 	name, roots string
 	eku         string
+	ekuName     string
+	family      string
+}
+
+// ekuConfigKey is the configuration key naming r's extended key usage.
+func (r roleRoots) ekuConfigKey() string {
+	if r.ekuName != "" {
+		return r.ekuName
+	}
+	return ekuKey(r.name)
 }
 
 // checkRolePair is checkRoleRoots for roles a and b.
@@ -111,13 +148,16 @@ func checkRolePair(a, b roleRoots) error {
 	if !mayShareAnchor(a.roots, b.roots) {
 		return nil
 	}
-	for _, r := range []struct{ name, eku, other string }{{a.name, a.eku, b.name}, {b.name, b.eku, a.name}} {
-		if r.eku == "" {
-			return newError(CodeInvalidInput, fmt.Errorf("%s may share a trust anchor with %s: set %s to tell its certificates apart", r.name, r.other, ekuKey(r.name)))
+	for _, r := range []struct {
+		role  roleRoots
+		other string
+	}{{a, b.name}, {b, a.name}} {
+		if r.role.eku == "" {
+			return newError(CodeInvalidInput, fmt.Errorf("%s may share a trust anchor with %s: set %s to tell its certificates apart", r.role.name, r.other, r.role.ekuConfigKey()))
 		}
 	}
 	if a.eku == b.eku {
-		return newError(CodeInvalidInput, fmt.Errorf("%s and %s may share a trust anchor, and %s and %s are the same extended key usage, which can't tell their certificates apart", a.name, b.name, ekuKey(a.name), ekuKey(b.name)))
+		return newError(CodeInvalidInput, fmt.Errorf("%s and %s may share a trust anchor, and %s and %s are the same extended key usage, which can't tell their certificates apart", a.name, b.name, a.ekuConfigKey(), b.ekuConfigKey()))
 	}
 	return nil
 }

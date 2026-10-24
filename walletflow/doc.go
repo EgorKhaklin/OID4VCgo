@@ -51,10 +51,11 @@
 // matching their metadata exactly, an offer's Authorization Server being
 // one the issuer lists, PKCE, PAR and the authorization response's iss
 // in the authorization code grant, and every credential checked against
-// Config.IssuerRoots. An SD-JWT VC whose iss isn't the offer's
-// credential_issuer is refused too, unless Config.AllowForeignIss
-// allows it. ProfileHAIP also refuses an issuer outside HAIP
-// 1.0 §4, with ErrProfileViolation: see its doc comment.
+// Config.IssuerRoots, or an mdoc against Config.MdocIssuerRoots or
+// MdocIssuerRootsByDocType where set. An SD-JWT VC whose iss isn't the
+// offer's credential_issuer is refused too, unless
+// Config.AllowForeignIss allows it. ProfileHAIP also refuses an issuer
+// outside HAIP 1.0 §4, with ErrProfileViolation: see its doc comment.
 //
 // An issuance runs:
 //

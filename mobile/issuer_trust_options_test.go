@@ -36,3 +36,30 @@ func TestWalletflowConfig_IssuerTrustOptions(t *testing.T) {
 		}
 	}
 }
+
+// The mdoc issuer trust options reach walletflow.Config: an empty
+// document type entry names the type with no roots.
+func TestWalletflowConfig_MdocIssuerTrust(t *testing.T) {
+	ca, _ := testcert.CA(t, "IACA")
+	roots := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}))
+	wcfg, err := walletConfig(config{
+		Development: true, MdocIssuerRoots: roots, MdocIssuerRequireEKU: "1.0.18013.5.1.2",
+		MdocIssuerRootsByDocType: map[string]string{"org.iso.18013.5.1.mDL": roots, "eu.europa.ec.eudi.pid.1": ""},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, named := wcfg.MdocIssuerRootsByDocType["eu.europa.ec.eudi.pid.1"]
+	if wcfg.MdocIssuerRoots == nil || wcfg.MdocIssuerLeafPolicy == nil || wcfg.MdocIssuerRootsByDocType["org.iso.18013.5.1.mDL"] == nil || !named || pid != nil {
+		t.Errorf("walletflow.Config = %+v", wcfg)
+	}
+	for name, cfg := range map[string]config{
+		"roots that aren't PEM":         {Development: true, MdocIssuerRoots: "not PEM"},
+		"a document type's that aren't": {Development: true, MdocIssuerRootsByDocType: map[string]string{"a": "not PEM"}},
+		"an EKU that isn't an OID":      {Development: true, MdocIssuerRequireEKU: "x"},
+	} {
+		if _, err := walletConfig(cfg); err == nil || !strings.Contains(err.Error(), "mdoc_issuer") {
+			t.Errorf("%s: %v, want refused", name, err)
+		}
+	}
+}

@@ -54,6 +54,16 @@ type config struct {
 	VerifierRequireEKU  string `json:"verifier_require_eku,omitempty"`
 	RegistrarRequireEKU string `json:"registrar_require_eku,omitempty"`
 	IssuerRequireEKU    string `json:"issuer_require_eku,omitempty"`
+	// MdocIssuerRoots are PEM certificates: the IACAs whose mdocs the
+	// wallet receives, in place of IssuerRoots
+	// (walletflow.Config.MdocIssuerRoots), and MdocIssuerRootsByDocType
+	// each document type's own (walletflow.Config.MdocIssuerRootsByDocType).
+	// MdocIssuerRequireEKU, a dotted object identifier, recognizes only
+	// document signer certificates with that extended key usage, in
+	// place of IssuerRequireEKU (walletflow.Config.MdocIssuerLeafPolicy).
+	MdocIssuerRoots          string            `json:"mdoc_issuer_roots,omitempty"`
+	MdocIssuerRootsByDocType map[string]string `json:"mdoc_issuer_roots_by_doctype,omitempty"`
+	MdocIssuerRequireEKU     string            `json:"mdoc_issuer_require_eku,omitempty"`
 	// IssuerMetadataRequireEKU recognizes only issuer metadata signed
 	// by a certificate under IssuerMetadataRoots with this extended key
 	// usage (walletflow.Config.IssuerMetadataLeafPolicy).
@@ -288,6 +298,9 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 	if wcfg.IssuerLeafPolicy, err = roleEKU("issuer_require_eku", cfg.IssuerRequireEKU); err != nil {
 		return walletflow.Config{}, err
 	}
+	if err := mdocIssuerTrust(cfg, &wcfg); err != nil {
+		return walletflow.Config{}, err
+	}
 	if wcfg.RegistrarRoots, err = optionalCertPool("registrar_roots", cfg.RegistrarRoots); err != nil {
 		return walletflow.Config{}, err
 	}
@@ -304,6 +317,30 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 		return walletflow.Config{}, newError(CodeInvalidInput, err)
 	}
 	return wcfg, nil
+}
+
+// mdocIssuerTrust sets wcfg's mdoc-specific issuer trust from cfg's
+// mdoc_issuer_roots, mdoc_issuer_roots_by_doctype and
+// mdoc_issuer_require_eku.
+func mdocIssuerTrust(cfg config, wcfg *walletflow.Config) error {
+	var err error
+	if wcfg.MdocIssuerRoots, err = optionalCertPool("mdoc_issuer_roots", cfg.MdocIssuerRoots); err != nil {
+		return err
+	}
+	if len(cfg.MdocIssuerRootsByDocType) > 0 {
+		wcfg.MdocIssuerRootsByDocType = make(map[string]*x509.CertPool, len(cfg.MdocIssuerRootsByDocType))
+		for docType, pemText := range cfg.MdocIssuerRootsByDocType {
+			// Unlike an unset key, an empty entry names its type with no
+			// roots: none of its documents are accepted.
+			pool, err := optionalCertPool(fmt.Sprintf("mdoc_issuer_roots_by_doctype[%q]", docType), pemText)
+			if err != nil {
+				return err
+			}
+			wcfg.MdocIssuerRootsByDocType[docType] = pool
+		}
+	}
+	wcfg.MdocIssuerLeafPolicy, err = roleEKU("mdoc_issuer_require_eku", cfg.MdocIssuerRequireEKU)
+	return err
 }
 
 // optionalCertPool is the PEM certificates of the config key name as a

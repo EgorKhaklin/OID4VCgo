@@ -200,6 +200,7 @@ library's an `IOException`.
  "issuer_roots": "<PEM>", "verifier_roots": "<PEM>", "registrar_roots": "<PEM>",
  "mdoc_reader_roots": "<PEM>", "mdoc_reader_require_eku": false, "require_trusted_mdoc_reader": false,
  "verifier_require_eku": "", "registrar_require_eku": "", "issuer_require_eku": "", "issuer_metadata_require_eku": "",
+ "mdoc_issuer_roots": "<PEM>", "mdoc_issuer_roots_by_doctype": {"org.iso.18013.5.1.mDL": "<PEM>"}, "mdoc_issuer_require_eku": "",
  "require_signed_dcapi_requests": false,
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci",
@@ -250,6 +251,28 @@ signed by its own key), since where it chains to can't be told. All
 four were added within ABI version 12: `issuer_require_eku` and
 `issuer_metadata_require_eku` later, as the check grew to cover every
 role.
+
+`mdoc_issuer_roots`, `mdoc_issuer_roots_by_doctype` and
+`mdoc_issuer_require_eku` give mdocs (`mso_mdoc`) their own issuer
+trust, for a wallet receiving both formats, whose SD-JWT VC issuers and
+document signers carry different extended key usages and may come from
+different trust lists. `mdoc_issuer_roots` (PEM), if set, are the IACAs
+a received mdoc must chain to in place of `issuer_roots`, so an
+`issuer_roots` anchor alone can't sign an mDL. `mdoc_issuer_roots_by_doctype`
+(an object of document type to PEM) are each document type's own: an
+mdoc of a type it names must chain to them, not to `mdoc_issuer_roots`
+or `issuer_roots`; a type named with an empty string is refused.
+`mdoc_issuer_require_eku`, a dotted object identifier, recognizes only
+document signer certificates with that extended key usage (the mDL's
+is 1.0.18013.5.1.2), in place of `issuer_require_eku`. Unset, an mdoc
+under `issuer_roots` gets `issuer_require_eku`, and one under the mdoc
+roots ISO/IEC 18013-5's default document signer check. With only
+`issuer_roots` and none of these, both formats share them, as before.
+`issuer_roots` is then optional for a wallet receiving only mdocs. In
+the role check above, the issuers' roots of both formats are one role,
+and aren't checked against each other; the mdoc ones are checked
+against the other roles with `mdoc_issuer_require_eku`. Added within
+ABI version 12.
 
 `NewWallet`, and `NewProximityReader`, refuse a configuration with a key
 they don't know, one that matches a key only in case, or anything after
@@ -360,10 +383,10 @@ Provider, are the app's to pin.
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder keys, and its refresh grant with the grant's instance key once no other credential uses it. The refresh token is first revoked at the Authorization Server (RFC 7009), best effort, when it has a revocation endpoint: a network request, so call it off the main thread |
 | `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new attested key, under the same ID, without the holder. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which settles as a new credential. One that can't be refreshed (no refresh token was kept, the Authorization Server no longer accepts it, or its grant issued several datasets of its configuration and the wallet can't ask for the one it holds again) is `reissue_required`: receive it again from a new offer |
-| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list and checks the list's signature against `issuer_roots`. The list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status list is returned as it is, as is an expired one: it isn't valid whatever its status, so its status list isn't fetched (draft-ietf-oauth-status-list §8.3) |
+| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list and checks the list's signature against `issuer_roots` (an mdoc's, against the mdoc roots it was received under). The list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status list is returned as it is, as is an expired one: it isn't valid whatever its status, so its status list isn't fetched (draft-ietf-oauth-status-list §8.3) |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
-| `StartPresentation(op, requestLink)` | a `Presentation` |
+| `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
 | `TakeRefusalRedirect()` | once, the `redirect_uri` the Verifier answered the latest `request_refused` with, `""` for none: open it (OpenID4VP §8.2). Added within ABI 12 |
 
 A credential **summary** is `{"id", "credential_issuer",
