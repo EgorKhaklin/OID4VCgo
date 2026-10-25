@@ -253,7 +253,12 @@ changes whether *every* bullet below is `(done)`.
   stale list fails closed with `ErrNoCurrentCRL`, a listed serial with
   `ErrRevoked`), and `NoCheck`, the explicit opt-out. Its design mirrors
   FAPIgo's `server.ClientCertificateCRLs` for client certificates. No
-  OCSP client: OCSP, or any other source, implements `Checker`.
+  OCSP client: OCSP, or any other source, implements `Checker`. The
+  verifier's issuer key resolvers require one; every other trust role
+  (wallet issuer, Verifier and metadata trust, registrars, mdoc readers
+  and document signers, status list signers, key attestations and
+  proofs) takes an optional one, nil checking nothing, and `walletflow`
+  configures each role separately.
 - **`internal/readerauth`** (done) — ISO/IEC 18013-5 §9.1.4 mdoc
   reader authentication, shared by `mdocdcapi` and `proximity` so what
   a reader signs is what a holder checks: a COSE_Sign1 with a detached
@@ -1245,11 +1250,12 @@ changes whether *every* bullet below is `(done)`.
   explicitly) and accept an issuer or document signer certificate only
   through a verified path that passes it; `VerifyResponse`,
   `NewTransactions` and `mdocdcapi.VerifyResponse` refuse a resolver
-  without one before any credential reaches it. Other certificate roles
-  (status list signer, attestation signer, reader, relying party) aren't
-  checked yet: they're trusted from their chain to the configured roots
-  and their validity period alone, and a credential is revoked only
-  through its own status list.
+  without one before any credential reaches it. The other certificate
+  roles check revocation when given an optional `certrevocation.Checker`
+  (a status list signer through `statuslist.VerifyOptions.Revocation`,
+  which `RequireValidStatus` passes on), and are otherwise trusted from
+  their chain to the configured roots and their validity period alone; a
+  credential itself is revoked only through its own status list.
   `Transactions` runs a whole presentation session over a
   `TransactionStore`: `Begin` creates the signed Request Object and the
   link or QR payload for it, `HandleResponse` routes an encrypted

@@ -126,9 +126,11 @@ notifications.
    `Encrypt(BuildDeviceResponse(req, ...), false)`, disclosing only
    elements the request lists (any other is refused). If they decline, or
    nothing matches, the mdoc sends `Termination()` instead. The reader
-   passes either one to `Verify`. `Verify` doesn't check revocation:
-   check `Verified.Status`, the MSO's status list reference, before
-   relying on the document. A reader can pass `NewReaderSession`
+   passes either one to `Verify`. `Verify` doesn't check the document's
+   revocation: check `Verified.Status`, the MSO's status list reference,
+   before relying on the document. Its signer's certificates are checked
+   for revocation with `WithIssuerRevocation(certrevocation.CRLs{...})`.
+   A reader can pass `NewReaderSession`
    `WithMaxClockSkew` — so an mdoc issued by a clock a little ahead of
    the reader's isn't refused as not yet valid — and
    `WithDocumentSignerPolicy(RequireMDLDocumentSignerEKU)`, to accept

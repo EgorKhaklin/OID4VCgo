@@ -68,10 +68,11 @@
 // path on which no certificate is revoked — certrevocation.CRLs with
 // the issuer CAs' current CRLs, or certrevocation.NoCheck{} to decline
 // explicitly. VerifyResponse and NewTransactions refuse either resolver
-// without one. Other certificates aren't checked yet: a status list
-// signer's, or a Wallet or Key Attestation signer's, is trusted from
-// its chain to the configured roots and its validity period alone. A
-// credential's own revocation is its status list's.
+// without one. A status list signer's certificate is checked when the
+// statuslist.Checker RequireValidStatus is given sets
+// Options.Revocation, and is otherwise trusted from its chain to the
+// configured roots and its validity period alone. A credential's own
+// revocation is its status list's.
 //
 // The issuer key resolvers establish who a credential's issuer is, not
 // which types it may issue: where trusted issuers aren't all authorized

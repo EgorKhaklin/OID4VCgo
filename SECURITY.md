@@ -42,10 +42,42 @@ closed. `certrevocation.NoCheck{}` declines the check explicitly, for
 short-lived certificates or a trust framework that removes compromised
 issuers from the anchor set itself.
 
-Other certificate roles don't check revocation yet: a status list
-signer's, a Wallet or Key Attestation signer's, an mdoc reader's, and a
-relying party's access certificate are trusted from their chain and
-validity period alone.
+Every other X.509 trust decision can check revocation too, through an
+optional `certrevocation.Checker` beside the roots it applies to. Unlike
+the verifier's issuer trust, these are opt-in: a nil Checker checks
+nothing, and the certificate is trusted from its chain and validity
+period alone. Each role is configured on its own, since `CRLs` fails
+closed for a CA it has no current list from and an ecosystem may publish
+CRLs for some roles and not others:
+
+- a wallet's issuer trust on receipt
+  (`wallet.VerifyIssuedCredentialParams.IssuerRevocation`,
+  `walletflow.Config.IssuerRevocation`);
+- a Verifier's request-signing certificate
+  (`wallet.X5CVerifierRoots.Revocation`);
+- signed issuer metadata (`wallet.Config.IssuerMetadataRevocation`,
+  `walletflow.Config.IssuerMetadataRevocation`);
+- a registrar's certificate (`registration.Registrars.Revocation`,
+  `walletflow.Config.RegistrarRevocation`);
+- an mdoc reader's certificate (`proximity.ReaderTrust.Revocation`,
+  `mdocdcapi.ReaderTrust.Revocation`,
+  `walletflow.Config.MdocReaderRevocation`);
+- a proximity reader's document signer
+  (`proximity.WithIssuerRevocation`);
+- a status list signer (`statuslist.VerifyOptions.Revocation`,
+  `walletflow.Config.StatusRevocation`; `verifier.RequireValidStatus`
+  passes it on from the `statuslist.Checker` it's given);
+- a key attestation's or jwt proof's certificate, at the issuer
+  (`issuer.X5CAttestationVerifier.Revocation`,
+  `issuer.X5CProofBindingKeyResolver.Revocation`).
+
+The mobile library exposes them as the wallet's and reader's `crls` and
+`revocation` configuration, with `SetCRLs` to replace the lists before
+they expire (`mobile/ABI.md`). `dcql.AKITrustedAuthoritiesChecker`
+checks none of its own: the verifier hands it the path its issuer key
+resolver already checked. A Wallet Attestation's signer is verified by
+FAPIgo's server (`server.X5CAttesterChain`), which doesn't check
+revocation.
 
 ## What to include
 
