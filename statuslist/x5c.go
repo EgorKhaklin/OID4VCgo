@@ -1,6 +1,7 @@
 package statuslist
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -72,11 +73,11 @@ func signerChain(signer crypto.Signer, chain []*x509.Certificate) ([][]byte, err
 // chain must verify to one of roots, and its leaf must not be
 // self-signed; the leaf's key then validates the token.
 func CheckX5C(token string, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
-	return failClosed(checkX5C(token, roots, ref, opts))
+	return failClosed(checkX5C(context.Background(), token, roots, ref, opts))
 }
 
-// checkX5C is CheckX5C, before failClosed.
-func checkX5C(token string, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
+// checkX5C is CheckX5C, before failClosed, with ctx for opts.Revocation.
+func checkX5C(ctx context.Context, token string, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
 	header, _, err := jose.DecodeUnverifiedMax(token, maxTokenBytes)
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: decode token: %w", err)
@@ -85,7 +86,7 @@ func checkX5C(token string, roots *x509.CertPool, ref StatusListRef, opts Verify
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
-	leaf, err := certchain.VerifyLeafWithPolicyAt(chain, roots, opts.LeafPolicy, opts.certificateTime())
+	leaf, err := verifySigner(ctx, chain, roots, opts)
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
@@ -109,11 +110,12 @@ func checkX5C(token string, roots *x509.CertPool, ref StatusListRef, opts Verify
 // (IssueTokenCWTX5Chain) — protected or, as RFC 9360 allows,
 // unprotected; tagged or untagged.
 func CheckCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
-	return failClosed(checkCWTX5Chain(token, roots, ref, opts))
+	return failClosed(checkCWTX5Chain(context.Background(), token, roots, ref, opts))
 }
 
-// checkCWTX5Chain is CheckCWTX5Chain, before failClosed.
-func checkCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
+// checkCWTX5Chain is CheckCWTX5Chain, before failClosed, with ctx for
+// opts.Revocation.
+func checkCWTX5Chain(ctx context.Context, token []byte, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
 	protected, unprotected, _, err := cose.DecodeUnverifiedMax(token, maxTokenBytes)
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: decode token: %w", err)
@@ -122,7 +124,7 @@ func checkCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts
 	if len(chain) == 0 {
 		chain = unprotected.X5Chain
 	}
-	leaf, err := certchain.VerifyLeafWithPolicyAt(chain, roots, opts.LeafPolicy, opts.certificateTime())
+	leaf, err := verifySigner(ctx, chain, roots, opts)
 	if err != nil {
 		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
@@ -140,6 +142,14 @@ func checkCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts
 		return 0, TokenClaims{}, err
 	}
 	return CheckCWT(token, leaf.PublicKey, alg, ref, opts)
+}
+
+// verifySigner verifies a token signer's certificate chain to roots,
+// on a path opts.LeafPolicy approves and opts.Revocation passes, and
+// returns its leaf.
+func verifySigner(ctx context.Context, chain [][]byte, roots *x509.CertPool, opts VerifyOptions) (*x509.Certificate, error) {
+	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, roots, opts.LeafPolicy, opts.Revocation, opts.certificateTime())
+	return leaf, err
 }
 
 // certificateTime is when a token signer's certificates must be valid:

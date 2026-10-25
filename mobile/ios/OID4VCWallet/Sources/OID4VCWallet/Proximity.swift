@@ -541,24 +541,45 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// `issuerRoots` may be empty, and then only the types named here are
     /// accepted.
     public var issuerRootsByDocType: [String: String]
+    /// PEM `X509 CRL` blocks: the Certificate Revocation Lists the roles in
+    /// `revocation` are checked against. Replace them at runtime with
+    /// `ProximityReader.setCRLs(_:)` as they expire.
+    public var crls: String
+    /// The roles whose certificate chains must pass a CRL check against
+    /// `crls`. A role listed fails closed for any CA it has no current CRL
+    /// from, until `ProximityReader.setCRLs(_:)` supplies one.
+    public var revocation: [RevocationRole]
+
+    /// A reader's trust role whose certificates can be checked for
+    /// revocation.
+    public enum RevocationRole: String, Codable, Sendable, CaseIterable {
+        /// The document signer's certificate chain, when a document is
+        /// verified.
+        case issuer
+        /// A status list signer's, in `checkStatus`.
+        case status
+    }
 
     /// A configuration accepting mdocs under `issuerRoots`; with `readerKeyID`
     /// and `readerChain`, requests are signed.
     public init(issuerRoots: String, readerKeyID: String? = nil, readerChain: String? = nil,
                 maxClockSkewSeconds: Int? = nil, requireMDLSignerEKU: Bool = false,
-                issuerRootsByDocType: [String: String] = [:]) {
+                issuerRootsByDocType: [String: String] = [:], crls: String = "", revocation: [RevocationRole] = []) {
         self.issuerRoots = issuerRoots
         self.readerKeyID = readerKeyID
         self.readerChain = readerChain
         self.maxClockSkewSeconds = maxClockSkewSeconds
         self.requireMDLSignerEKU = requireMDLSignerEKU
         self.issuerRootsByDocType = issuerRootsByDocType
+        self.crls = crls
+        self.revocation = revocation
     }
 
     enum CodingKeys: String, CodingKey {
         case issuerRoots = "issuer_roots", readerKeyID = "reader_key_id", readerChain = "reader_chain"
         case maxClockSkewSeconds = "max_clock_skew_seconds", requireMDLSignerEKU = "require_mdl_signer_eku"
         case issuerRootsByDocType = "issuer_roots_by_doctype"
+        case crls, revocation
     }
 
     public init(from decoder: any Decoder) throws {
@@ -569,6 +590,8 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         readerChain = try c.decodeIfPresent(String.self, forKey: .readerChain)
         maxClockSkewSeconds = try c.decodeIfPresent(Int.self, forKey: .maxClockSkewSeconds)
         requireMDLSignerEKU = try c.decodeIfPresent(Bool.self, forKey: .requireMDLSignerEKU) ?? false
+        crls = try c.decodeIfPresent(String.self, forKey: .crls) ?? ""
+        revocation = try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? []
     }
 }
 
@@ -605,6 +628,17 @@ public final class ProximityReader: @unchecked Sendable {
                 GattClientTransport(serviceUUID: e.uuid, characteristics: .peripheralServer)
             }
         }
+    }
+
+    /// Replaces the Certificate Revocation Lists the configuration's
+    /// `revocation` roles are checked against with `pem`'s `X509 CRL`
+    /// blocks, for sessions already started too. CRLs expire at their
+    /// nextUpdate: fetch fresh ones and call this before then. Text holding
+    /// anything else throws `invalidInput` and keeps the lists as they
+    /// were; empty text removes them all.
+    public func setCRLs(_ pem: String) throws {
+        let reader = handle
+        try OID4VC.wrap { try reader.setCRLs(pem) }
     }
 
     func start(qrCode: String, docType: String, elements: [String: [String]], timeouts: ProximityTimeouts,

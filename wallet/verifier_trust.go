@@ -2,9 +2,12 @@ package wallet
 
 import (
 	"bytes"
+	"context"
 	"crypto/x509"
 	"fmt"
+	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 )
 
@@ -51,6 +54,15 @@ type X5CVerifierRoots struct {
 	// Verifier's certificate (an extended key usage, a certificate
 	// policy) where Roots also anchor other roles.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+
+	// Revocation, if set, checks the Verifier's certificate chain for
+	// revocation: only a verified path that passes LeafPolicy and
+	// Revocation is accepted, and a revoked certificate is refused with
+	// an error wrapping certrevocation.ErrRevoked. VerifierTrust's
+	// method takes no context, so a certrevocation.CRLs's Lists gets
+	// context.Background(): keep the lists in memory, as CRLs asks. nil
+	// checks no revocation; see certrevocation.
+	Revocation certrevocation.Checker
 }
 
 // VerifyVerifierChain implements VerifierTrust.
@@ -61,7 +73,7 @@ func (v X5CVerifierRoots) VerifyVerifierChain(chain [][]byte) (*x509.Certificate
 	if err := certchain.CheckNoAnchor(chain); err != nil {
 		return nil, fmt.Errorf("wallet: verifier certificate chain: %w", err)
 	}
-	leaf, err := certchain.VerifyLeafWithPolicy(chain, v.Roots, func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+	leaf, _, err := certchain.VerifyTrustedChainsAt(context.Background(), chain, v.Roots, func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
 		if err := verifierLeafProfile(leaf); err != nil {
 			return err
 		}
@@ -72,11 +84,31 @@ func (v X5CVerifierRoots) VerifyVerifierChain(chain [][]byte) (*x509.Certificate
 			return v.LeafPolicy(leaf, chains)
 		}
 		return nil
-	})
+	}, v.Revocation, time.Time{})
 	if err != nil {
 		return nil, fmt.Errorf("wallet: verifier certificate: %w", err)
 	}
 	return leaf, nil
+}
+
+// validateVerifierTrust refuses an X5CVerifierRoots, by value or by
+// pointer, whose Revocation reports itself incomplete
+// (certrevocation.CRLs.Validate), so New refuses it rather than every
+// request afterwards.
+func validateVerifierTrust(t VerifierTrust) error {
+	var revocation certrevocation.Checker
+	switch v := t.(type) {
+	case X5CVerifierRoots:
+		revocation = v.Revocation
+	case *X5CVerifierRoots:
+		if v != nil {
+			revocation = v.Revocation
+		}
+	}
+	if err := certchain.ValidateRevocation(revocation); err != nil {
+		return fmt.Errorf("wallet: config: verifier_trust: Revocation: %w", err)
+	}
+	return nil
 }
 
 // verifierLeafProfile refuses a leaf that can't be a Verifier's

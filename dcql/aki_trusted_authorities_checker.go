@@ -176,6 +176,17 @@ func (c AKITrustedAuthoritiesChecker) checkVerifiedChainAKI(ctx context.Context,
 	}
 	// At the verification time the verifier set, as its own certificate
 	// checks are.
+	//
+	// It checks no revocation of its own. verifier.VerifyResponse passes
+	// it the path its issuer key resolver verified, without the anchor,
+	// and that resolver's Revocation has already passed every
+	// certificate on it. A path built here runs only through those
+	// certificates and an anchor (which revocation never checks), and a
+	// certificate's revocation is its issuer's to state whichever path
+	// it's on, so no path here crosses a certificate revocation refused.
+	// A custom resolver that isn't an SDJWTVCIssuerChainResolver hands
+	// on the presented chain instead: its revocation is that resolver's
+	// to check.
 	_, chains, err := certchain.VerifyChainsAt(issuerChain, roots, certchain.TimeFrom(ctx))
 	if err != nil {
 		return fmt.Errorf("dcql: issuer certificate chain: %w", err)

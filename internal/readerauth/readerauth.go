@@ -6,6 +6,7 @@
 package readerauth
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
@@ -42,6 +44,9 @@ type Trust struct {
 	// LeafPolicy, if set, is run on the chain-verified reader
 	// certificate and its verified paths, and can refuse it.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// Revocation, if set, checks the reader's certificate chain for
+	// revocation; nil checks none.
+	Revocation certrevocation.Checker
 	// Now is when the certificates must be valid; zero: the current
 	// time.
 	Now time.Time
@@ -124,16 +129,13 @@ func VerifySignature(sig, detached []byte, leaf *x509.Certificate) error {
 }
 
 // VerifyTrust checks ders, a chain leaf first, chains to t.Roots at
-// t.Now and its leaf passes t.LeafPolicy, and returns the leaf.
+// t.Now on a path t.LeafPolicy approves and t.Revocation passes, and
+// returns the leaf. The platform calls that reach it take no context,
+// so t.Revocation is asked with context.Background().
 func VerifyTrust(ders [][]byte, t Trust) (*x509.Certificate, error) {
-	leaf, chains, err := certchain.VerifyChainsAt(ders, t.Roots, t.Now)
+	leaf, _, err := certchain.VerifyTrustedChainsAt(context.Background(), ders, t.Roots, t.LeafPolicy, t.Revocation, t.Now)
 	if err != nil {
 		return nil, err
-	}
-	if t.LeafPolicy != nil {
-		if err := t.LeafPolicy(leaf, chains); err != nil {
-			return nil, err
-		}
 	}
 	return leaf, nil
 }

@@ -552,7 +552,29 @@ public data class ProximityReaderConfiguration(
      * accepted.
      */
     @SerialName("issuer_roots_by_doctype") val issuerRootsByDocType: Map<String, String> = emptyMap(),
-)
+    /**
+     * PEM `X509 CRL` blocks: the Certificate Revocation Lists the roles in
+     * [revocation] are checked against. Replace them at runtime with
+     * [ProximityReader.setCRLs] as they expire.
+     */
+    @SerialName("crls") val crls: String = "",
+    /**
+     * The roles whose certificate chains must pass a CRL check against
+     * [crls]. A role listed fails closed for any CA it has no current CRL
+     * from, until [ProximityReader.setCRLs] supplies one.
+     */
+    @SerialName("revocation") val revocation: List<RevocationRole> = emptyList(),
+) {
+    /** A reader's trust role whose certificates can be checked for revocation. */
+    @Serializable
+    public enum class RevocationRole {
+        /** The document signer's certificate chain, when a document is verified. */
+        @SerialName("issuer") ISSUER,
+
+        /** A status list signer's, in `checkStatus`. */
+        @SerialName("status") STATUS,
+    }
+}
 
 /**
  * An ISO/IEC 18013-5 mdoc reader: a verifier asking for an mdoc in
@@ -590,6 +612,19 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
                 GattClientTransport(context.applicationContext, uuid, GattCharacteristics.peripheralServer)
             }
         }
+    }
+
+    /**
+     * Replaces the Certificate Revocation Lists the configuration's
+     * [ProximityReaderConfiguration.revocation] roles are checked against
+     * with [pem]'s `X509 CRL` blocks, for sessions already started too.
+     * CRLs expire at their nextUpdate: fetch fresh ones and call this
+     * before then. Text holding anything else throws [WalletException]
+     * (`invalidInput`) and keeps the lists as they were; empty text
+     * removes them all.
+     */
+    public fun setCRLs(pem: String) {
+        OID4VC.wrap { handle.setCRLs(pem) }
     }
 
     internal fun startWith(qrCode: String, docType: String, elements: Map<String, List<String>>, timeouts: ProximityTimeouts, transport: ProximityTransport): ProximityReaderSession =

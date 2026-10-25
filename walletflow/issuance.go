@@ -1284,7 +1284,7 @@ func (w *Wallet) verifyCopy(ctx context.Context, issuer string, conf oid4vci.Cre
 	for _, k := range keys {
 		verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
 			Configuration: conf, Credential: credential, HolderKey: k.Public(),
-			IssuerRoots: roots, IssuerLeafPolicy: policy, Now: now, RequireIssuerName: w.cfg.RequireIssuerName,
+			IssuerRoots: roots, IssuerLeafPolicy: policy, IssuerRevocation: w.cfg.IssuerRevocation, Now: now, RequireIssuerName: w.cfg.RequireIssuerName,
 			CredentialIssuer: issuer,
 		})
 		if err == nil {

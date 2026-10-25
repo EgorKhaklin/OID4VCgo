@@ -337,7 +337,9 @@ func (p *ProximityPresentation) verifierID() (string, error) {
 // or untrusted request for one document to a trusted one for another
 // and have the wallet show the trusted name for both.
 func (p *ProximityPresentation) readerOf(reqs []proximity.DocRequest) proximity.ReaderAuthentication {
-	trust := proximity.ReaderTrust{Roots: p.w.cfg.MdocReaderRoots, LeafPolicy: p.w.cfg.MdocReaderLeafPolicy, Now: p.w.deps.Clock()}
+	trust := proximity.ReaderTrust{
+		Roots: p.w.cfg.MdocReaderRoots, LeafPolicy: p.w.cfg.MdocReaderLeafPolicy, Revocation: p.w.cfg.MdocReaderRevocation, Now: p.w.deps.Clock(),
+	}
 	weakness := map[proximity.ReaderStatus]int{
 		proximity.ReaderTrusted: 0, proximity.ReaderUntrusted: 1, proximity.ReaderUnauthenticated: 2, proximity.ReaderInvalid: 3,
 	}

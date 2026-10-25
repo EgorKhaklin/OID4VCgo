@@ -31,6 +31,7 @@
 package registration
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/base64"
@@ -41,6 +42,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -208,7 +210,8 @@ func Recognize(format, data string) bool {
 // roots must anchor only registrars: any end-entity certificate under
 // them can register any Verifier, so a root that also issues Verifiers'
 // or Issuers' certificates would let them register themselves.
-// VerifyWithPolicy narrows which certificates may sign.
+// VerifyWithPolicy narrows which certificates may sign, and Registrars
+// also checks their revocation.
 func Verify(token string, roots *x509.CertPool, clientID string, now time.Time) (Registration, error) {
 	return VerifyWithPolicy(token, roots, clientID, now, nil)
 }
@@ -217,8 +220,36 @@ func Verify(token string, roots *x509.CertPool, clientID string, now time.Time) 
 // the verified signing certificate may act as a registrar — an extended
 // key usage or certificate policy the ecosystem defines, say.
 func VerifyWithPolicy(token string, roots *x509.CertPool, clientID string, now time.Time, policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) (Registration, error) {
-	if roots == nil {
+	return Registrars{Roots: roots, LeafPolicy: policy}.Verify(context.Background(), token, clientID, now)
+}
+
+// Registrars are the registrars a Wallet recognizes: Verify's roots and
+// VerifyWithPolicy's policy, and the revocation check of their
+// certificates.
+type Registrars struct {
+	// Roots are the trust anchors a registrar's certificate must chain
+	// to. They must anchor only registrars (see Verify). REQUIRED.
+	Roots *x509.CertPool
+	// LeafPolicy, if set, decides whether the verified signing
+	// certificate may act as a registrar, as VerifyWithPolicy's policy.
+	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// Revocation, if set, checks the registrar's certificate chain for
+	// revocation: only a verified path LeafPolicy approves and
+	// Revocation passes is accepted, and a registration signed by a
+	// revoked certificate is refused with an error wrapping
+	// certrevocation.ErrRevoked. nil checks no revocation; see
+	// certrevocation.
+	Revocation certrevocation.Checker
+}
+
+// Verify is the package's Verify against r: token, a registration JWT,
+// for clientID, at now.
+func (r Registrars) Verify(ctx context.Context, token, clientID string, now time.Time) (Registration, error) {
+	if r.Roots == nil {
 		return Registration{}, errors.New("registration: no registrar roots")
+	}
+	if err := certchain.ValidateRevocation(r.Revocation); err != nil {
+		return Registration{}, fmt.Errorf("registration: Revocation: %w", err)
 	}
 	if clientID == "" {
 		// A registration is of a Client Identifier: a request without one
@@ -239,7 +270,7 @@ func VerifyWithPolicy(token string, roots *x509.CertPool, clientID string, now t
 	if err != nil {
 		return Registration{}, fmt.Errorf("registration: %w", err)
 	}
-	leaf, err := certchain.VerifyLeafWithPolicyAt(ders, roots, policy, now)
+	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, r.LeafPolicy, r.Revocation, now)
 	if err != nil {
 		return Registration{}, fmt.Errorf("registration: registrar certificate: %w", err)
 	}

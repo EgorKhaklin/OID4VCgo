@@ -33,6 +33,10 @@ type fixture struct {
 	issuerSigned mdoc.IssuerSigned
 	deviceKey    *ecdsa.PrivateKey
 	roots        *x509.CertPool
+	// ca and caKey are the IACA, and signer its document signer.
+	ca     *x509.Certificate
+	caKey  *ecdsa.PrivateKey
+	signer *x509.Certificate
 }
 
 func issueFixture(t testing.TB, docType string) fixture {
@@ -65,7 +69,7 @@ func issueFixture(t testing.TB, docType string) fixture {
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
-	return fixture{docType: docType, issuerSigned: issuerSigned, deviceKey: deviceKey, roots: roots}
+	return fixture{docType: docType, issuerSigned: issuerSigned, deviceKey: deviceKey, roots: roots, ca: ca, caKey: caKey, signer: ds}
 }
 
 // flow is one engaged and established session, request decoded by the

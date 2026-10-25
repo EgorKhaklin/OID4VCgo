@@ -394,6 +394,31 @@ final class SessionTests: XCTestCase {
         _ = try await Self.receive(env, w)
     }
 
+    /// With `revocation: [.issuer]`, nothing is received until `setCRLs`
+    /// supplies a current CRL from the issuer's CA, and a CRL that isn't
+    /// one is refused.
+    func testIssuerRevocation() async throws {
+        let env = try TestEnv()
+        defer { env.close() }
+        var configuration = try env.configuration
+        configuration.revocation = [.issuer]
+        let w = try Wallet(configuration: configuration, keys: KeyStoreAdapter(keyStore()),
+                           credentials: CredentialStoreAdapter(InMemoryCredentialStore()), provider: env.env.provider())
+        do {
+            _ = try await Self.receive(env, w)
+            XCTFail("received a credential with no CRL for its issuer's CA")
+        } catch is WalletError {}
+        do {
+            try await w.setCRLs("not a CRL")
+            XCTFail("setCRLs took text that isn't a CRL")
+        } catch let e as WalletError {
+            XCTAssertEqual(e.code, .invalidInput)
+        }
+        try await w.setCRLs(try OID4VC.call { env.env.issuerCRL(false, error: $0) })
+        let result = try await Self.receive(env, w)
+        XCTAssertEqual(result.credentials.count, 2)
+    }
+
     func testAbandonDeferred() async throws {
         let env = try TestEnv(deferIssuance: true)
         defer { env.close() }

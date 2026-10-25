@@ -89,6 +89,18 @@ func (e *TestEnv) ConfigJSON() string {
 	return text
 }
 
+// IssuerCRL returns, as PEM, a Certificate Revocation List from the
+// issuer's CA, current for an hour, listing the credentials' signing
+// certificate when revokeSigner is set: "crls" or SetCRLs for a wallet
+// whose "revocation" names "issuer".
+func (e *TestEnv) IssuerCRL(revokeSigner bool) (string, error) {
+	list, err := e.env.IssuerCRL(revokeSigner)
+	if err != nil {
+		return "", wrapTest(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: list.Raw})), nil
+}
+
 // Provider is the TestEnv's Wallet Provider.
 func (e *TestEnv) Provider() WalletProvider { return testProvider{e.env.Provider} }
 

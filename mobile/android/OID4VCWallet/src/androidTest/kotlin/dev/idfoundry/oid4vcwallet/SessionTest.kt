@@ -308,6 +308,25 @@ class SessionTest {
         receive(env, wallet(env, configuration = env.configuration.copy(tlsPins = mapOf("issuer.example" to listOf(pin)))))
     }
 
+    /**
+     * With revocation [ISSUER], nothing is received until setCRLs supplies
+     * a current CRL from the issuer's CA, and text that isn't a CRL is
+     * refused.
+     */
+    @Test
+    fun issuerRevocation(): Unit = runBlocking {
+        val env = env()
+        val w = wallet(env, configuration = env.configuration.copy(revocation = listOf(WalletConfiguration.RevocationRole.ISSUER)))
+        try {
+            receive(env, w)
+            fail("received a credential with no CRL for its issuer's CA")
+        } catch (_: WalletException) {
+        }
+        expectCode(WalletException.Code.invalidInput) { w.setCRLs("not a CRL") }
+        w.setCRLs(env.env.issuerCRL(false))
+        assertEquals(2, receive(env, w).credentials.size)
+    }
+
     @Test
     fun abandonDeferred(): Unit = runBlocking {
         val env = env(deferIssuance = true)

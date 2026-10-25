@@ -181,8 +181,10 @@ type Env struct {
 	TLSCertificate *x509.Certificate
 	// IssuerRoots holds IssuerCA, the trust anchor of the credentials'
 	// signer.
-	IssuerRoots *x509.CertPool
-	IssuerCA    *x509.Certificate
+	IssuerRoots  *x509.CertPool
+	IssuerCA     *x509.Certificate
+	issuerCAKey  *ecdsa.PrivateKey
+	issuerSigner *x509.Certificate
 	// RegistrarRoots holds the trust anchor of the registrar that
 	// registers Verifiers started with StartRegisteredVerifier.
 	RegistrarRoots *x509.CertPool
@@ -296,6 +298,7 @@ func New(opts Options) (env *Env, err error) {
 	caCert, caKey := newCA("walletflowtest issuer CA")
 	signerCert, signerKey := newLeaf("walletflowtest document signer", caCert, caKey)
 	e.IssuerCA, e.IssuerRoots = caCert, x509.NewCertPool()
+	e.issuerCAKey, e.issuerSigner = caKey, signerCert
 	e.IssuerRoots.AddCert(caCert)
 	registrarCA, registrarCAKey := newCA("walletflowtest registrar CA")
 	e.registrarKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -1133,8 +1136,26 @@ func newCA(commonName string) (*x509.Certificate, *ecdsa.PrivateKey) {
 	return newCertificate(&x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: commonName, Country: []string{"US"}},
 		NotBefore: now.Add(-25 * time.Hour), NotAfter: now.Add(72 * time.Hour),
-		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true,
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign, IsCA: true, BasicConstraintsValid: true,
 	}, nil, &key.PublicKey, key), key
+}
+
+// IssuerCRL is a Certificate Revocation List from IssuerCA, current from
+// an hour ago to an hour from now, listing the credentials' signing
+// certificate when revokeSigner is set: for a wallet's issuer
+// revocation check (walletflow.Config.IssuerRevocation) to accept or
+// refuse what the issuer sends.
+func (e *Env) IssuerCRL(revokeSigner bool) (*x509.RevocationList, error) {
+	now := time.Now()
+	tmpl := &x509.RevocationList{Number: big.NewInt(now.UnixNano()), ThisUpdate: now.Add(-time.Hour), NextUpdate: now.Add(time.Hour)}
+	if revokeSigner {
+		tmpl.RevokedCertificateEntries = []x509.RevocationListEntry{{SerialNumber: e.issuerSigner.SerialNumber, RevocationTime: now.Add(-time.Minute)}}
+	}
+	der, err := x509.CreateRevocationList(rand.Reader, tmpl, e.IssuerCA, e.issuerCAKey)
+	if err != nil {
+		return nil, fmt.Errorf("walletflowtest: issuer CRL: %w", err)
+	}
+	return x509.ParseRevocationList(der)
 }
 
 // newLeaf returns a P-256 certificate and key issued by ca, valid from

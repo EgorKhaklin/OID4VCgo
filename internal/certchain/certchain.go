@@ -172,6 +172,16 @@ func NotRevokedChains(ctx context.Context, chains [][]*x509.Certificate, revocat
 	return good, nil
 }
 
+// ValidateRevocation reports a revocation Checker that says it can't
+// check anything (certrevocation.CRLs.Validate), for a configuration
+// whose revocation check is optional: a nil Checker, no check, passes.
+func ValidateRevocation(revocation certrevocation.Checker) error {
+	if v, ok := revocation.(interface{ Validate() error }); ok {
+		return v.Validate()
+	}
+	return nil
+}
+
 // VerifyChains is VerifyLeaf, also returning every verified path from
 // the leaf to a certificate in roots (leaf first, root last), as
 // crypto/x509's own Verify builds them. What a verified path says

@@ -7,6 +7,8 @@ import (
 	"fmt"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 )
 
 // X5CProofBindingKeyResolver implements ProofBindingKeyResolver by
@@ -38,6 +40,13 @@ type X5CProofBindingKeyResolver struct {
 	// distinguishes them (an extended key usage, a certificate policy)
 	// where the anchors are shared.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// Revocation, if set, checks the proof's certificate chain for
+	// revocation: only a verified path LeafPolicy approves and
+	// Revocation passes is accepted, and a proof under a revoked
+	// certificate is refused with an error wrapping
+	// certrevocation.ErrRevoked. nil checks no revocation; see
+	// certrevocation.
+	Revocation certrevocation.Checker
 }
 
 // ResolveProofBindingKey implements ProofBindingKeyResolver.
@@ -50,7 +59,7 @@ func (r X5CProofBindingKeyResolver) ResolveProofBindingKey(ctx context.Context, 
 	if !ok {
 		return nil, "", fmt.Errorf("issuer: proof x5c header is not an array")
 	}
-	leaf, err := resolveX5CLeaf(ctx, entries, r.Roots, r.LeafPolicy)
+	leaf, _, err := resolveX5CLeaf(ctx, entries, r.Roots, r.LeafPolicy, r.Revocation)
 	if err != nil {
 		return nil, "", err
 	}
@@ -59,6 +68,25 @@ func (r X5CProofBindingKeyResolver) ResolveProofBindingKey(ctx context.Context, 
 		return nil, "", err
 	}
 	return leaf.PublicKey, alg, nil
+}
+
+// validateProofBindingKeys refuses an X5CProofBindingKeyResolver, by
+// value or by pointer, whose Revocation reports itself incomplete, so
+// New refuses it rather than every proof afterwards.
+func validateProofBindingKeys(r ProofBindingKeyResolver) error {
+	var revocation certrevocation.Checker
+	switch t := r.(type) {
+	case X5CProofBindingKeyResolver:
+		revocation = t.Revocation
+	case *X5CProofBindingKeyResolver:
+		if t != nil {
+			revocation = t.Revocation
+		}
+	}
+	if err := certchain.ValidateRevocation(revocation); err != nil {
+		return fmt.Errorf("proof_binding_keys: Revocation: %w", err)
+	}
+	return nil
 }
 
 // Capabilities implements KeySourceAssurance: validating an

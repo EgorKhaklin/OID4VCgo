@@ -19,7 +19,9 @@ import (
 	"github.com/idfoundry/fapigo/keys"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -70,6 +72,24 @@ type Config struct {
 	// IssuerLeafPolicy, and one under MdocIssuerRoots or
 	// MdocIssuerRootsByDocType mdoc.DefaultDocumentSignerPolicy.
 	MdocIssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// IssuerRevocation, if set, checks a received credential's issuer
+	// certificate chain for revocation, under IssuerRoots and the mdoc
+	// roots alike (wallet.VerifyIssuedCredentialParams.IssuerRevocation):
+	// a credential whose signer, or a CA above it, is revoked is refused
+	// on receipt, deferred or refreshed alike, with an error wrapping
+	// certrevocation.ErrRevoked. A certrevocation.CRLs fails closed for
+	// a CA it has no current list from, so set it only where the
+	// issuers' CAs publish CRLs; each role has its own field for that
+	// reason. nil checks no revocation; see certrevocation.
+	IssuerRevocation certrevocation.Checker
+
+	// StatusRevocation, if set, checks the certificate chain of a status
+	// list's signer for revocation in CheckStatus
+	// (statuslist.VerifyOptions.Revocation): a list signed under a
+	// revoked certificate is refused. An mdoc's list may chain to the
+	// Certificate its MSO names, whose CRL is then needed too. nil
+	// checks no revocation; see certrevocation.
+	StatusRevocation certrevocation.Checker
 
 	// StatusIssuers are the Status Issuers that may sign a credential
 	// issuer's status lists on its behalf (draft-ietf-oauth-status-list):
@@ -106,8 +126,8 @@ type Config struct {
 	AllowForeignIss bool
 
 	// IssuerMetadataRoots, IssuerMetadataLeafPolicy,
-	// RequireSignedIssuerMetadata, RequireIssuerMetadataName and
-	// MaxIssuerMetadataAge are the
+	// IssuerMetadataRevocation, RequireSignedIssuerMetadata,
+	// RequireIssuerMetadataName and MaxIssuerMetadataAge are the
 	// Credential Issuer Metadata trust settings of wallet.Config: with
 	// IssuerMetadataRoots set, signed metadata (OpenID4VCI §12.2.3, HAIP
 	// 1.0 §4.1) is asked for and verified, and RequireSignedIssuerMetadata
@@ -115,6 +135,7 @@ type Config struct {
 	// enters a transaction code. See wallet.Config for each.
 	IssuerMetadataRoots         *x509.CertPool
 	IssuerMetadataLeafPolicy    func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	IssuerMetadataRevocation    certrevocation.Checker
 	RequireSignedIssuerMetadata bool
 	RequireIssuerMetadataName   bool
 	MaxIssuerMetadataAge        time.Duration
@@ -126,7 +147,9 @@ type Config struct {
 
 	// VerifierTrust decides which Verifiers the wallet answers
 	// (OpenID4VP 1.0 §5.9.3). REQUIRED for StartPresentation, and for a
-	// signed request to StartDCAPIPresentation.
+	// signed request to StartDCAPIPresentation. A
+	// wallet.X5CVerifierRoots checks its Verifiers' certificates for
+	// revocation with its own Revocation.
 	VerifierTrust wallet.VerifierTrust
 
 	// RegistrarRoots, if set, are the registrars whose registrations of
@@ -143,6 +166,11 @@ type Config struct {
 	// RegistrarRoots may sign registrations: an extended key usage or
 	// certificate policy the ecosystem defines for registrars, say.
 	RegistrarLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// RegistrarRevocation, if set, checks a registrar's certificate
+	// chain for revocation (registration.Registrars.Revocation): a
+	// registration signed under a revoked certificate isn't verified.
+	// nil checks no revocation; see certrevocation.
+	RegistrarRevocation certrevocation.Checker
 
 	// MdocReaderRoots, if set, are the mdoc readers the wallet
 	// recognizes when one signs an org-iso-mdoc request
@@ -157,6 +185,12 @@ type Config struct {
 	// usage, so a certificate issued under the same roots for another
 	// role isn't taken for a reader.
 	MdocReaderLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// MdocReaderRevocation, if set, checks a reader's certificate chain
+	// for revocation, for org-iso-mdoc and in-person requests alike: a
+	// reader whose certificate is revoked isn't recognized, so it's
+	// shown as untrusted, or refused under RequireTrustedMdocReader. nil
+	// checks no revocation; see certrevocation.
+	MdocReaderRevocation certrevocation.Checker
 	// RequireTrustedMdocReader refuses an org-iso-mdoc or in-person
 	// request no reader under MdocReaderRoots signed, and nothing is
 	// shown to the holder: StartMdocPresentation returns an error
@@ -366,6 +400,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err := cfg.validateChoices(); err != nil {
 		return nil, err
 	}
+	if err := cfg.validateRevocation(); err != nil {
+		return nil, err
+	}
 	if !cfg.Development {
 		if err := checkRoleSeparation(cfg); err != nil {
 			return nil, err
@@ -382,6 +419,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		Assurance: cfg.assurance(), ProofSigningAlg: oid4vci.ES256, VerifierTrust: cfg.VerifierTrust,
 		RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
 		IssuerMetadataRoots:        cfg.IssuerMetadataRoots, IssuerMetadataLeafPolicy: cfg.IssuerMetadataLeafPolicy,
+		IssuerMetadataRevocation:    cfg.IssuerMetadataRevocation,
 		RequireSignedIssuerMetadata: cfg.RequireSignedIssuerMetadata,
 		RequireIssuerMetadataName:   cfg.RequireIssuerMetadataName, MaxIssuerMetadataAge: cfg.MaxIssuerMetadataAge,
 		Locales: cfg.Locales,
@@ -473,6 +511,28 @@ func (c Config) validateChoices() error {
 		return fmt.Errorf("walletflow: Config.CopyPolicy %d isn't a policy", c.CopyPolicy)
 	case c.BatchSize < 0:
 		return fmt.Errorf("walletflow: Config.BatchSize %d is negative", c.BatchSize)
+	}
+	return nil
+}
+
+// validateRevocation refuses a role's revocation Checker that reports
+// itself incomplete (certrevocation.CRLs.Validate), so New refuses it
+// rather than every credential or request afterwards. VerifierTrust's
+// is wallet.New's to check.
+func (c Config) validateRevocation() error {
+	for _, r := range []struct {
+		name    string
+		checker certrevocation.Checker
+	}{
+		{"IssuerRevocation", c.IssuerRevocation},
+		{"StatusRevocation", c.StatusRevocation},
+		{"IssuerMetadataRevocation", c.IssuerMetadataRevocation},
+		{"RegistrarRevocation", c.RegistrarRevocation},
+		{"MdocReaderRevocation", c.MdocReaderRevocation},
+	} {
+		if err := certchain.ValidateRevocation(r.checker); err != nil {
+			return fmt.Errorf("walletflow: Config.%s: %w", r.name, err)
+		}
 	}
 	return nil
 }

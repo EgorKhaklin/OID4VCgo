@@ -62,7 +62,7 @@ func (w *Wallet) StartMdocPresentation(ctx context.Context, data []byte, origin 
 	p := &MdocPresentation{w: w, in: in, byID: map[string]StoredCredential{}}
 	if w.cfg.MdocReaderRoots != nil {
 		reader, err := in.VerifyReaderTrust(mdocdcapi.ReaderTrust{
-			Roots: w.cfg.MdocReaderRoots, LeafPolicy: w.cfg.MdocReaderLeafPolicy, Now: w.deps.Clock(),
+			Roots: w.cfg.MdocReaderRoots, LeafPolicy: w.cfg.MdocReaderLeafPolicy, Revocation: w.cfg.MdocReaderRevocation, Now: w.deps.Clock(),
 		})
 		if err != nil && w.cfg.RequireTrustedMdocReader {
 			return nil, fmt.Errorf("walletflow: %w: %w", ErrUntrustedVerifier, err)

@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 )
 
@@ -17,24 +18,24 @@ import (
 //
 // The trust anchor must not be in x5c (HAIP 1.0 §4.5.1, for a key
 // attestation), and the chain is checked at the verification time ctx
-// carries (the Issuer's Clock), as the rest of the request is.
-func resolveX5CLeaf(ctx context.Context, x5c []any, roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error) (*x509.Certificate, error) {
-	ders, err := presentedX5CDERs(x5c)
-	if err != nil {
-		return nil, err
-	}
-	return certchain.VerifyLeafWithPolicyAt(ders, roots, policy, certchain.TimeFrom(ctx))
-}
-
-// resolveX5CChains is resolveX5CLeaf without a policy, also returning
-// the leaf's verified paths (leaf first, anchor last), for a caller
-// that checks which anchor a path ends at.
-func resolveX5CChains(ctx context.Context, x5c []any, roots *x509.CertPool) (*x509.Certificate, [][]*x509.Certificate, error) {
+// carries (the Issuer's Clock), as the rest of the request is. It
+// returns the leaf and its verified paths (leaf first, anchor last)
+// that policy approves each on its own and revocation passes, for a
+// caller that checks which anchor a path ends at; a nil revocation
+// checks none.
+func resolveX5CLeaf(ctx context.Context, x5c []any, roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error, revocation certrevocation.Checker) (*x509.Certificate, [][]*x509.Certificate, error) {
 	ders, err := presentedX5CDERs(x5c)
 	if err != nil {
 		return nil, nil, err
 	}
-	return certchain.VerifyChainsAt(ders, roots, certchain.TimeFrom(ctx))
+	if err := certchain.ValidateRevocation(revocation); err != nil {
+		return nil, nil, fmt.Errorf("issuer: Revocation: %w", err)
+	}
+	leaf, chains, err := certchain.VerifyTrustedChainsAt(ctx, ders, roots, policy, revocation, certchain.TimeFrom(ctx))
+	if err != nil {
+		return nil, nil, fmt.Errorf("issuer: %w", err)
+	}
+	return leaf, chains, nil
 }
 
 // presentedX5CDERs decodes x5c, requiring at least one entry and no

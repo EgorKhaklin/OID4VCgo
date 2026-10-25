@@ -52,7 +52,11 @@
 // one the issuer lists, PKCE, PAR and the authorization response's iss
 // in the authorization code grant, and every credential checked against
 // Config.IssuerRoots, or an mdoc against Config.MdocIssuerRoots or
-// MdocIssuerRootsByDocType where set. An SD-JWT VC whose iss isn't the
+// MdocIssuerRootsByDocType where set, and for revocation with
+// Config.IssuerRevocation where that's set (each trust role, from
+// status lists to mdoc readers, has its own *Revocation field, nil for
+// none: a certrevocation.CRLs fails closed for a CA it has no list
+// from). An SD-JWT VC whose iss isn't the
 // offer's credential_issuer is refused too, unless
 // Config.AllowForeignIss allows it. ProfileHAIP also refuses an issuer
 // outside HAIP 1.0 §4, with ErrProfileViolation: see its doc comment.

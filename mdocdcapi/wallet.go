@@ -18,6 +18,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/readerauth"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
@@ -255,6 +256,14 @@ type ReaderTrust struct {
 	// what ISO/IEC 18013-5 Annex B profiles a reader authentication
 	// certificate with.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+	// Revocation, if set, checks the reader's certificate chain for
+	// revocation: only a verified path LeafPolicy approves and
+	// Revocation passes recognizes the reader, and a revoked
+	// certificate leaves it unrecognized, with an error wrapping
+	// certrevocation.ErrRevoked. Its context is context.Background():
+	// a certrevocation.CRLs's Lists should keep its lists in memory.
+	// nil checks no revocation; see certrevocation.
+	Revocation certrevocation.Checker
 	// Now is when the certificates must be valid; zero: the current
 	// time.
 	Now time.Time
@@ -337,7 +346,7 @@ func (in Incoming) VerifyReaderTrust(t ReaderTrust) (*x509.Certificate, error) {
 // detached, the encoded ReaderAuthentication(All), by the certificate in
 // its x5chain, which must chain to t's roots and pass its LeafPolicy.
 func verifyReaderAuth(sig, detached []byte, t ReaderTrust) (*x509.Certificate, error) {
-	return readerauth.Verify(sig, detached, readerauth.Trust{Roots: t.Roots, LeafPolicy: t.LeafPolicy, Now: t.Now})
+	return readerauth.Verify(sig, detached, readerauth.Trust{Roots: t.Roots, LeafPolicy: t.LeafPolicy, Revocation: t.Revocation, Now: t.Now})
 }
 
 // Respond answers document doc of the request with issuerSigned — the

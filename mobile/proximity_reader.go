@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/proximity"
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -26,6 +27,11 @@ type ProximityReader struct {
 	opts     []proximity.ReaderOption
 	clock    func() time.Time
 	readerCN string
+	// crls are the lists the "revocation" roles check against, and
+	// statusRevocation, when "status" is named, the check on a status
+	// list's signer.
+	crls             *crlSet
+	statusRevocation certrevocation.Checker
 }
 
 // proximityReaderConfig is NewProximityReader's configuration.
@@ -53,11 +59,20 @@ type proximityReaderConfig struct {
 	// RequireMDLSignerEKU accepts only document signer certificates
 	// with the mDL document signer extended key usage.
 	RequireMDLSignerEKU bool `json:"require_mdl_signer_eku,omitempty"`
+	// CRLs are PEM "X509 CRL" blocks, replaced later by SetCRLs, and
+	// Revocation the roles whose certificate chains must pass a CRL
+	// check: "issuer", the document signer's
+	// (proximity.WithIssuerRevocation), and "status", a status list
+	// signer's in CheckStatus. A role named fails closed for any CA it
+	// has no current CRL from.
+	CRLs       string   `json:"crls,omitempty"`
+	Revocation []string `json:"revocation,omitempty"`
 }
 
 // NewProximityReader configures a reader from configJSON:
 // {"issuer_roots", "issuer_roots_by_doctype", "reader_key_id",
-// "reader_chain", "max_clock_skew_seconds", "require_mdl_signer_eku"},
+// "reader_chain", "max_clock_skew_seconds", "require_mdl_signer_eku",
+// "crls", "revocation"},
 // refusing any other key, so a misspelled option isn't silently left
 // at its default. keys holds the reader's key, reader_key_id; it may be
 // nil for a reader that doesn't sign.
@@ -91,6 +106,9 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 	if cfg.RequireMDLSignerEKU {
 		r.opts = append(r.opts, proximity.WithDocumentSignerPolicy(proximity.RequireMDLDocumentSignerEKU))
 	}
+	if err := r.configureRevocation(cfg); err != nil {
+		return nil, err
+	}
 	switch {
 	case cfg.ReaderKeyID == "" && cfg.ReaderChain == "":
 	case cfg.ReaderKeyID == "" || cfg.ReaderChain == "" || keys == nil:
@@ -117,6 +135,36 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 		return nil, newError(CodeInvalidInput, err)
 	}
 	return r, nil
+}
+
+// configureRevocation sets the revocation check of each role cfg's
+// "revocation" names, over cfg's "crls".
+func (r *ProximityReader) configureRevocation(cfg proximityReaderConfig) error {
+	named, err := revocationRoles(cfg.Revocation, revocationIssuer, revocationStatus)
+	if err != nil {
+		return err
+	}
+	if r.crls, err = newCRLSet("crls", cfg.CRLs); err != nil {
+		return err
+	}
+	if named[revocationIssuer] {
+		r.opts = append(r.opts, proximity.WithIssuerRevocation(r.crls.checker()))
+	}
+	if named[revocationStatus] {
+		r.statusRevocation = r.crls.checker()
+	}
+	return nil
+}
+
+// SetCRLs replaces the Certificate Revocation Lists the configuration's
+// "revocation" roles are checked against with pemText's "X509 CRL"
+// blocks, for sessions started before as well as after: as
+// Wallet.SetCRLs.
+func (r *ProximityReader) SetCRLs(pemText string) error {
+	if err := r.crls.set(pemText); err != nil {
+		return newError(CodeInvalidInput, fmt.Errorf("crls: %w", err))
+	}
+	return nil
 }
 
 // parseChain parses PEM certificates, in order.
@@ -423,7 +471,7 @@ func (r *ProximityReader) checkStatus(ctx context.Context, v proximity.Verified)
 	checker := statuslist.Checker{
 		Fetcher: statusFetcher(),
 		Roots:   roots,
-		Options: statuslist.VerifyOptions{Now: r.clock, LeafPolicy: trust.LeafPolicy},
+		Options: statuslist.VerifyOptions{Now: r.clock, LeafPolicy: trust.LeafPolicy, Revocation: r.statusRevocation},
 	}
 	status, _, err := checker.Check(ctx, statuslist.StatusListRef{Idx: ref.Idx, URI: ref.URI}, true)
 	if err != nil {

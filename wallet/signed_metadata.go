@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,7 +30,7 @@ const acceptSignedMetadata = "application/jwt, application/json;q=0.5"
 // Config.RequireSignedIssuerMetadata is set. The body's shape decides,
 // not its Content-Type, since the signature is what's trusted: a JSON
 // document starts with "{", a compact JWT never does.
-func (w *Wallet) metadataJSON(body []byte, issuerURL string) ([]byte, error) {
+func (w *Wallet) metadataJSON(ctx context.Context, body []byte, issuerURL string) ([]byte, error) {
 	if bytes.HasPrefix(bytes.TrimSpace(body), []byte("{")) {
 		if w.cfg.RequireSignedIssuerMetadata {
 			return nil, errors.New("the issuer sent unsigned metadata, and require_signed_issuer_metadata is set")
@@ -39,7 +40,7 @@ func (w *Wallet) metadataJSON(body []byte, issuerURL string) ([]byte, error) {
 	if w.cfg.IssuerMetadataRoots == nil {
 		return nil, errors.New("the issuer sent signed metadata, and issuer_metadata_roots is not set to verify it")
 	}
-	return w.verifySignedMetadata(string(bytes.TrimSpace(body)), issuerURL)
+	return w.verifySignedMetadata(ctx, string(bytes.TrimSpace(body)), issuerURL)
 }
 
 // verifySignedMetadata verifies a signed Credential Issuer Metadata JWT
@@ -48,11 +49,12 @@ func (w *Wallet) metadataJSON(body []byte, issuerURL string) ([]byte, error) {
 //   - its typ;
 //   - a signature by the key of an x5c leaf chaining to
 //     Config.IssuerMetadataRoots ("the Wallet MUST establish trust in
-//     the signer of the metadata");
+//     the signer of the metadata") on a path IssuerMetadataLeafPolicy
+//     approves and IssuerMetadataRevocation passes;
 //   - sub naming the issuer;
 //   - an iat that isn't in the future, and an exp, when present, not
 //     past.
-func (w *Wallet) verifySignedMetadata(token, issuerURL string) ([]byte, error) {
+func (w *Wallet) verifySignedMetadata(ctx context.Context, token, issuerURL string) ([]byte, error) {
 	header, _, err := jose.DecodeUnverifiedMax(token, int(w.cfg.Fetch.MaxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("signed metadata: %w", err)
@@ -67,7 +69,7 @@ func (w *Wallet) verifySignedMetadata(token, issuerURL string) ([]byte, error) {
 	if err := certchain.CheckNoAnchor(x5c); err != nil {
 		return nil, fmt.Errorf("signed metadata: signer certificate: %w", err)
 	}
-	leaf, err := certchain.VerifyLeafWithPolicyAt(x5c, w.cfg.IssuerMetadataRoots, w.cfg.IssuerMetadataLeafPolicy, w.deps.Clock.Now())
+	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, x5c, w.cfg.IssuerMetadataRoots, w.cfg.IssuerMetadataLeafPolicy, w.cfg.IssuerMetadataRevocation, w.deps.Clock.Now())
 	if err != nil {
 		return nil, fmt.Errorf("signed metadata: signer certificate: %w", err)
 	}

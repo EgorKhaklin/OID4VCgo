@@ -12,6 +12,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
@@ -125,6 +126,16 @@ type X5CAttestationVerifier struct {
 	// anchor.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
+	// Revocation, if set, checks the attestation's certificate chain
+	// for revocation: only a verified path LeafPolicy approves and
+	// Revocation passes is accepted (and, under
+	// AttestationIssuerBoundToAnchor, can end at the bound anchor), and
+	// an attestation signed under a revoked certificate — a Wallet
+	// Provider's, say, or the CA that certified it — is refused with an
+	// error wrapping certrevocation.ErrRevoked. nil checks no
+	// revocation; see certrevocation.
+	Revocation certrevocation.Checker
+
 	// IssuerBinding decides what ties the signing certificate to the
 	// attestation's "iss". The zero value, AttestationIssuerUnbound,
 	// ties nothing — see AttestationIssuerBinding.
@@ -190,6 +201,9 @@ type AttestationAnchor struct {
 // not set then. A nil Roots otherwise is refused when a chain is
 // verified, as it always has been.
 func (v X5CAttestationVerifier) validate() error {
+	if err := certchain.ValidateRevocation(v.Revocation); err != nil {
+		return fmt.Errorf("X5CAttestationVerifier.Revocation: %w", err)
+	}
 	switch v.IssuerBinding {
 	case AttestationIssuerUnbound, AttestationIssuerInCertificate:
 		if len(v.Anchors) != 0 {
@@ -257,7 +271,7 @@ func (v X5CAttestationVerifier) ResolveAttestationKey(ctx context.Context, a att
 	var leaf *x509.Certificate
 	var err error
 	if v.IssuerBinding == AttestationIssuerUnbound {
-		leaf, err = resolveX5CLeaf(ctx, entries, v.Roots, v.LeafPolicy)
+		leaf, _, err = resolveX5CLeaf(ctx, entries, v.Roots, v.LeafPolicy, v.Revocation)
 	} else {
 		leaf, err = v.resolveBoundLeaf(ctx, entries, a.Issuer())
 	}
@@ -273,8 +287,8 @@ func (v X5CAttestationVerifier) ResolveAttestationKey(ctx context.Context, a att
 
 // resolveBoundLeaf verifies x5c as resolveX5CLeaf does, then holds its
 // leaf to v.IssuerBinding for iss: the leaf names iss and, under
-// AttestationIssuerBoundToAnchor, a path LeafPolicy approves ends at an
-// anchor bound to iss.
+// AttestationIssuerBoundToAnchor, a path LeafPolicy approves and
+// Revocation passes ends at an anchor bound to iss.
 func (v X5CAttestationVerifier) resolveBoundLeaf(ctx context.Context, x5c []any, iss string) (*x509.Certificate, error) {
 	if iss == "" {
 		return nil, errors.New("issuer: key attestation has no iss to bind its signing certificate to")
@@ -286,13 +300,9 @@ func (v X5CAttestationVerifier) resolveBoundLeaf(ctx context.Context, x5c []any,
 			roots.AddCert(anchor.Certificate)
 		}
 	}
-	leaf, chains, err := resolveX5CChains(ctx, x5c, roots)
+	leaf, approved, err := resolveX5CLeaf(ctx, x5c, roots, v.LeafPolicy, v.Revocation)
 	if err != nil {
 		return nil, err
-	}
-	approved, err := certchain.ApprovedChains(leaf, chains, v.LeafPolicy)
-	if err != nil {
-		return nil, fmt.Errorf("issuer: %w", err)
 	}
 	if err := certchain.CheckIssuerName(leaf, iss); err != nil {
 		return nil, fmt.Errorf("issuer: key attestation signing certificate: %w", err)

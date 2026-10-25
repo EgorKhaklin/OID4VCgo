@@ -275,6 +275,30 @@ mismatch fails before the request is sent, as `tls_pin`.
   renewals; keep a backup pin, since a wrong pin set locks the wallet
   out of that host until an app update.
 
+**Certificate revocation** (`crls` and `revocation`; `SetCRLs` on a
+Wallet and a ProximityReader): the trust roles an app names (`issuer`,
+`issuer_metadata`, `registrar`, `mdoc_reader`, `verifier`, `status`; a
+reader's `issuer` and `status`) check certificate chains against the
+CRLs it holds, through `certrevocation.CRLs`.
+
+- **Go never fetches a CRL.** A check runs on every credential, request
+  and status list, and a slow or unreachable distribution point would
+  hold each one up; the app fetches lists (its own client, its own
+  schedule), and hands them to `SetCRLs`, which swaps them in
+  atomically for the checks that follow.
+- **Per role:** a CRL check fails closed for a CA without a current
+  list, so a role is named only where its CAs publish lists the app
+  fetches. An ecosystem with CRLs for issuers but not Verifiers names
+  `issuer` alone.
+- **Expiry:** a list is current until its nextUpdate. An app refreshes
+  before then (at launch, and on a timer while running); a lapsed list
+  refuses until a fresh one arrives, which shows as the role's usual
+  refusal (`protocol` for a credential, `untrusted_verifier` for a
+  Verifier).
+- **Optional field, new call, same ABI:** `crls`, `revocation` and
+  `SetCRLs` are additive, so `ABIVersion` stays 12; a wrapper that
+  doesn't know them never sends them.
+
 ## Phases
 
 | # | Phase | Exit criteria |

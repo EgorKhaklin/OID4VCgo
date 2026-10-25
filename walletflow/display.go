@@ -218,7 +218,7 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	checker := statuslist.Checker{
 		Fetcher: statuslist.Fetcher{HTTP: w.deps.HTTP, AllowLoopback: w.cfg.Development},
 		Roots:   roots,
-		Options: statuslist.VerifyOptions{Now: w.deps.Clock},
+		Options: statuslist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation},
 	}
 	// Its status is its issuer's to sign, or one of its Status Issuers',
 	// not another issuer's under IssuerRoots.
