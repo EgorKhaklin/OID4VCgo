@@ -223,7 +223,42 @@ public data class WalletConfiguration(
      * receiving both formats can require each its own.
      */
     @SerialName("mdoc_issuer_require_eku") val mdocIssuerRequireEKU: String = "",
+    /**
+     * PEM `X509 CRL` blocks: the Certificate Revocation Lists the roles
+     * in [revocation] are checked against. Replace them at runtime with
+     * [Wallet.setCRLs] as they expire.
+     */
+    @SerialName("crls") val crls: String = "",
+    /**
+     * The trust roles whose certificate chains must pass a CRL check
+     * against [crls]. A role listed fails closed for any CA it has no
+     * current CRL from, until [Wallet.setCRLs] supplies one; a role not
+     * listed checks no revocation.
+     */
+    @SerialName("revocation") val revocation: List<RevocationRole> = emptyList(),
 ) {
+    /** A trust role whose certificates can be checked for revocation. */
+    @Serializable
+    public enum class RevocationRole {
+        /** The issuers' signing certificates ([issuerRoots] and the mdoc roots), on receipt, deferral and refresh. */
+        @SerialName("issuer") ISSUER,
+
+        /** The signers of Credential Issuer Metadata ([issuerMetadataRoots]). */
+        @SerialName("issuer_metadata") ISSUER_METADATA,
+
+        /** The registrars of Verifiers ([registrarRoots]). */
+        @SerialName("registrar") REGISTRAR,
+
+        /** The mdoc readers ([mdocReaderRoots]), online and in person. */
+        @SerialName("mdoc_reader") MDOC_READER,
+
+        /** The Verifiers' request-signing certificates ([verifierRoots]). */
+        @SerialName("verifier") VERIFIER,
+
+        /** The signers of status lists, in [Wallet.checkStatus]. */
+        @SerialName("status") STATUS,
+    }
+
     /** How an in-person response authenticates the mdoc (ISO/IEC 18013-5 §9.1.3). */
     @Serializable
     public enum class ProximityDeviceAuth {
@@ -596,6 +631,20 @@ public class Wallet(
      */
     public suspend fun refreshCredential(id: String): Refreshed =
         decode(OID4VC.cancellable { op -> handle.refreshCredential(op, id) })
+
+    /**
+     * Replaces the Certificate Revocation Lists the configuration's
+     * [WalletConfiguration.revocation] roles are checked against with
+     * [pem]'s `X509 CRL` blocks, for every check from now on. CRLs expire
+     * at their nextUpdate: fetch fresh ones and call this before then.
+     * Text holding anything else, or a list that doesn't parse, throws
+     * `invalidInput` and keeps the lists as they were; empty text removes
+     * them all, and a role checked then fails closed. Makes no network
+     * calls.
+     */
+    public suspend fun setCRLs(pem: String) {
+        OID4VC.offMain { handle.setCRLs(pem) }
+    }
 
     /**
      * Deletes a credential and its holder keys, and its refresh grant

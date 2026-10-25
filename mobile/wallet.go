@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -136,6 +137,16 @@ type config struct {
 	// where the KeyAgreement (SetKeyAgreement) can agree with the holder
 	// key (walletflow.Config.ProximityDeviceAuth).
 	ProximityDeviceAuth string `json:"proximity_device_auth,omitempty"`
+	// CRLs are PEM "X509 CRL" blocks: the Certificate Revocation Lists
+	// the roles Revocation names are checked against, replaced later by
+	// SetCRLs. Revocation names the trust roles whose certificate chains
+	// must pass a CRL check ("issuer", "issuer_metadata", "registrar",
+	// "mdoc_reader", "verifier", "status"; walletflow.Config's
+	// *Revocation fields and wallet.X5CVerifierRoots.Revocation). A
+	// role named fails closed for any CA it has no current CRL from,
+	// until SetCRLs supplies one; a role not named checks no revocation.
+	CRLs       string   `json:"crls,omitempty"`
+	Revocation []string `json:"revocation,omitempty"`
 }
 
 // proximityDeviceAuth is the walletflow.ProximityDeviceAuth name names.
@@ -171,6 +182,8 @@ type Wallet struct {
 	w    *walletflow.Wallet
 	keys KeyStore
 	ka   *agreement
+	// crls are the lists the "revocation" roles check against.
+	crls *crlSet
 
 	// refusalRedirect is the redirect_uri the Verifier answered the
 	// latest refused request with (TakeRefusalRedirect).
@@ -219,6 +232,10 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	if err != nil {
 		return nil, err
 	}
+	crls, err := walletRevocation(cfg, &wcfg)
+	if err != nil {
+		return nil, err
+	}
 	ka := &agreement{}
 	deps := walletflow.Dependencies{
 		Keys: keyStore{ks: keys, ka: ka}, Credentials: credentialStore{credentials},
@@ -239,7 +256,53 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	if err != nil {
 		return nil, newError(CodeInvalidInput, err)
 	}
-	return &Wallet{w: w, keys: keys, ka: ka}, nil
+	return &Wallet{w: w, keys: keys, ka: ka, crls: crls}, nil
+}
+
+// walletRevocation sets the revocation check of each role cfg's
+// "revocation" names on wcfg, over a crlSet holding cfg's "crls", which
+// it returns for SetCRLs. It runs after walletConfig, whose
+// VerifierTrust it extends.
+func walletRevocation(cfg config, wcfg *walletflow.Config) (*crlSet, error) {
+	named, err := revocationRoles(cfg.Revocation, revocationIssuer, revocationIssuerMetadata, revocationRegistrar,
+		revocationMdocReader, revocationVerifier, revocationStatus)
+	if err != nil {
+		return nil, err
+	}
+	crls, err := newCRLSet("crls", cfg.CRLs)
+	if err != nil {
+		return nil, err
+	}
+	checker := crls.checker()
+	set := func(role string, field *certrevocation.Checker) {
+		if named[role] {
+			*field = checker
+		}
+	}
+	set(revocationIssuer, &wcfg.IssuerRevocation)
+	set(revocationIssuerMetadata, &wcfg.IssuerMetadataRevocation)
+	set(revocationRegistrar, &wcfg.RegistrarRevocation)
+	set(revocationMdocReader, &wcfg.MdocReaderRevocation)
+	set(revocationStatus, &wcfg.StatusRevocation)
+	if vt, ok := wcfg.VerifierTrust.(wallet.X5CVerifierRoots); ok {
+		set(revocationVerifier, &vt.Revocation)
+		wcfg.VerifierTrust = vt
+	}
+	return crls, nil
+}
+
+// SetCRLs replaces the Certificate Revocation Lists the configuration's
+// "revocation" roles are checked against with pemText's "X509 CRL"
+// blocks, for every check from now on: call it whenever fresh lists are
+// fetched, before the current ones' nextUpdate passes. Text holding
+// anything else, or a list that doesn't parse, is invalid_input, and the
+// lists are left as they were. Empty text removes them all, and a role
+// checked then fails closed.
+func (w *Wallet) SetCRLs(pemText string) error {
+	if err := w.crls.set(pemText); err != nil {
+		return newError(CodeInvalidInput, fmt.Errorf("crls: %w", err))
+	}
+	return nil
 }
 
 // walletConfig is cfg as walletflow's Config, its HTTP settings aside

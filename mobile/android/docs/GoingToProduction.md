@@ -55,6 +55,15 @@ wallet's provider attests anything, and is for development only.
   cover the SDK's own requests, not your app's, such as to your Wallet
   Provider: pin that client yourself (OkHttp's `CertificatePinner`, or
   a network security configuration).
+- To refuse certificates your ecosystem's CAs have revoked, list the
+  roles to check in `revocation` and give their CAs' CRLs (PEM
+  `X509 CRL` blocks) in `crls`. A role listed fails closed for any CA it
+  has no current CRL from, so list only roles whose CAs publish CRLs.
+  CRLs expire at their nextUpdate: fetch fresh ones in the background
+  and hand them over with `Wallet.setCRLs`, which replaces them all
+  (empty text removes them) and throws `invalidInput`, keeping the old
+  lists, for anything that isn't a CRL. A `ProximityReader` takes the
+  same, for its document signers and status lists.
 - As a Credential Manager provider, see the open caveat in
   [Presenting to Chrome](PresentingToChrome.md).
 

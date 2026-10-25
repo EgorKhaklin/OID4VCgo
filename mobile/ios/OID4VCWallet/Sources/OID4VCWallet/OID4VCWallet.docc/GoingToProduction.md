@@ -58,6 +58,16 @@ development only.
   wallet out of that host until an update. Pins cover the SDK's own
   requests, which `NSPinnedDomains` doesn't reach, not your app's, such
   as to your Wallet Provider: pin that `URLSession` yourself.
+- To refuse certificates your ecosystem's CAs have revoked, list the
+  roles to check in ``WalletConfiguration/revocation`` and give their
+  CAs' CRLs (PEM `X509 CRL` blocks) in ``WalletConfiguration/crls``. A
+  role listed fails closed for any CA it has no current CRL from, so
+  list only roles whose CAs publish CRLs. CRLs expire at their
+  nextUpdate: fetch fresh ones in the background and hand them over
+  with ``Wallet/setCRLs(_:)``, which replaces them all (empty text
+  removes them) and throws `invalidInput`, keeping the old lists, for
+  anything that isn't a CRL. A ``ProximityReader`` takes the same, for
+  its document signers and status lists.
 
 ### Privacy
 

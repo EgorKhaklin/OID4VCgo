@@ -15,8 +15,10 @@ DC API's `StartMdocPresentation` and `MdocCandidates` arrived in
 OID4VCWallet 0.7.0 (Swift); `StartDCAPIPresentation`, proximity
 (`StartProximityPresentation`, `NewProximityReader`) and
 `require_signed_dcapi_requests` came after it, then `tls_pins` and the
-`tls_pin` code, and later the KeyAgreement (`SetKeyAgreement`,
-`CheckKeyAgreement`, `proximity_device_auth`). An older wrapper shows a
+`tls_pin` code, later the KeyAgreement (`SetKeyAgreement`,
+`CheckKeyAgreement`, `proximity_device_auth`), and then certificate
+revocation (`crls`, `revocation`, `SetCRLs` on a Wallet and a
+ProximityReader). An older wrapper shows a
 code it doesn't know as it is. Check a library's release notes for the
 calls it has.
 
@@ -207,7 +209,8 @@ library's an `IOException`.
  "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "proximity_device_auth": "signature",
  "status_issuers": {"https://issuer.example": ["https://status.example"]},
  "require_issuer_name": false, "issuer_metadata_roots": "<PEM>", "require_signed_issuer_metadata": false,
- "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0, "allow_foreign_iss": false}
+ "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0, "allow_foreign_iss": false,
+ "crls": "<PEM X509 CRLs>", "revocation": ["issuer", "verifier"]}
 ```
 
 `issuer_roots` is needed to receive credentials, and `verifier_roots` to
@@ -373,6 +376,31 @@ host without pins, is `invalid_input`. The pins cover the requests Go
 makes, in development too; an app's own requests, such as to its Wallet
 Provider, are the app's to pin.
 
+`revocation` names the trust roles whose certificate chains must pass a
+check against Certificate Revocation Lists (RFC 5280), and `crls` holds
+those lists as PEM `X509 CRL` blocks. The roles are `issuer` (a
+received, deferred or refreshed credential's signer, under
+`issuer_roots` and the mdoc roots alike), `issuer_metadata` (the signer
+of signed issuer metadata), `registrar`, `mdoc_reader` (org-iso-mdoc and
+in-person readers), `verifier` (a Verifier's request-signing
+certificate, under `verifier_roots`) and `status` (a status list's
+signer, in `CheckStatus`). A role not named checks no revocation. A
+role named accepts a certificate only through a verified path on which
+each certificate below the trust anchor has a current CRL (its
+nextUpdate not passed) from its issuer that doesn't list it: a
+certificate a list names is refused, and so, failing closed, is one
+whose issuer has no current list — with lists for issuers but not for
+Verifiers, name `issuer` alone. A refused credential is `protocol`, a
+refused Verifier `untrusted_verifier`, a refused registrar's
+registration unverified and a refused reader unrecognized, as for a
+certificate outside their roots. A role may be named with no `crls`
+yet: it refuses everything until `SetCRLs` supplies lists. An unknown
+or repeated role, or `crls` holding anything but CRLs (a certificate,
+text outside the PEM blocks, a list that doesn't parse, more than 64),
+is `invalid_input`. Lists expire at their nextUpdate: fetch fresh ones
+from the CAs' distribution points and pass them to `SetCRLs` before
+then. Added within ABI version 12.
+
 | Method | Result |
 |---|---|
 | `Credentials()` | `{"credentials": [summary]}` |
@@ -388,6 +416,7 @@ Provider, are the app's to pin.
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
 | `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
 | `TakeRefusalRedirect()` | once, the `redirect_uri` the Verifier answered the latest `request_refused` with, `""` for none: open it (OpenID4VP §8.2). Added within ABI 12 |
+| `SetCRLs(pem)` | replaces the lists the `revocation` roles check against, for every check from then on, with `pem`'s `X509 CRL` blocks. Anything but CRLs is `invalid_input`, and the lists are left as they were; `""` removes them all, so every role named then refuses. No network calls. Added within ABI 12 |
 
 A credential **summary** is `{"id", "credential_issuer",
 "configuration_id", "format", "vct", "doctype", "received_at",
@@ -687,7 +716,7 @@ can't use is `invalid_input`.
 
 The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",
-"require_mdl_signer_eku"}`:
+"require_mdl_signer_eku", "crls", "revocation"}`:
 - `issuer_roots` (PEM) are the IACAs whose mdocs are accepted, of any
   document type `issuer_roots_by_doctype` doesn't name.
 - `issuer_roots_by_doctype` (an object of document type to PEM) are each
@@ -704,6 +733,15 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   that far off.
 - `require_mdl_signer_eku` accepts only document signers with the mDL
   document signer extended key usage.
+- `crls` (PEM `X509 CRL` blocks) and `revocation` (roles: `issuer`, the
+  document signer's chain, so a document whose signer or an IACA
+  intermediate is revoked doesn't verify; `status`, a status list
+  signer's in `CheckStatus`) work as a Wallet's: a role named fails
+  closed for a CA without a current list, `SetCRLs(pem)` replaces the
+  lists for sessions started before or after, and anything but CRLs is
+  `invalid_input`. An MSO's status list chaining to the certificate its
+  status names needs that certificate's list too. Additive within
+  ABI 12.
 
 | Method | Result |
 |---|---|
@@ -792,7 +830,10 @@ sees it, for the Android tests. Its `ProximityReader(keys)` creates a key in
 `keys` and issues it a reader authentication certificate from a new test
 CA ("Test Reader"), returning `{"reader_config", "mdoc_reader_roots"}`:
 a `NewProximityReader` configuration and the CA to recognize the reader
-by. `IsTestBuild` is true in it. An app never ships that build.
+by. `IssuerCRL(revokeSigner)` returns a PEM CRL from the issuer's CA,
+current for an hour, listing the credentials' signing certificate when
+`revokeSigner` is set, for testing `revocation`. `IsTestBuild` is true
+in it. An app never ships that build.
 
 ## Swift
 

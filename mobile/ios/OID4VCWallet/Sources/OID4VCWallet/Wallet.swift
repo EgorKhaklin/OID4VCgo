@@ -136,6 +136,32 @@ public struct WalletConfiguration: Codable, Sendable {
     /// How an in-person response authenticates the mdoc. `.macPreferred`
     /// needs a key store that is also a `KeyAgreement`.
     public var proximityDeviceAuth: ProximityDeviceAuth
+    /// PEM `X509 CRL` blocks: the Certificate Revocation Lists the roles
+    /// in `revocation` are checked against. Replace them at runtime with
+    /// `Wallet.setCRLs(_:)` as they expire.
+    public var crls: String
+    /// The trust roles whose certificate chains must pass a CRL check
+    /// against `crls`. A role listed fails closed for any CA it has no
+    /// current CRL from, until `Wallet.setCRLs(_:)` supplies one; a role
+    /// not listed checks no revocation.
+    public var revocation: [RevocationRole]
+
+    /// A trust role whose certificates can be checked for revocation.
+    public enum RevocationRole: String, Codable, Sendable, CaseIterable {
+        /// The issuers' signing certificates (`issuerRoots` and the mdoc
+        /// roots), on receipt, deferral and refresh.
+        case issuer
+        /// The signers of Credential Issuer Metadata (`issuerMetadataRoots`).
+        case issuerMetadata = "issuer_metadata"
+        /// The registrars of Verifiers (`registrarRoots`).
+        case registrar
+        /// The mdoc readers (`mdocReaderRoots`), online and in person.
+        case mdocReader = "mdoc_reader"
+        /// The Verifiers' request-signing certificates (`verifierRoots`).
+        case verifier
+        /// The signers of status lists, in `checkStatus`.
+        case status
+    }
 
     /// How an in-person response authenticates the mdoc (ISO/IEC 18013-5
     /// §9.1.3).
@@ -189,7 +215,8 @@ public struct WalletConfiguration: Codable, Sendable {
                 statusIssuers: [String: [String]] = [:], requireIssuerName: Bool = false,
                 issuerMetadataRoots: String = "", requireSignedIssuerMetadata: Bool = false,
                 requireIssuerMetadataName: Bool = false, maxIssuerMetadataAgeSeconds: Int = 0, allowForeignIss: Bool = false,
-                mdocIssuerRoots: String = "", mdocIssuerRootsByDocType: [String: String] = [:], mdocIssuerRequireEKU: String = "") {
+                mdocIssuerRoots: String = "", mdocIssuerRootsByDocType: [String: String] = [:], mdocIssuerRequireEKU: String = "",
+                crls: String = "", revocation: [RevocationRole] = []) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -220,6 +247,8 @@ public struct WalletConfiguration: Codable, Sendable {
         self.mdocIssuerRoots = mdocIssuerRoots
         self.mdocIssuerRootsByDocType = mdocIssuerRootsByDocType
         self.mdocIssuerRequireEKU = mdocIssuerRequireEKU
+        self.crls = crls
+        self.revocation = revocation
     }
 
     enum CodingKeys: String, CodingKey {
@@ -237,6 +266,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case allowForeignIss = "allow_foreign_iss"
         case mdocIssuerRoots = "mdoc_issuer_roots", mdocIssuerRootsByDocType = "mdoc_issuer_roots_by_doctype"
         case mdocIssuerRequireEKU = "mdoc_issuer_require_eku"
+        case crls, revocation
     }
 
     /// Decodes a configuration, refusing a key it doesn't know: a
@@ -277,7 +307,9 @@ public struct WalletConfiguration: Codable, Sendable {
                   allowForeignIss: try c.decodeIfPresent(Bool.self, forKey: .allowForeignIss) ?? false,
                   mdocIssuerRoots: try c.decodeIfPresent(String.self, forKey: .mdocIssuerRoots) ?? "",
                   mdocIssuerRootsByDocType: try c.decodeIfPresent([String: String].self, forKey: .mdocIssuerRootsByDocType) ?? [:],
-                  mdocIssuerRequireEKU: try c.decodeIfPresent(String.self, forKey: .mdocIssuerRequireEKU) ?? "")
+                  mdocIssuerRequireEKU: try c.decodeIfPresent(String.self, forKey: .mdocIssuerRequireEKU) ?? "",
+                  crls: try c.decodeIfPresent(String.self, forKey: .crls) ?? "",
+                  revocation: try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? [])
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
@@ -587,6 +619,19 @@ public final class Wallet: @unchecked Sendable {
         let wallet = handle
         let json = try await OID4VC.cancellable { op in try OID4VC.call { wallet.refreshCredential(op, credentialID: id, error: $0) } }
         return try decode(Refreshed.self, json)
+    }
+
+    /// Replaces the Certificate Revocation Lists the configuration's
+    /// `revocation` roles are checked against with `pem`'s `X509 CRL`
+    /// blocks, for every check from now on. CRLs expire at their
+    /// nextUpdate: fetch fresh ones and call this before then. Text
+    /// holding anything else, or a list that doesn't parse, throws
+    /// `invalidInput` and keeps the lists as they were; empty text removes
+    /// them all, and a role checked then fails closed. Makes no network
+    /// calls.
+    public func setCRLs(_ pem: String) async throws {
+        let wallet = handle
+        try await OID4VC.offMain { try OID4VC.wrap { try wallet.setCRLs(pem) } }
     }
 
     /// Deletes a credential and its holder keys, and its refresh grant
