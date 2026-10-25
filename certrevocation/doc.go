@@ -30,6 +30,17 @@
 // rather than accepted unchecked. A revoked certificate is refused with
 // ErrRevoked.
 //
+// Refresher does that fetching for CRLs served over http or https: it
+// fetches the distribution points the deployment configures, from
+// public addresses only by default, keeps the last good list from each
+// and replaces it only with one a configured CA signed that isn't
+// older, so a failed or replayed fetch can't evict or roll back a good
+// list. Its Run loop refreshes each list well before its nextUpdate,
+// in a goroutine the caller starts; Refresher.Checker is the CRLs to
+// check against. On a phone, the operating system's background
+// scheduler should drive refreshes instead, handing the lists to the
+// mobile library's SetCRLs.
+//
 // NoCheck declines checking revocation at all, as a visible line of
 // code rather than a field left unset. OCSP (RFC 6960), or any other
 // source of revocation status, can implement Checker; this package

@@ -70,8 +70,9 @@ type CRLs struct {
 	// every check: keep the parsed lists in memory and refresh them in
 	// the background before their nextUpdate, rather than fetching
 	// here, where a slow or unreachable distribution point would hold
-	// up every verification. An error refuses the chain, wrapped.
-	// Required.
+	// up every verification. Refresher does that for lists fetched
+	// over HTTP: pass its Lists method, or use Refresher.Checker. An
+	// error refuses the chain, wrapped. Required.
 	Lists func(ctx context.Context) ([]*x509.RevocationList, error)
 }
 
@@ -141,12 +142,18 @@ func crlUsableFor(list *x509.RevocationList, issuer *x509.Certificate, now time.
 	if list.NextUpdate.IsZero() || now.Before(list.ThisUpdate) || !now.Before(list.NextUpdate) {
 		return false
 	}
+	return completeAndDirect(list) && list.CheckSignatureFrom(issuer) == nil
+}
+
+// completeAndDirect reports whether list is neither a delta CRL nor one
+// an issuing distribution point extension may limit the scope of.
+func completeAndDirect(list *x509.RevocationList) bool {
 	for _, ext := range list.Extensions {
 		if ext.Id.Equal(oidDeltaCRLIndicator) || ext.Id.Equal(oidIssuingDistributionPoint) {
 			return false
 		}
 	}
-	return list.CheckSignatureFrom(issuer) == nil
+	return true
 }
 
 // NoCheck explicitly declines checking revocation: every chain passes.
