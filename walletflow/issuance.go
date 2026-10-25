@@ -1008,7 +1008,8 @@ func (s *Issuance) sendCredentialRequest(ctx context.Context, configID, identifi
 // proofs creates one holder key per copy to request, and proves
 // possession of them by plan, with a fresh c_nonce where the issuer has
 // a nonce endpoint (OpenID4VCI 1.0 §7): one jwt proof each, or one key
-// attestation for them all. The issuer issues one copy bound to each.
+// attestation for them all, alone or in one jwt proof. The issuer
+// issues one copy bound to each.
 func (s *Issuance) proofs(ctx context.Context, plan proofPlan) ([]Key, wallet.CredentialRequest, error) {
 	var nonce string
 	if s.metadata.NonceEndpoint != nil {
@@ -1085,24 +1086,24 @@ func (s *Issuance) attestedHolders(ctx context.Context, nonce string) ([]Key, st
 
 // jwtProofsWithKeyAttestation creates one holder key per copy to
 // request, has the Wallet Provider attest them together for nonce, and
-// proves possession of each with a jwt proof carrying that attestation
-// in its key_attestation header (Appendix D.1, F.1). A key created
-// before a failure is deleted.
+// sends one jwt proof, signed by the first, carrying that attestation in
+// its key_attestation header (Appendix D.1, F.1). The issuer "SHOULD
+// issue a Credential for each cryptographic public key specified in the
+// attested_keys claim" (F.1), so one proof covers the batch: a holder
+// key that asks for user presence to sign asks once, not once per copy.
+// An issuer issuing fewer copies leaves keys unused, which receiving
+// deletes. A key created before a failure is deleted.
 func (s *Issuance) jwtProofsWithKeyAttestation(ctx context.Context, nonce string) ([]Key, wallet.CredentialRequest, error) {
 	holders, keyAttestation, err := s.attestedHolders(ctx, nonce)
 	if err != nil {
 		return nil, wallet.CredentialRequest{}, err
 	}
-	req := wallet.CredentialRequest{CredentialIssuer: s.offer.CredentialIssuer, Nonce: nonce}
-	for _, holder := range holders {
-		proof, err := s.w.core.GenerateProofWithKeyAttestation(holder, s.offer.CredentialIssuer, nonce, keyAttestation)
-		if err != nil {
-			s.w.deleteKeys(context.WithoutCancel(ctx), holders)
-			return nil, wallet.CredentialRequest{}, fmt.Errorf("walletflow: proof: %w", err)
-		}
-		req.JWTProofs = append(req.JWTProofs, proof)
+	proof, err := s.w.core.GenerateProofWithKeyAttestation(holders[0], s.offer.CredentialIssuer, nonce, keyAttestation)
+	if err != nil {
+		s.w.deleteKeys(context.WithoutCancel(ctx), holders)
+		return nil, wallet.CredentialRequest{}, fmt.Errorf("walletflow: proof: %w", err)
 	}
-	return holders, req, nil
+	return holders, wallet.CredentialRequest{CredentialIssuer: s.offer.CredentialIssuer, Nonce: nonce, JWTProofs: []string{proof}}, nil
 }
 
 // deferred keeps a credential the issuer deferred, requested by
