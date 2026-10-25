@@ -59,6 +59,10 @@
 * **wallet:** refuse an issued SD-JWT VC that doesn't end with '~' ([40eb450](https://github.com/IDFoundry/OID4VCgo/commit/40eb450d278bb10938abc96be46f6a393d0265f8))
 * **wallet:** run the mdoc document signer checks on receipt ([297d0a1](https://github.com/IDFoundry/OID4VCgo/commit/297d0a1482da4ae762b3a0cb84757e16c663c177))
 
+### Upgrade notes
+
+* **issuer:** since v0.52.0 ([6043a8d](https://github.com/IDFoundry/OID4VCgo/commit/6043a8d930c39e82e59b5b2986bb6a60ffdc2417)), ExchangePreAuthorizedCode hands its DPoPReplayChecker the base64url SHA-256 digest of each DPoP proof's jti, not the jti itself. If you upgrade from v0.51.x or earlier and your replay checker keeps its records across the restart, a proof recorded under its raw jti just before the upgrade no longer matches its record, so it can be used once more while its iat is within Limits.MaxDPoPProofAge. The in-memory storage.DPoPReplayChecker starts empty after every restart, so this changes nothing for it. To close the window, keep the issuer's token endpoint down for Limits.MaxDPoPProofAge plus Limits.MaxDPoPClockSkew across the upgrade.
+
 ## [0.52.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.51.0...v0.52.0) (2026-10-23)
 
 
