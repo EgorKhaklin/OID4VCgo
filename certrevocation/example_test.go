@@ -9,17 +9,19 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"sync/atomic"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // A CA revokes a certificate it issued; CRLs, holding the CA's current
 // list, refuses a chain through it. In a deployment the list comes from
 // the CA's CRL distribution point, refreshed in the background (see
-// CRLs.Lists), and the Checker goes in a resolver's Revocation field
+// Refresher), and the Checker goes in a resolver's Revocation field
 // (verifier.X5ChainIssuerKeyResolver, verifier.X5CIssuerKeyResolver),
 // which checks every verified path itself.
 func ExampleCRLs() {
@@ -66,4 +68,40 @@ func ExampleCRLs() {
 	// Output:
 	// before: <nil>
 	// after, revoked: true
+}
+
+// iacaDER is the IACA certificate a verifier trusts, in DER.
+var iacaDER []byte
+
+// A Refresher keeps an IACA's CRL current in the background and hands
+// it to the verifier's issuer trust, which refuses a document signer
+// the IACA has revoked. The distribution point comes from the IACA's
+// own certificate, configured by the deployment: never from a
+// certificate a credential presents.
+func ExampleRefresher() {
+	iaca, err := x509.ParseCertificate(iacaDER)
+	if err != nil {
+		log.Fatal(err)
+	}
+	refresher, err := certrevocation.NewRefresher(certrevocation.RefresherConfig{
+		URLs:    iaca.CRLDistributionPoints,
+		Issuers: []*x509.Certificate{iaca},
+		OnError: func(url string, err error) { log.Printf("CRL refresh: %v", err) },
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	// Fetch once before serving, so the first verifications don't fail
+	// closed, then keep the lists current until ctx ends.
+	if err := refresher.Refresh(ctx); err != nil {
+		log.Fatal(err)
+	}
+	go refresher.Run(ctx)
+
+	roots := x509.NewCertPool()
+	roots.AddCert(iaca)
+	resolver := verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: refresher.Checker()}
+	_ = verifier.VerifyResponseRequest{MdocIssuerKeys: resolver} // with the rest of the request
 }
