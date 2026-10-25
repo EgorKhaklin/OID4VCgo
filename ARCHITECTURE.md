@@ -251,7 +251,12 @@ changes whether *every* bullet below is `(done)`.
   (RFC 5280 CRLs the caller fetches and refreshes, used only when
   complete, current and signed by the certificate's issuer; a missing or
   stale list fails closed with `ErrNoCurrentCRL`, a listed serial with
-  `ErrRevoked`), and `NoCheck`, the explicit opt-out. Its design mirrors
+  `ErrRevoked`), `Refresher` (an optional helper that fetches configured
+  distribution points over FAPIgo's `fapihttp` hardened transport and
+  holds the last good list from each, refusing one a configured CA
+  didn't sign or that's older than the held one; its `Run` loop is
+  started by the caller, never by the package), and `NoCheck`, the
+  explicit opt-out. Its design mirrors
   FAPIgo's `server.ClientCertificateCRLs` for client certificates. No
   OCSP client: OCSP, or any other source, implements `Checker`. The
   verifier's issuer key resolvers require one; every other trust role

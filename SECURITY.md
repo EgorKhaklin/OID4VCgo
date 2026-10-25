@@ -37,8 +37,15 @@ to a trust anchor on which no certificate is revoked. Supply your CAs'
 CRLs with `certrevocation.CRLs{Lists: ...}`: fetch each CA's CRL from
 the distribution point its certificates name (ISO/IEC 18013-5 Annex B
 makes one mandatory for an IACA's), keep the parsed lists in memory and
-refresh them before their nextUpdate. A missing or stale CRL fails
-closed. `certrevocation.NoCheck{}` declines the check explicitly, for
+refresh them before their nextUpdate. `certrevocation.Refresher` does
+this for you: give it the distribution point URLs and the CA
+certificates that sign their CRLs, run `go r.Run(ctx)`, and pass
+`r.Checker()`. It fetches only from public addresses by default, keeps
+the last good list when a fetch fails, and refuses a list that isn't
+signed by one of those CAs or is older than the one it holds, so an
+unreachable or tampered-with distribution point (CRLs are often served
+over plain http) can't evict or roll back a good list. A missing or
+stale CRL fails closed. `certrevocation.NoCheck{}` declines the check explicitly, for
 short-lived certificates or a trust framework that removes compromised
 issuers from the anchor set itself.
 
