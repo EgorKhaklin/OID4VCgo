@@ -186,9 +186,10 @@ func (w *Wallet) fetchAuthorizationRequest(ctx context.Context, link wallet.Auth
 // mdoc's IssuerAuth likewise (COSE -7 or -8), its DeviceSignature ES256
 // (-7). Requests are accepted only from an x509_hash Client Identifier.
 // It asks for no encrypted Request Object, which the wallet can't
-// decrypt: neither jwks nor the encryption parameters that would ask
-// for one are sent. The response's encryption follows the Verifier's
-// client_metadata.
+// decrypt: jwks, the only wallet metadata that does (§5.10), isn't
+// sent. The authorization_encryption_* parameters, about the
+// Authorization Response, aren't either: the response's encryption
+// follows the Verifier's client_metadata.
 var walletMetadata = json.RawMessage(`{"vp_formats_supported":{` +
 	`"dc+sd-jwt":{"sd-jwt_alg_values":["ES256","EdDSA"],"kb-jwt_alg_values":["ES256"]},` +
 	`"mso_mdoc":{"issuerauth_alg_values":[-7,-8],"deviceauth_alg_values":[-7]}},` +

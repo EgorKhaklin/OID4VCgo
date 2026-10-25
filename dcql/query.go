@@ -427,7 +427,11 @@ type ClaimsQuery struct {
 	// SatisfiedBySDJWTVCClaims/SatisfiedByMdocClaims (and their
 	// Selected* twins) require one selected value to equal one of
 	// these: the Wallet's filter, and verifier.VerifyResponse's check
-	// that what it received matches the query.
+	// that what it received matches the query. A query decoded from
+	// JSON holds its integers as float64, exact only up to 2^53 in
+	// magnitude: a larger value is rounded, so it can match a claim one
+	// off it and miss its own. Keep a values filter's integers within
+	// ±2^53.
 	Values []any `json:"values,omitempty"`
 
 	// IntentToRetain is OPTIONAL, for an "mso_mdoc" claim only: whether

@@ -86,6 +86,35 @@ resolver already checked. A Wallet Attestation's signer is verified by
 FAPIgo's server (`server.X5CAttesterChain`), which doesn't check
 revocation.
 
+## Known limitations
+
+These are risks the library documents rather than closes, because
+closing them is up to a party it doesn't control:
+
+- **Bearer access tokens.** Under `walletflow.ProfileOpenID4VCI` a
+  wallet takes a Bearer access token where the Authorization Server
+  issues one (OpenID4VCI §13.2). It asks for the token for the offer's
+  Credential Issuer (RFC 8707 `resource`), but only the Authorization
+  Server can restrict the token to that issuer. If it doesn't, an
+  issuer sharing the Authorization Server with another can redeem the
+  token it receives at the other, for a credential about the End-User.
+  `walletflow.ProfileHAIP` takes only DPoP-bound tokens.
+- **Key attestations sent as the `attestation` proof type, for mdocs.**
+  A key attestation names no audience, and the `c_nonce` it carries
+  comes from an unauthenticated Nonce Endpoint, so the issuer it's sent
+  to could redeem it at another issuer the wallet trusts. walletflow
+  sends it in a jwt proof's `key_attestation` header, where the proof's
+  `aud` names the issuer, wherever the issuer takes jwt proofs, and
+  refuses an SD-JWT VC whose `iss` isn't the offer's (unless
+  `Config.AllowForeignIss`). An mdoc names no issuer, so for an mdoc
+  issuer that takes only the `attestation` proof type, nothing but the
+  wallet's issuer trust stops the relay.
+- **DCQL integers above 2^53.** A DCQL query decoded from JSON holds its
+  numbers as float64, so a `values` filter on an integer larger than
+  2^53 in magnitude is rounded: it can match a claim one off it, and
+  miss its own. This applies to the wallet's filter and the verifier's
+  check alike.
+
 ## What to include
 
 - The affected package/file and, if possible, a minimal reproduction.

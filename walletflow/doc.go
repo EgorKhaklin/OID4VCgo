@@ -39,7 +39,11 @@
 //     requires one (key_attestations_required), or under ProfileHAIP
 //     takes one. A key attestation is sent as the attestation proof
 //     type (Appendix F.3) only to an issuer that takes no jwt proof: it
-//     names no audience, so another issuer could redeem it. A credential
+//     names no audience, so another issuer could redeem it. Receiving
+//     refuses an SD-JWT VC naming an issuer other than the offer's, but
+//     an mdoc names none: an mdoc issuer that takes only the
+//     attestation proof type could relay the proof to another issuer
+//     the wallet trusts, and nothing but that trust stops it. A credential
 //     bound to no key isn't received (ErrProofUnsupported);
 //   - a c_nonce where the issuer has a nonce endpoint (§7), and none
 //     where it hasn't;

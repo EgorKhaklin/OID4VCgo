@@ -24,6 +24,14 @@ const (
 	// doesn't have (§7), and takes a Bearer access token the
 	// Authorization Server issues (§13.2). It doesn't receive a
 	// credential bound to no key (ErrProofUnsupported). It's the default.
+	//
+	// A Bearer token works for whoever holds it. The wallet asks for one
+	// for the offer's Credential Issuer (RFC 8707's resource), but only
+	// the Authorization Server can restrict it to that issuer: if it
+	// doesn't, an issuer sharing that Authorization Server with another
+	// can redeem the token the wallet sends it at the other, for a
+	// credential about the End-User. ProfileHAIP, which takes only
+	// DPoP-bound tokens, rules that out.
 	ProfileOpenID4VCI IssuanceProfile = iota
 	// ProfileHAIP also refuses, with ErrProfileViolation, an issuer that
 	// doesn't follow HAIP 1.0 §4: one whose Authorization Server takes
