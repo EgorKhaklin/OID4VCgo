@@ -2,9 +2,12 @@ package walletflow_test
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"errors"
+	"io"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -385,13 +388,20 @@ func TestRespond_RefusesACopyThatBecameLinkable(t *testing.T) {
 }
 
 // An issuer taking only jwt proofs with a key attestation (HAIP 1.0
-// §4.5.1's "jwt proof type using key_attestation") is sent a jwt proof
-// per key, each carrying one Key Attestation of them all, and issues a
-// copy bound to each.
+// §4.5.1's "jwt proof type using key_attestation") is sent one jwt
+// proof carrying one Key Attestation of the whole batch, and issues a
+// copy bound to each attested key (Appendix F.1): one holder key signs,
+// so a key asking for user presence asks once per credential.
 func TestBatch_JWTProofsWithKeyAttestation(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{BatchSize: 3, JWTKeyAttestation: true})
 	before := f.env.Provider.KeyAttestations()
-	w := f.newWalletTrusting(t, f.env.IssuerRoots, nil)
+	keys := &countingKeyStore{MemoryKeyStore: f.keys}
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+	}, walletflow.Dependencies{Keys: keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
+	if err != nil {
+		t.Fatal(err)
+	}
 	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
 	if len(c.Copies) != 3 || f.keys.Len() != 3 {
 		t.Fatalf("copies = %d, keys = %d; want 3 of each", len(c.Copies), f.keys.Len())
@@ -400,6 +410,33 @@ func TestBatch_JWTProofsWithKeyAttestation(t *testing.T) {
 	if n := f.env.Provider.KeyAttestations() - before; n != 1 {
 		t.Errorf("key attestations = %d, want one for the batch", n)
 	}
+	if n := keys.holderSigns.Load(); n != 1 {
+		t.Errorf("holder key signatures = %d, want one for the batch", n)
+	}
+}
+
+// countingKeyStore counts the signatures its holder keys make.
+type countingKeyStore struct {
+	*walletflow.MemoryKeyStore
+	holderSigns atomic.Int32
+}
+
+func (s *countingKeyStore) NewKey(ctx context.Context, purpose walletflow.KeyPurpose) (walletflow.Key, error) {
+	k, err := s.MemoryKeyStore.NewKey(ctx, purpose)
+	if err != nil || purpose != walletflow.KeyPurposeHolder {
+		return k, err
+	}
+	return countingKey{k, &s.holderSigns}, nil
+}
+
+type countingKey struct {
+	walletflow.Key
+	n *atomic.Int32
+}
+
+func (k countingKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	k.n.Add(1)
+	return k.Key.Sign(rand, digest, opts)
 }
 
 // Copies an issuer gave the same jti are kept, but don't keep

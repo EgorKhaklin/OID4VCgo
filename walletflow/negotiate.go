@@ -145,7 +145,7 @@ func takesAttestation(asMeta wallet.AuthorizationServerMetadata) bool {
 
 // proofPlan is how to prove possession of the keys a credential is
 // bound to: jwt proofs (Appendix F.1), a key attestation (Appendix
-// F.3), or jwt proofs each carrying a key attestation in their
+// F.3), or one jwt proof carrying a key attestation of them all in its
 // key_attestation header (Appendix D.1, F.1).
 type proofPlan int
 
