@@ -59,9 +59,18 @@ something a commit message alone should trigger.
 
 - `gofmt -l .`, `go vet ./...`, `go build ./...`, `go test -race ./...`,
   `golangci-lint run ./...` (config in `.golangci.yml`), and
-  `govulncheck ./...` all need to be clean — this is what `ci.yml` enforces
-  on every PR. `examples/passport-vdc` is its own Go module: run `go vet`,
-  `go test` and `golangci-lint` there too (CI's `examples` job).
+  `govulncheck ./...` all need to be clean — this is what `ci.yml` and
+  `govulncheck.yml` enforce on every PR. `examples/passport-vdc` is its
+  own Go module: run `go vet`, `go test` and `golangci-lint` there too
+  (CI's `examples` job).
+- Run `govulncheck ./...` in the root, `mobile` and `examples/passport-vdc`
+  modules under the Go version in their `go.mod`
+  (`GOTOOLCHAIN=go<version from go.mod> govulncheck ./...`), as CI does:
+  that's the oldest Go they may be built with, and the mobile module's
+  standard library ships inside the Swift and Kotlin packages. A
+  standard-library finding is fixed by raising the `go` directive in all
+  three `go.mod` files to a Go release that has the fix; a finding in a
+  dependency, by upgrading that dependency.
 - `mobile` is its own Go module too. Run `go vet ./...`,
   `go test -race ./...` and `go test -race -tags mobiletest ./...` there,
   and `golangci-lint run --build-tags mobiletest ./...` (CI's `mobile`

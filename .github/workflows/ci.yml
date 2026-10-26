@@ -397,13 +397,3 @@ jobs:
           for c in E.parse(sys.argv[1]).iter("testcase"):
               for f in c.findall("failure"): print("::error::%s.%s: %s" % (c.get("classname"), c.get("name"), (f.text or "").splitlines()[0][:400]))' "$f"
           done
-
-  govulncheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # Always the latest Go, deliberately not pinned to go.mod's own
-      # minimum via go-version-file — see FAPIgo's ci.yml for the
-      # rationale (kept identical here).
-      - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
