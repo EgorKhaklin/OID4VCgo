@@ -307,14 +307,14 @@ type DecoyRange struct {
 	Min, Max int
 }
 
-// validate checks d, the field named field, against max, the most
+// validate checks d, the field named field, against most, the most
 // decoys its format allows.
-func (d *DecoyRange) validate(field string, max int) error {
+func (d *DecoyRange) validate(field string, most int) error {
 	if d == nil {
 		return nil
 	}
-	if d.Min < 0 || d.Max < 1 || d.Min > d.Max || d.Max > max {
-		return fmt.Errorf("%s must have 0 <= min <= max, 1 <= max <= %d; got min %d, max %d", field, max, d.Min, d.Max)
+	if d.Min < 0 || d.Max < 1 || d.Min > d.Max || d.Max > most {
+		return fmt.Errorf("%s must have 0 <= min <= max, 1 <= max <= %d; got min %d, max %d", field, most, d.Min, d.Max)
 	}
 	return nil
 }
