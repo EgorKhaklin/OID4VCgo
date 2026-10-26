@@ -54,7 +54,11 @@ type PendingAuthorization struct {
 // a native app's on-device storage — never one shared between users or
 // browsers: the redirect's state alone then finds the authorization it
 // completes (fapigo's client.CallbackBindingDeviceLocalStore). A wallet
-// serving several browsers must not call ResumeIssuance.
+// serving several browsers must not call ResumeIssuance. Outside
+// Config.Development, fapigo takes that binding only for a native app's
+// redirect, so ResumeIssuance needs Config.RedirectURI to be a
+// private-use URI scheme or loopback http to 127.0.0.1 or [::1] (RFC
+// 8252 §7.1, §7.3), not an https claimed link: it fails for one.
 type AuthorizationStore interface {
 	// PutAuthorization stores a, replacing any with its State.
 	PutAuthorization(ctx context.Context, a PendingAuthorization) error
@@ -194,6 +198,8 @@ func (s *sessionStore) Capabilities() storage.Capabilities {
 // RequestCredentials. It returns ErrNoAuthorization when nothing is in
 // progress for the redirect, and an *AuthorizationDeniedError as
 // CompleteAuthorization does. Close the Issuance when done, as usual.
+// Outside Config.Development it needs a native app's redirect URI (see
+// AuthorizationStore).
 func (w *Wallet) ResumeIssuance(ctx context.Context, redirect string) (*Issuance, error) {
 	if err := w.checkIssuance(); err != nil {
 		return nil, err
