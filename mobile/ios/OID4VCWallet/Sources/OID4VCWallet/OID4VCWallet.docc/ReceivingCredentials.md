@@ -120,7 +120,9 @@ The authorization in progress is kept in the credential store, so when
 the redirect arrives at a relaunched app, ``Wallet/resumeIssuance(redirect:)``
 completes it and returns an issuance ready for
 ``Issuance/requestCredentials()``. Handle every redirect this way: in
-SwiftUI, from `onOpenURL`.
+SwiftUI, from `onOpenURL`. Outside development, resuming needs a
+`redirectURI` with the app's own URI scheme, such as
+`com.example.wallet:/callback`: it fails for an https Universal Link.
 
 ```swift
 /// Completes an authorization the app was killed during, from the
