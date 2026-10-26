@@ -407,7 +407,9 @@ final class SessionTests: XCTestCase {
         do {
             _ = try await Self.receive(env, w)
             XCTFail("received a credential with no CRL for its issuer's CA")
-        } catch is WalletError {}
+        } catch {
+            XCTAssertTrue(error is WalletError, "\(error)")
+        }
         do {
             try await w.setCRLs("not a CRL")
             XCTFail("setCRLs took text that isn't a CRL")
