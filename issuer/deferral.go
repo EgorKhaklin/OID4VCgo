@@ -38,6 +38,14 @@ type Deferral struct {
 // (§9.3).
 var ErrDeferredKeyAttestation = errors.New("issuer: a key attestation behind the deferred transaction is no longer valid")
 
+// ErrDeferredAttestationStatusUnknown is returned, wrapped with the
+// reason, by IssueDeferredCredential when Dependencies.AttestationStatus
+// couldn't tell a key attestation's status: its error didn't wrap
+// ErrKeyAttestationRevoked (a Status List that couldn't be fetched,
+// say). The transaction stays pending, so it can be issued once the
+// status can be checked again, or denied with DenyDeferredCredential.
+var ErrDeferredAttestationStatusUnknown = errors.New("issuer: a key attestation behind the deferred transaction has a status that can't be checked now")
+
 // ErrDeferredTransactionResolved is returned by IssueDeferredCredential
 // and DenyDeferredCredential for a transaction that isn't pending any
 // more: already issued, denied or expired.
@@ -107,9 +115,14 @@ type DeferredIssuance struct {
 //
 // The key attestations the transaction's request carried
 // (DeferredTransactionRecord.KeyAttestations) are verified again first,
-// as of now: one that has expired, been revoked or is no longer trusted
-// denies the transaction, and IssueDeferredCredential returns
-// ErrDeferredKeyAttestation, wrapped with the reason.
+// as of now: one that has expired, been revoked
+// (ErrKeyAttestationRevoked) or is no longer trusted denies the
+// transaction, and IssueDeferredCredential returns
+// ErrDeferredKeyAttestation, wrapped with the reason. One whose status
+// can't be checked now leaves it pending, with
+// ErrDeferredAttestationStatusUnknown. A key attestation's exp is when
+// its keys expire too (Appendix D.1), so a Wallet Provider's must
+// outlast the time a deferred transaction waits for its decision.
 //
 // Concurrent calls for one transaction may each build Credentials, and
 // run content.PerCredential for them, but only the first to finish
@@ -139,6 +152,9 @@ func (iss *Issuer) issueDeferredCredential(ctx context.Context, transactionID st
 		keys[i] = resolvedKey{Public: pub, JWKRaw: raw}
 	}
 	if err := iss.recheckKeyAttestations(ctx, cc, record); err != nil {
+		if errors.Is(err, ErrDeferredAttestationStatusUnknown) {
+			return record.ClientID, fmt.Errorf("issuer: issue deferred credential: %w", err)
+		}
 		if _, denyErr := iss.denyPending(ctx, transactionID); denyErr != nil {
 			return record.ClientID, denyErr
 		}
@@ -224,6 +240,9 @@ func (iss *Issuer) recheckKeyAttestations(ctx context.Context, cc CredentialConf
 			return err
 		}
 		if err := iss.checkAttestationStatus(ctx, verified); err != nil {
+			if !errors.Is(err, ErrKeyAttestationRevoked) {
+				return fmt.Errorf("%w: attestation %d: %w", ErrDeferredAttestationStatusUnknown, i, err)
+			}
 			return fmt.Errorf("attestation %d: status: %w", i, err)
 		}
 	}

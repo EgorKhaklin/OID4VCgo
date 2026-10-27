@@ -138,6 +138,32 @@ func TestValidateIssuerConfig_ScopeMapsToOneType(t *testing.T) {
 	}
 }
 
+// Configurations sharing a scope must require the same key
+// attestations, whichever proof types carry them: a token for the
+// stricter would be good for the other.
+func TestValidateIssuerConfig_ScopeSharesKeyAttestations(t *testing.T) {
+	hardware := &oid4vci.KeyAttestationRequirement{KeyStorage: []string{"iso_18045_high"}}
+	validate := func(first, second map[string]oid4vci.ProofTypeConfiguration) error {
+		return haip.ValidateIssuerConfig(issuer.Config{
+			Assurance: issuer.AssuranceDevelopment,
+			CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
+				"pid_hw": {Format: "dc+sd-jwt", Scope: "pid", VCT: "urn:eudi:pid:1", ProofTypesSupported: first},
+				"pid_sw": {Format: "dc+sd-jwt", Scope: "pid", VCT: "urn:eudi:pid:1", ProofTypesSupported: second},
+			},
+		})
+	}
+	jwtHW := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: {KeyAttestationsRequired: hardware}}
+	if err := validate(jwtHW, map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: {KeyAttestationsRequired: hardware}}); err != nil {
+		t.Errorf("the same key attestations by other proof types: %v", err)
+	}
+	if err := validate(jwtHW, map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: {}}); err == nil {
+		t.Error("a scope shared with a configuration requiring no key attestation was accepted")
+	}
+	if err := validate(jwtHW, map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: {KeyAttestationsRequired: &oid4vci.KeyAttestationRequirement{}}}); err == nil {
+		t.Error("a scope shared with a configuration requiring a weaker key attestation was accepted")
+	}
+}
+
 // HAIP 1.0 §4.5.1's "jwt proof type using key_attestation": the
 // configuration requires a key attestation and is one issuer.New
 // accepts with an AttestationVerifier.

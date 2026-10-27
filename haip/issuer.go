@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/issuer"
@@ -130,8 +131,10 @@ func ValidateIssuerConfig(cfg issuer.Config) error {
 	}
 	// HAIP 1.0 §4.3: "The scope value MUST map to a specific Credential
 	// Type": configurations sharing a scope must be of one type, or a
-	// token for it grants more than one.
-	types := map[string]string{}
+	// token for it grants more than one. They must ask for the same key
+	// attestations too, or a token for the stricter one is good for the
+	// other, whose Credential a Verifier can't tell from it.
+	types, attestations := map[string]string{}, map[string]string{}
 	for _, id := range slices.Sorted(maps.Keys(cfg.CredentialConfigurationsSupported)) {
 		c := cfg.CredentialConfigurationsSupported[id]
 		if c.Scope == "" {
@@ -144,7 +147,28 @@ func ValidateIssuerConfig(cfg issuer.Config) error {
 		if seen, ok := types[c.Scope]; ok && seen != credentialType {
 			return fmt.Errorf("haip: credential_configurations_supported[%q]: scope %q is another configuration's, of another Credential Type (HAIP 1.0 §4.3)", id, c.Scope)
 		}
-		types[c.Scope] = credentialType
+		required := keyAttestationsRequired(c)
+		if seen, ok := attestations[c.Scope]; ok && seen != required {
+			return fmt.Errorf("haip: credential_configurations_supported[%q]: scope %q is another configuration's that requires other key attestations, so a token for either is good for both (HAIP 1.0 §4.3, §4.5.1)", id, c.Scope)
+		}
+		types[c.Scope], attestations[c.Scope] = credentialType, required
 	}
 	return nil
+}
+
+// keyAttestationsRequired is what c's proof types require of a key
+// attestation, each one's key_attestations_required (none for a proof
+// type that takes a proof without one), as a string comparable across
+// configurations whichever proof types they take.
+func keyAttestationsRequired(c issuer.CredentialConfiguration) string {
+	seen := map[string]bool{}
+	for _, ptc := range c.ProofTypesSupported {
+		r := ptc.KeyAttestationsRequired
+		if r == nil {
+			seen["none"] = true
+			continue
+		}
+		seen[fmt.Sprintf("%q/%q", slices.Sorted(slices.Values(r.KeyStorage)), slices.Sorted(slices.Values(r.UserAuthentication)))] = true
+	}
+	return strings.Join(slices.Sorted(maps.Keys(seen)), ";")
 }

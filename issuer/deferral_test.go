@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -152,28 +153,29 @@ func TestDeferral_DenyAndExpire(t *testing.T) {
 // TestDeferral_RechecksKeyAttestation: a deferred request keeps the key
 // attestation that attested its binding keys, and IssueDeferredCredential
 // verifies it again: one that has expired or been revoked while the
-// transaction was pending denies the transaction instead of issuing.
+// transaction was pending denies the transaction instead of issuing,
+// and one whose status can't be checked now leaves it pending.
 func TestDeferral_RechecksKeyAttestation(t *testing.T) {
 	for name, tc := range map[string]struct {
-		revoke  bool
+		status  error
 		advance time.Duration
 		denied  bool
+		pending bool
 	}{
 		"still valid":    {},
-		"since revoked":  {revoke: true, denied: true},
+		"since revoked":  {status: fmt.Errorf("status 0x01: %w", issuer.ErrKeyAttestationRevoked), denied: true},
+		"status unknown": {status: errors.New("the Status List couldn't be fetched"), pending: true},
 		"since expired":  {advance: 2 * time.Hour, denied: true},
 		"before its exp": {advance: 30 * time.Minute},
 	} {
 		t.Run(name, func(t *testing.T) {
-			revoked, checked := false, 0
+			var status error
+			checked := 0
 			f := newDeferralFixture(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
 				cfg.Limits.DeferredTransactionLifetime = 3 * time.Hour
 				deps.AttestationStatus = attestationStatusFunc(func(context.Context, issuer.VerifiedKeyAttestation) error {
 					checked++
-					if revoked {
-						return errors.New("revoked")
-					}
-					return nil
+					return status
 				})
 			})
 			ctx := context.Background()
@@ -193,10 +195,18 @@ func TestDeferral_RechecksKeyAttestation(t *testing.T) {
 				t.Fatalf("record = %+v, %v; want both keys and the key attestation, once", record, err)
 			}
 
-			revoked = tc.revoke
+			status = tc.status
 			f.clock.now = f.clock.now.Add(tc.advance)
 			checked = 0
 			err = f.iss.IssueDeferredCredential(ctx, resp.TransactionID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()})
+			if tc.pending {
+				if !errors.Is(err, issuer.ErrDeferredAttestationStatusUnknown) || errors.Is(err, issuer.ErrDeferredKeyAttestation) {
+					t.Fatalf("IssueDeferredCredential = %v, want ErrDeferredAttestationStatusUnknown", err)
+				}
+				// Still pending: once the status can be checked, it issues.
+				status, checked = nil, 0
+				err = f.iss.IssueDeferredCredential(ctx, resp.TransactionID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()})
+			}
 			res, pollErr := f.iss.RequestDeferredCredential(ctx, deferralAuth, issuer.DeferredCredentialRequest{TransactionID: resp.TransactionID})
 			if tc.denied {
 				if !errors.Is(err, issuer.ErrDeferredKeyAttestation) {

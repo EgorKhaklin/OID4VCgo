@@ -56,7 +56,8 @@ type Endpoints struct {
 // stance FAPIgo's own server.Limits takes.
 type Limits struct {
 	// NonceLifetime bounds how long an issued c_nonce remains valid.
-	// Required only when Endpoints.Nonce is set.
+	// Required only when Endpoints.Nonce is set; at most an hour under
+	// AssuranceProduction, since a c_nonce is a proof's only freshness.
 	NonceLifetime time.Duration
 
 	// CredentialOfferLifetime bounds how long a by-reference Credential
