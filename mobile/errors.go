@@ -81,6 +81,9 @@ func classify(err error) error {
 	case errors.Is(err, walletflow.ErrMalformedRequest):
 		// What the platform handed over, not a service's refusal.
 		return newError(CodeInvalidInput, walletflow.ErrMalformedRequest)
+	case errors.Is(err, walletflow.ErrNotConfigured):
+		// The configuration the app passed lacks what this call needs.
+		return newError(CodeInvalidInput, err)
 	case errors.Is(err, walletflow.ErrNotFound):
 		return newError(CodeNotFound, err)
 	case errors.Is(err, walletflow.ErrProfileViolation):

@@ -49,7 +49,7 @@ format or error code below changes incompatibly.
 
 | Code | Meaning |
 |---|---|
-| `invalid_input` | an argument or the configuration is malformed |
+| `invalid_input` | an argument or the configuration is malformed, or the configuration lacks what the call needs (`verifier_roots` to present, say) |
 | `platform` | a callback into the app failed (its message follows) |
 | `network` | a request couldn't be made, got no answer, or timed out; retryable |
 | `unavailable` | the service answered with HTTP 5xx or 429; retryable later |
@@ -227,7 +227,11 @@ doesn't follow HAIP 1.0 §4 (`profile_violation`), and needs a provider
 and `client_id`. A Wallet Attestation needs a provider and `client_id`,
 and the authorization code grant a `redirect_uri`: a wallet receiving
 credentials only from pre-authorized codes redeemed with no client
-authentication needs none of them.
+authentication needs none of them. Outside `development`, a
+`redirect_uri` must be the app's own URI scheme
+(`com.example.wallet:/callback`) or loopback http to 127.0.0.1 or
+[::1], or `NewWallet` is `invalid_input`: `ResumeIssuance` can't
+complete an https one.
 `registrar_roots`, if set, are the registrars whose registrations of
 Verifiers the wallet checks (OpenID4VP `verifier_info`, OID4VCgo's
 `registration` format); without them, registrations are ignored.

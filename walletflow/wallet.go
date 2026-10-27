@@ -10,6 +10,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"slices"
 	"sync"
 	"time"
@@ -33,7 +34,11 @@ type Config struct {
 	// ClientID is REQUIRED to authenticate with a Wallet Attestation,
 	// and RedirectURI for the authorization code grant; a wallet
 	// receiving credentials only from pre-authorized codes redeemed
-	// with no client authentication needs neither.
+	// with no client authentication needs neither. Outside Development,
+	// RedirectURI must be a native app's: a private-use URI scheme
+	// (com.example.wallet:/callback) or loopback http to 127.0.0.1 or
+	// [::1] (RFC 8252 §7.1, §7.3), not an https link, which
+	// ResumeIssuance can't complete (see AuthorizationStore).
 	ClientID    string
 	RedirectURI string
 
@@ -497,7 +502,30 @@ func (w *Wallet) checkReceivingAtNew() error {
 	if w.cfg.RedirectURI != "" && !w.deps.Authorizations.Durable() {
 		return errors.New("walletflow: receiving credentials in production needs a Durable Dependencies.Authorizations, so an authorization survives the app being suspended")
 	}
+	if w.cfg.RedirectURI != "" && !nativeRedirectURI(w.cfg.RedirectURI) {
+		return errors.New("walletflow: in production, Config.RedirectURI must be a private-use URI scheme, such as com.example.wallet:/callback, or loopback http to 127.0.0.1 or [::1] (RFC 8252 §7.1, §7.3): ResumeIssuance can't complete an authorization that redirects anywhere else once the app is relaunched")
+	}
 	return nil
+}
+
+// nativeRedirectURI reports whether uri is one only a native app
+// receives, the only kind fapigo/client lets a resumed issuance complete
+// under production assurance (client.CallbackBindingDeviceLocalStore):
+// loopback http to an IP literal, or a private-use URI scheme.
+func nativeRedirectURI(uri string) bool {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return false
+	}
+	switch u.Scheme {
+	case "":
+		return false
+	case "https":
+		return false
+	case "http":
+		return u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"
+	}
+	return true
 }
 
 // validateChoices refuses a Config field set to a value it has no
@@ -755,9 +783,9 @@ func (c Config) issuerTrust(format, docType string) (*x509.CertPool, func(*x509.
 func (w *Wallet) checkIssuance() error {
 	switch {
 	case !w.cfg.receivesCredentials():
-		return errors.New("walletflow: Config.IssuerRoots is required to receive credentials")
+		return fmt.Errorf("walletflow: Config.IssuerRoots is required to receive credentials: %w", ErrNotConfigured)
 	case w.cfg.IssuanceProfile == ProfileHAIP && (w.deps.Provider == nil || w.cfg.ClientID == ""):
-		return errors.New("walletflow: Dependencies.Provider and Config.ClientID are required to receive credentials under ProfileHAIP")
+		return fmt.Errorf("walletflow: Dependencies.Provider and Config.ClientID are required to receive credentials under ProfileHAIP: %w", ErrNotConfigured)
 	}
 	if w.cfg.Development {
 		return nil
@@ -787,7 +815,7 @@ func (w *Wallet) checkProductionReceiving() error {
 func (w *Wallet) checkAuthorizationCode() error {
 	switch {
 	case w.cfg.RedirectURI == "":
-		return errors.New("walletflow: Config.RedirectURI is required to receive credentials with the authorization code grant")
+		return fmt.Errorf("walletflow: Config.RedirectURI is required to receive credentials with the authorization code grant: %w", ErrNotConfigured)
 	case !w.cfg.Development && !w.deps.Authorizations.Durable():
 		return errors.New("walletflow: receiving credentials in production needs a Durable Dependencies.Authorizations, so an authorization survives the app being suspended")
 	}

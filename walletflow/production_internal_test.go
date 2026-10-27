@@ -42,7 +42,7 @@ func (attestingProvider) KeyAttestation(context.Context, []*ecdsa.PublicKey, str
 // productionWallet is a production wallet over deps' stores.
 func productionWallet(t *testing.T, deps Dependencies) *Wallet {
 	t.Helper()
-	w, err := New(Config{ClientID: "wallet", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool()}, deps)
+	w, err := New(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool()}, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestProductionAssurance(t *testing.T) {
 		deps := durable
 		change(&deps)
 		// Refused by New, not first when a holder tries to receive one.
-		if _, err := New(Config{ClientID: "wallet", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool()}, deps); err == nil || !strings.Contains(err.Error(), name) {
+		if _, err := New(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool()}, deps); err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("without %s: New = %v", name, err)
 		}
 	}
@@ -98,7 +98,7 @@ func TestProductionAssurance(t *testing.T) {
 	// receives only pre-authorized codes.
 	deps := durable
 	deps.Authorizations = NewMemoryAuthorizationStore()
-	if _, err := New(Config{ClientID: "wallet", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool()}, deps); err == nil || !strings.Contains(err.Error(), "Durable") {
+	if _, err := New(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool()}, deps); err == nil || !strings.Contains(err.Error(), "Durable") {
 		t.Errorf("an authorization code wallet without a Durable Authorizations: New = %v", err)
 	}
 	w, err = New(Config{ClientID: "wallet", IssuerRoots: x509.NewCertPool()}, deps)
@@ -125,7 +125,7 @@ func TestProductionAssurance_RefreshNeedsDurableGrants(t *testing.T) {
 		Keys: durableKeyStore{NewMemoryKeyStore()}, Credentials: NewMemoryCredentialStore(),
 		Provider: attestingProvider{}, Authorizations: durableAuthorizations{NewMemoryAuthorizationStore()},
 	}
-	cfg := Config{ClientID: "wallet", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool(), RequestRefresh: true}
+	cfg := Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool(), RequestRefresh: true}
 	if _, err := New(cfg, deps); err == nil || !strings.Contains(err.Error(), "Durable Dependencies.Grants") {
 		t.Errorf("with a memory GrantStore: New = %v", err)
 	}
@@ -225,5 +225,57 @@ func TestNew_RoleSeparationSystemPool(t *testing.T) {
 	}
 	if _, err := New(Config{IssuerRoots: system, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifiers, LeafPolicy: policy}}, deps); err != nil {
 		t.Errorf("system IssuerRoots, both narrowed: %v", err)
+	}
+}
+
+// In production, New takes only a native app's redirect URI, the only
+// kind a resumed issuance's fapigo/client accepts at production
+// assurance: an https one would fail only once ResumeIssuance runs.
+func TestProductionRedirectURI(t *testing.T) {
+	deps := Dependencies{
+		Keys: durableKeyStore{NewMemoryKeyStore()}, Credentials: NewMemoryCredentialStore(),
+		Provider: attestingProvider{}, Authorizations: durableAuthorizations{NewMemoryAuthorizationStore()},
+	}
+	for uri, ok := range map[string]bool{
+		"com.example.wallet:/cb":    true,
+		"http://127.0.0.1/cb":       true,
+		"http://[::1]:8080/cb":      true,
+		"https://wallet.example/cb": false,
+		"http://wallet.example/cb":  false,
+		"http://localhost/cb":       false,
+		"/cb":                       false,
+	} {
+		w, err := New(Config{ClientID: "wallet", RedirectURI: uri, IssuerRoots: x509.NewCertPool()}, deps)
+		switch {
+		case ok && err != nil:
+			t.Errorf("New(RedirectURI %q) = %v, want it taken", uri, err)
+		case !ok && (err == nil || !strings.Contains(err.Error(), "Config.RedirectURI")):
+			t.Errorf("New(RedirectURI %q) = %v, want it refused", uri, err)
+		}
+		if w == nil {
+			continue
+		}
+		// Every redirect New takes, a resumed issuance's client takes too.
+		s := &Issuance{w: w, offer: oid4vci.CredentialOffer{CredentialIssuer: "https://issuer.example"}, resumed: true}
+		if s.instanceKey, err = newKey(context.Background(), w.deps.Keys, KeyPurposeInstance); err != nil {
+			t.Fatal(err)
+		}
+		if s.dpopKey, err = w.newDPoPKey(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		issuer, endpoints, err := wallet.AuthorizationServerMetadata{
+			Issuer: "https://as.example", AuthorizationEndpoint: "https://as.example/authorize",
+			TokenEndpoint: "https://as.example/token", PushedAuthorizationRequestEndpoint: "https://as.example/par",
+		}.ClientEndpoints()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.oauthClient(issuer, endpoints, "https://as.example", client.StaticAttestation("eyJ.attestation.jwt")); err != nil {
+			t.Errorf("RedirectURI %q: a resumed issuance's client doesn't build: %v", uri, err)
+		}
+	}
+	dev, err := New(Config{ClientID: "wallet", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool(), Development: true}, deps)
+	if err != nil || dev == nil {
+		t.Fatalf("New(Development, https RedirectURI) = %v, want it taken", err)
 	}
 }

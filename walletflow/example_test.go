@@ -23,7 +23,7 @@ func ExampleNew() {
 		authorizations             walletflow.AuthorizationStore // durable, so an authorization survives a suspension
 	)
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: "https://wallet.example.com", RedirectURI: "https://wallet.example.com/callback",
+		ClientID: "https://wallet.example.com", RedirectURI: "com.example.wallet:/callback",
 		IssuerRoots: issuerRoots, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
 	}, walletflow.Dependencies{Keys: keys, Credentials: credentials, Authorizations: authorizations})
 	if err != nil {
@@ -50,7 +50,7 @@ func ExampleWallet_StartIssuance() {
 		var signIn string
 		if signIn, err = s.BeginAuthorization(ctx); err == nil {
 			_ = signIn // open in a browser; it redirects back with the result
-			err = s.CompleteAuthorization(ctx, "https://wallet.example.com/callback?code=…&state=…")
+			err = s.CompleteAuthorization(ctx, "com.example.wallet:/callback?code=…&state=…")
 		}
 	}
 	if err != nil {

@@ -527,11 +527,11 @@ func TestNewWallet_RefusesBadConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.StartIssuance(NewOperation(0), "openid-credential-offer://?credential_offer_uri=https%3A%2F%2Fissuer.example%2Fo"); code(err) != CodeProtocol {
+	if _, err := w.StartIssuance(NewOperation(0), "openid-credential-offer://?credential_offer_uri=https%3A%2F%2Fissuer.example%2Fo"); code(err) != CodeInvalidInput {
 		t.Errorf("issuing without issuer settings: %v", err)
 	}
-	if _, err := w.StartPresentation(NewOperation(0), "openid4vp://?client_id=x&request_uri=https%3A%2F%2Fv.example%2Fr"); err == nil {
-		t.Error("presenting without verifier_roots succeeded")
+	if _, err := w.StartPresentation(NewOperation(0), "openid4vp://?client_id=x&request_uri=https%3A%2F%2Fv.example%2Fr"); code(err) != CodeInvalidInput {
+		t.Errorf("presenting without verifier_roots: %v", err)
 	}
 }
 
