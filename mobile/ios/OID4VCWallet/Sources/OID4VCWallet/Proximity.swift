@@ -549,6 +549,10 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// `crls`. A role listed fails closed for any CA it has no current CRL
     /// from, until `ProximityReader.setCRLs(_:)` supplies one.
     public var revocation: [RevocationRole]
+    /// PEM certificates of the CAs that issued certificates pinned in the
+    /// roots, for a role in `revocation`, as
+    /// `WalletConfiguration.crlIssuers`.
+    public var crlIssuers: String
 
     /// A reader's trust role whose certificates can be checked for
     /// revocation.
@@ -564,7 +568,8 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// and `readerChain`, requests are signed.
     public init(issuerRoots: String, readerKeyID: String? = nil, readerChain: String? = nil,
                 maxClockSkewSeconds: Int? = nil, requireMDLSignerEKU: Bool = false,
-                issuerRootsByDocType: [String: String] = [:], crls: String = "", revocation: [RevocationRole] = []) {
+                issuerRootsByDocType: [String: String] = [:], crls: String = "", revocation: [RevocationRole] = [],
+                crlIssuers: String = "") {
         self.issuerRoots = issuerRoots
         self.readerKeyID = readerKeyID
         self.readerChain = readerChain
@@ -573,13 +578,14 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         self.issuerRootsByDocType = issuerRootsByDocType
         self.crls = crls
         self.revocation = revocation
+        self.crlIssuers = crlIssuers
     }
 
     enum CodingKeys: String, CodingKey {
         case issuerRoots = "issuer_roots", readerKeyID = "reader_key_id", readerChain = "reader_chain"
         case maxClockSkewSeconds = "max_clock_skew_seconds", requireMDLSignerEKU = "require_mdl_signer_eku"
         case issuerRootsByDocType = "issuer_roots_by_doctype"
-        case crls, revocation
+        case crls, revocation, crlIssuers = "crl_issuers"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -592,6 +598,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         requireMDLSignerEKU = try c.decodeIfPresent(Bool.self, forKey: .requireMDLSignerEKU) ?? false
         crls = try c.decodeIfPresent(String.self, forKey: .crls) ?? ""
         revocation = try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? []
+        crlIssuers = try c.decodeIfPresent(String.self, forKey: .crlIssuers) ?? ""
     }
 }
 

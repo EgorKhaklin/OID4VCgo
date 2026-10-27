@@ -564,6 +564,11 @@ public data class ProximityReaderConfiguration(
      * from, until [ProximityReader.setCRLs] supplies one.
      */
     @SerialName("revocation") val revocation: List<RevocationRole> = emptyList(),
+    /**
+     * PEM certificates of the CAs that issued certificates pinned in the
+     * roots, for a role in [revocation], as [WalletConfiguration.crlIssuers].
+     */
+    @SerialName("crl_issuers") val crlIssuers: String = "",
 ) {
     /** A reader's trust role whose certificates can be checked for revocation. */
     @Serializable

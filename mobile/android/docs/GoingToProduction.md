@@ -62,8 +62,11 @@ wallet's provider attests anything, and is for development only.
   CRLs expire at their nextUpdate: fetch fresh ones in the background
   and hand them over with `Wallet.setCRLs`, which replaces them all
   (empty text removes them) and throws `invalidInput`, keeping the old
-  lists, for anything that isn't a CRL. A `ProximityReader` takes the
-  same, for its document signers and status lists.
+  lists, for anything that isn't a CRL. A certificate pinned in the
+  roots, such as a Verifier's leaf in `verifierRoots`, is checked
+  against its CA's CRL: give that CA's certificate in `crlIssuers`, or
+  it's refused. A `ProximityReader` takes the same, for its document
+  signers and status lists.
 - As a Credential Manager provider, see the open caveat in
   [Presenting to Chrome](PresentingToChrome.md).
 

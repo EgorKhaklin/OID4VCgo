@@ -18,7 +18,7 @@ OID4VCWallet 0.7.0 (Swift); `StartDCAPIPresentation`, proximity
 `tls_pin` code, later the KeyAgreement (`SetKeyAgreement`,
 `CheckKeyAgreement`, `proximity_device_auth`), and then certificate
 revocation (`crls`, `revocation`, `SetCRLs` on a Wallet and a
-ProximityReader). An older wrapper shows a
+ProximityReader, later `crl_issuers`). An older wrapper shows a
 code it doesn't know as it is. Check a library's release notes for the
 calls it has.
 
@@ -221,7 +221,7 @@ library's an `IOException`.
  "status_issuers": {"https://issuer.example": ["https://status.example"]},
  "require_issuer_name": false, "issuer_metadata_roots": "<PEM>", "require_signed_issuer_metadata": false,
  "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0, "allow_foreign_iss": false,
- "crls": "<PEM X509 CRLs>", "revocation": ["issuer", "verifier"]}
+ "crls": "<PEM X509 CRLs>", "revocation": ["issuer", "verifier"], "crl_issuers": "<PEM>"}
 ```
 
 `issuer_roots` is needed to receive credentials, and `verifier_roots` to
@@ -409,10 +409,19 @@ certificate, under `verifier_roots`) and `status` (a status list's
 signer, in `CheckStatus`). A role not named checks no revocation. A
 role named accepts a certificate only through a verified path on which
 each certificate below the trust anchor has a current CRL (its
-nextUpdate not passed) from its issuer that doesn't list it: a
-certificate a list names is refused, and so, failing closed, is one
-whose issuer has no current list — with lists for issuers but not for
-Verifiers, name `issuer` alone. A refused credential is `protocol`, a
+nextUpdate not passed) from its issuer that doesn't list it; the trust
+anchor itself isn't checked, unless it's a certificate pinned in the
+roots that isn't self-signed (a Verifier's leaf in `verifier_roots`,
+say), which is checked against a CRL from the CA that issued it. That
+CA isn't on the path, so its certificate, to verify the CRL with, comes
+from `crl_issuers` (PEM CA certificates, used for nothing else: they
+aren't trust anchors). A certificate a list names is refused, and so,
+failing closed, is one whose issuer has no current list, or a pinned
+one whose CA isn't in `crl_issuers` — with lists for issuers but not
+for Verifiers, name `issuer` alone. `crl_issuers` holding anything but
+CA certificates is `invalid_input`; it was added within ABI 12, and
+before it a pinned certificate that isn't self-signed was always
+refused under its role. A refused credential is `protocol`, a
 refused Verifier `untrusted_verifier`, a refused registrar's
 registration unverified and a refused reader unrecognized, as for a
 certificate outside their roots. A role may be named with no `crls`
@@ -742,7 +751,7 @@ can't use is `invalid_input`.
 
 The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",
-"require_mdl_signer_eku", "crls", "revocation"}`:
+"require_mdl_signer_eku", "crls", "revocation", "crl_issuers"}`:
 - `issuer_roots` (PEM) are the IACAs whose mdocs are accepted, of any
   document type `issuer_roots_by_doctype` doesn't name.
 - `issuer_roots_by_doctype` (an object of document type to PEM) are each
@@ -766,8 +775,9 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   closed for a CA without a current list, `SetCRLs(pem)` replaces the
   lists for sessions started before or after, and anything but CRLs is
   `invalid_input`. An MSO's status list chaining to the certificate its
-  status names needs that certificate's list too. Additive within
-  ABI 12.
+  status names needs that certificate's list too. `crl_issuers` are
+  the CAs of certificates pinned in the roots, as a Wallet's. Additive
+  within ABI 12.
 
 | Method | Result |
 |---|---|

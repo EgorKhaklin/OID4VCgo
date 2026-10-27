@@ -237,6 +237,14 @@ public data class WalletConfiguration(
      * listed checks no revocation.
      */
     @SerialName("revocation") val revocation: List<RevocationRole> = emptyList(),
+    /**
+     * PEM certificates of the CAs that issued certificates pinned in the
+     * roots (a leaf in [verifierRoots], say), for a role in [revocation]:
+     * a pinned certificate is checked against its CA's CRL, verified with
+     * the CA's certificate from here. They aren't trust anchors. Without
+     * its CA here, a pinned certificate that isn't self-signed is refused.
+     */
+    @SerialName("crl_issuers") val crlIssuers: String = "",
 ) {
     /** A trust role whose certificates can be checked for revocation. */
     @Serializable

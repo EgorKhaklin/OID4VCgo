@@ -66,8 +66,12 @@ development only.
   nextUpdate: fetch fresh ones in the background and hand them over
   with ``Wallet/setCRLs(_:)``, which replaces them all (empty text
   removes them) and throws `invalidInput`, keeping the old lists, for
-  anything that isn't a CRL. A ``ProximityReader`` takes the same, for
-  its document signers and status lists.
+  anything that isn't a CRL. A certificate pinned in the roots, such as
+  a Verifier's leaf in ``WalletConfiguration/verifierRoots``, is checked
+  against its CA's CRL: give that CA's certificate in
+  ``WalletConfiguration/crlIssuers``, or it's refused. A
+  ``ProximityReader`` takes the same, for its document signers and
+  status lists.
 
 ### Privacy
 

@@ -67,12 +67,15 @@ type proximityReaderConfig struct {
 	// has no current CRL from.
 	CRLs       string   `json:"crls,omitempty"`
 	Revocation []string `json:"revocation,omitempty"`
+	// CRLIssuers are PEM certificates of the CAs that issued
+	// certificates pinned in the roots, as a Wallet's crl_issuers.
+	CRLIssuers string `json:"crl_issuers,omitempty"`
 }
 
 // NewProximityReader configures a reader from configJSON:
 // {"issuer_roots", "issuer_roots_by_doctype", "reader_key_id",
 // "reader_chain", "max_clock_skew_seconds", "require_mdl_signer_eku",
-// "crls", "revocation"},
+// "crls", "crl_issuers", "revocation"},
 // refusing any other key, so a misspelled option isn't silently left
 // at its default. keys holds the reader's key, reader_key_id; it may be
 // nil for a reader that doesn't sign.
@@ -144,7 +147,7 @@ func (r *ProximityReader) configureRevocation(cfg proximityReaderConfig) error {
 	if err != nil {
 		return err
 	}
-	if r.crls, err = newCRLSet("crls", cfg.CRLs); err != nil {
+	if r.crls, err = newCRLSet(cfg.CRLs, cfg.CRLIssuers); err != nil {
 		return err
 	}
 	if named[revocationIssuer] {

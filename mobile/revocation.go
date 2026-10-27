@@ -19,13 +19,22 @@ import (
 // them over without rebuilding the wallet.
 type crlSet struct {
 	lists atomic.Pointer[[]*x509.RevocationList]
+	// issuers are the certificates of the CAs that issued certificates
+	// pinned in the roots (certrevocation.CRLs.Issuers): a pinned leaf's
+	// CRL is verified against its CA, which isn't on its path.
+	issuers []*x509.Certificate
 }
 
-// newCRLSet is a crlSet holding the CRLs of the config key name's PEM.
-func newCRLSet(name, pemText string) (*crlSet, error) {
+// newCRLSet is a crlSet holding the CRLs of crls, a configuration's
+// "crls" PEM, with the CA certificates of issuers, its "crl_issuers".
+func newCRLSet(crls, issuers string) (*crlSet, error) {
 	s := &crlSet{}
-	if err := s.set(pemText); err != nil {
-		return nil, newError(CodeInvalidInput, fmt.Errorf("%s: %w", name, err))
+	if err := s.set(crls); err != nil {
+		return nil, newError(CodeInvalidInput, fmt.Errorf("crls: %w", err))
+	}
+	var err error
+	if s.issuers, err = parseCRLIssuers(issuers); err != nil {
+		return nil, newError(CodeInvalidInput, fmt.Errorf("crl_issuers: %w", err))
 	}
 	return s, nil
 }
@@ -40,15 +49,16 @@ func (s *crlSet) set(pemText string) error {
 	return nil
 }
 
-// checker is a certrevocation.CRLs over s's current lists. With none
-// that apply, it fails closed (certrevocation.ErrNoCurrentCRL).
+// checker is a certrevocation.CRLs over s's current lists and its
+// issuers. With none that apply, it fails closed
+// (certrevocation.ErrNoCurrentCRL).
 func (s *crlSet) checker() certrevocation.CRLs {
 	return certrevocation.CRLs{Lists: func(context.Context) ([]*x509.RevocationList, error) {
 		if p := s.lists.Load(); p != nil {
 			return *p, nil
 		}
 		return nil, nil
-	}}
+	}, Issuers: s.issuers}
 }
 
 // maxCRLs bounds how many lists one PEM text may hold: each is checked
@@ -83,6 +93,40 @@ func parseCRLs(pemText string) ([]*x509.RevocationList, error) {
 		return nil, errors.New("text that isn't a PEM X509 CRL block")
 	}
 	return lists, nil
+}
+
+// parseCRLIssuers parses pemText's "CERTIFICATE" blocks, each a CA
+// that issued a certificate pinned in the roots. Anything else — another
+// block type, text outside the blocks, a certificate that doesn't parse
+// or isn't a CA's — is refused, as parseCRLs refuses what isn't a CRL.
+// Empty text is none.
+func parseCRLIssuers(pemText string) ([]*x509.Certificate, error) {
+	var issuers []*x509.Certificate
+	rest := []byte(pemText)
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("PEM block %d is %q, not a CERTIFICATE", len(issuers), block.Type)
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("certificate %d: %w", len(issuers), err)
+		}
+		if !cert.BasicConstraintsValid || !cert.IsCA {
+			return nil, fmt.Errorf("certificate %d (%q) isn't a CA's", len(issuers), cert.Subject)
+		}
+		if issuers = append(issuers, cert); len(issuers) > maxCRLs {
+			return nil, fmt.Errorf("more than %d certificates", maxCRLs)
+		}
+	}
+	if len(bytes.TrimSpace(rest)) > 0 {
+		return nil, errors.New("text that isn't a PEM CERTIFICATE block")
+	}
+	return issuers, nil
 }
 
 // Revocation role names, the "revocation" configuration's entries.

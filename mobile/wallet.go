@@ -149,6 +149,14 @@ type config struct {
 	// until SetCRLs supplies one; a role not named checks no revocation.
 	CRLs       string   `json:"crls,omitempty"`
 	Revocation []string `json:"revocation,omitempty"`
+	// CRLIssuers are PEM certificates of the CAs that issued
+	// certificates pinned in the roots (a leaf in verifier_roots, say),
+	// for a role Revocation names: a pinned certificate is checked
+	// against its CA's CRL, verified with the CA's certificate from here
+	// (certrevocation.CRLs.Issuers). They aren't trust anchors. Without
+	// its CA here, a pinned certificate that isn't self-signed is
+	// refused, failing closed.
+	CRLIssuers string `json:"crl_issuers,omitempty"`
 }
 
 // proximityDeviceAuth is the walletflow.ProximityDeviceAuth name names.
@@ -271,7 +279,7 @@ func walletRevocation(cfg config, wcfg *walletflow.Config) (*crlSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	crls, err := newCRLSet("crls", cfg.CRLs)
+	crls, err := newCRLSet(cfg.CRLs, cfg.CRLIssuers)
 	if err != nil {
 		return nil, err
 	}
