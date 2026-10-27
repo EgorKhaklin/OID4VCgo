@@ -1,11 +1,13 @@
 package verifier_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -56,12 +58,18 @@ func ExampleNewTransactions() {
 			// NoCheck keeps the example short: a deployment passes
 			// certrevocation.CRLs with its CAs' current lists.
 			IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: issuerRoots, Revocation: certrevocation.NoCheck{}}, MaxKeyBindingAge: 5 * time.Minute,
-			// Which issuers may issue which types: here issuerCA issues
-			// PIDs and nothing else. Under AssuranceProduction this, or
-			// AnyIssuerForAnyType, is required.
+			// Which issuers may issue which types: here only the PID
+			// issuer, known by its certificate, and only PIDs. Under
+			// AssuranceProduction this, or AnyIssuerForAnyType, is
+			// required.
 			IssuerAuthorized: func(_ context.Context, a verifier.IssuerAuthorization) error {
-				if a.Type != "urn:eudi:pid:1" {
-					return fmt.Errorf("issuerCA doesn't issue %q", a.Type)
+				if len(a.IssuerChain) == 0 || !bytes.Equal(a.IssuerChain[0], issuerCert.Raw) {
+					return errors.New("not the PID issuer")
+				}
+				for _, typ := range a.MatchedTypes {
+					if typ != "urn:eudi:pid:1" {
+						return fmt.Errorf("the PID issuer doesn't issue %q", typ)
+					}
 				}
 				return nil
 			},
