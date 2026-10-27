@@ -45,7 +45,11 @@ the last good list when a fetch fails, and refuses a list that isn't
 signed by one of those CAs or is older than the one it holds, so an
 unreachable or tampered-with distribution point (CRLs are often served
 over plain http) can't evict or roll back a good list. A missing or
-stale CRL fails closed. `certrevocation.NoCheck{}` declines the check explicitly, for
+stale CRL fails closed. A leaf pinned as a trust anchor is checked
+against its CA's CRL too, so that CA's certificate must be in
+`CRLs.Issuers` (`r.Checker()` sets the Refresher's own `Issuers`
+there), or the pinned leaf is refused.
+`certrevocation.NoCheck{}` declines the check explicitly, for
 short-lived certificates or a trust framework that removes compromised
 issuers from the anchor set itself.
 

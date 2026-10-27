@@ -146,3 +146,36 @@ func TestNoCheck(t *testing.T) {
 		t.Errorf("NoCheck: %v", err)
 	}
 }
+
+// A chain of one certificate that isn't self-signed, a pinned leaf, is
+// checked against its CA's CRL, verified with the CA's certificate from
+// Issuers; a self-signed one alone has nothing to check.
+func TestCRLs_PinnedLeaf(t *testing.T) {
+	p := newPKI(t)
+	pinned := []*x509.Certificate{p.leaf}
+	tests := map[string]struct {
+		lists   []*x509.RevocationList
+		issuers []*x509.Certificate
+		chain   []*x509.Certificate
+		want    error
+	}{
+		"clean":         {[]*x509.RevocationList{testcert.CRL(t, p.inter, p.interKey)}, []*x509.Certificate{p.root, p.inter}, pinned, nil},
+		"revoked":       {[]*x509.RevocationList{testcert.CRL(t, p.inter, p.interKey, p.leaf.SerialNumber)}, []*x509.Certificate{p.inter}, pinned, certrevocation.ErrRevoked},
+		"no lists":      {nil, []*x509.Certificate{p.inter}, pinned, certrevocation.ErrNoCurrentCRL},
+		"no issuers":    {[]*x509.RevocationList{testcert.CRL(t, p.inter, p.interKey)}, nil, pinned, certrevocation.ErrNoCurrentCRL},
+		"forged issuer": {[]*x509.RevocationList{testcert.CRL(t, p.fakeInter, p.fakeKey)}, []*x509.Certificate{nil, p.fakeInter}, pinned, certrevocation.ErrNoCurrentCRL},
+		"self-signed":   {nil, nil, []*x509.Certificate{p.root}, nil},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			checker := certrevocation.CRLs{Lists: func(context.Context) ([]*x509.RevocationList, error) { return tc.lists, nil }, Issuers: tc.issuers}
+			err := checker.CheckRevocation(context.Background(), certrevocation.Check{Chain: tc.chain})
+			switch {
+			case tc.want == nil && err != nil:
+				t.Fatalf("CheckRevocation = %v, want nil", err)
+			case tc.want != nil && !errors.Is(err, tc.want):
+				t.Fatalf("CheckRevocation = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}

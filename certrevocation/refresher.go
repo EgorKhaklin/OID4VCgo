@@ -245,9 +245,10 @@ func (r *Refresher) Lists(context.Context) ([]*x509.RevocationList, error) {
 	return lists, nil
 }
 
-// Checker returns CRLs checking against r's held lists.
+// Checker returns CRLs checking against r's held lists, with r's
+// Issuers as its own, for a pinned certificate one of them issued.
 func (r *Refresher) Checker() CRLs {
-	return CRLs{Lists: r.Lists}
+	return CRLs{Lists: r.Lists, Issuers: slices.Clone(r.issuers)}
 }
 
 // Refresh fetches every URL once, in turn, and returns the failures

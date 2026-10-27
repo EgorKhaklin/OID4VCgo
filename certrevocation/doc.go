@@ -20,6 +20,9 @@
 // returns nil when no certificate below the anchor has been revoked.
 // The anchor itself is never checked: a relying party distrusts an
 // anchor by removing it from its trust anchor set, not by asking it.
+// The exception is a leaf pinned as an anchor, verified as a path of
+// itself alone: CRLs checks it against its CA's CRL, which needs that
+// CA's certificate in CRLs.Issuers.
 //
 // CRLs implements Checker with Certificate Revocation Lists (RFC 5280
 // §5) the caller supplies. It does no fetching of its own: a
