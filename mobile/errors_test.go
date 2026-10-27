@@ -40,6 +40,10 @@ func TestClassify(t *testing.T) {
 			err:  fmt.Errorf("walletflow: credential %q: %w", "cred-1", walletflow.ErrCredentialChanged),
 			code: CodeInvalidSelection, mustNotSee: "cred-1",
 		},
+		"not configured": {
+			err:  fmt.Errorf("walletflow: Config.VerifierTrust is required to present: %w", walletflow.ErrNotConfigured),
+			code: CodeInvalidInput,
+		},
 		"rate limited": {
 			err:  &wallet.Error{HTTPStatus: 429, Code: "slow_down"},
 			code: CodeUnavailable, detail: "slow_down",

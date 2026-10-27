@@ -65,6 +65,12 @@ var (
 	// request (StartDCAPIPresentation, StartMdocPresentation) that can't
 	// be parsed: what the platform handed over, not a service's answer.
 	ErrMalformedRequest = errors.New("walletflow: the request is malformed")
+	// ErrNotConfigured is wrapped where the Wallet lacks what a call
+	// needs, which New doesn't require of every wallet: Config.IssuerRoots
+	// or Config.RedirectURI to receive credentials, Config.VerifierTrust
+	// to present them, or Dependencies.Provider and Config.ClientID under
+	// ProfileHAIP. It's the integration to fix, not a service's answer.
+	ErrNotConfigured = errors.New("walletflow: the wallet isn't configured for this")
 	// ErrRequestRefused is wrapped, in a *RequestRefusedError, by
 	// StartPresentation and StartDCAPIPresentation for an authentic
 	// request the wallet must refuse: transaction_data it doesn't

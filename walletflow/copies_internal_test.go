@@ -101,8 +101,22 @@ func TestCopiesCorrelated_DigestsAndTimestamps(t *testing.T) {
 		}
 		return base64.RawURLEncoding.EncodeToString(raw)
 	}
+	updated := func(update time.Time) string {
+		t.Helper()
+		start := now.UTC().Truncate(24 * time.Hour)
+		f := testmdoc.IssueWith(t, func(c *mdoc.Claims) {
+			c.Signed, c.ValidFrom, c.ValidUntil = start, start, start.Add(24*time.Hour)
+			c.ExpectedUpdate = &update
+		})
+		raw, err := f.IssuerSigned.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return base64.RawURLEncoding.EncodeToString(raw)
+	}
 	at := now.Truncate(time.Second)
 	sharedMdoc := mdocCopy(at.Add(time.Second))
+	nextDay := now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
 	for name, tc := range map[string]struct {
 		format string
 		a, b   string
@@ -115,6 +129,8 @@ func TestCopiesCorrelated_DigestsAndTimestamps(t *testing.T) {
 		"mdoc, one precise signed":   {"mso_mdoc", mdocCopy(at), mdocCopy(at), true},
 		"mdoc, distinct precise":     {"mso_mdoc", mdocCopy(at), mdocCopy(at.Add(-time.Second)), false},
 		"mdoc, reused value digests": {"mso_mdoc", sharedMdoc, sharedMdoc, true},
+		"mdoc, one precise update":   {"mso_mdoc", updated(at), updated(at), true},
+		"mdoc, update to the day":    {"mso_mdoc", updated(nextDay), updated(nextDay), false},
 		"unreadable copies":          {"dc+sd-jwt", "x", "x", false},
 	} {
 		copies := []CredentialCopy{{Credential: tc.a}, {Credential: tc.b}}

@@ -141,7 +141,7 @@ so when the redirect arrives at a relaunched app — a redirect
 it and returns an issuance ready for `requestCredentials()`. Outside
 development, resuming needs a `redirectURI` with the app's own URI
 scheme, such as `com.example.wallet:/callback`: it fails for an https
-App Link.
+App Link, which `Wallet` therefore refuses.
 
 ```kotlin
 /** Completes an authorization the app's process was killed during, from the redirect that relaunched it. */
