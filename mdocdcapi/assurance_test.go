@@ -183,14 +183,69 @@ func TestOrigins(t *testing.T) {
 		t.Error("under development, a response to a request for an origin not in Origins: accepted")
 	}
 
-	p, _, _ = exchangeAt(t, "http://shop.example")
+	p, _, _ = exchangeAt(t, "http://localhost:8080")
 	decided(&p)
+	p.Origins = nil
+	if _, err := mdocdcapi.VerifyResponse(ctx, p); err == nil || !strings.Contains(err.Error(), "Origins") {
+		t.Errorf("under production without Origins: %v", err)
+	}
+	p.Origins = []string{"http://localhost:8080"}
 	if _, err := mdocdcapi.VerifyResponse(ctx, p); err == nil || !strings.Contains(err.Error(), "https") {
-		t.Errorf("an http origin under production: %v", err)
+		t.Errorf("a loopback http origin under production: %v", err)
 	}
 	p.Assurance = verifier.AssuranceDevelopment
 	if _, err := mdocdcapi.VerifyResponse(ctx, p); err != nil {
-		t.Errorf("an http origin under development: %v", err)
+		t.Errorf("a loopback http origin under development: %v", err)
+	}
+	// Only loopback http, even under development: a browser offers the
+	// Digital Credentials API to no other http page. BuildRequest
+	// refuses to build such a request; a Pending carrying one is
+	// refused too.
+	if _, err := mdocdcapi.BuildRequest(mdocdcapi.RequestParams{Origin: "http://shop.example", DocType: "org.iso.18013.5.1.mDL", Elements: elements}); err == nil {
+		t.Error("BuildRequest for a non-loopback http origin: accepted")
+	}
+	for name, origin := range map[string]string{
+		"a non-loopback http": "http://shop.example",
+		"an uppercase host":   "https://Shop.example",
+		"a default port":      "https://shop.example:443",
+		"a trailing slash":    "https://shop.example/",
+		"not a URL":           "https://shop.example:port",
+	} {
+		p, _, _ := exchange(t)
+		p.Assurance, p.Pending.Origin, p.Origins = verifier.AssuranceDevelopment, origin, nil
+		if _, err := mdocdcapi.VerifyResponse(ctx, p); err == nil || !strings.Contains(err.Error(), "origin") {
+			t.Errorf("a Pending.Origin with %s (%q): %v", name, origin, err)
+		}
+	}
+}
+
+// Origins are normalized as a browser serializes an origin, in
+// BuildRequest's Origin and Origins and in VerifyParams.Origins alike,
+// and an entry that's no page's origin is refused.
+func TestOriginsNormalized(t *testing.T) {
+	ctx := context.Background()
+	req, err := mdocdcapi.BuildRequest(mdocdcapi.RequestParams{
+		Origin: "HTTPS://Shop.Example:443/", Origins: []string{"https://SHOP.example/"},
+		DocType: "org.iso.18013.5.1.mDL", Elements: map[string]map[string]bool{"org.iso.18013.5.1": {"age_over_18": false}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Pending.Origin != "https://shop.example" {
+		t.Errorf("Pending.Origin = %q, want the normalized https://shop.example", req.Pending.Origin)
+	}
+
+	p, _, _ := exchange(t)
+	p.Assurance = verifier.AssuranceDevelopment
+	p.Origins = []string{"https://Shop.Example:443"}
+	if _, err := mdocdcapi.VerifyResponse(ctx, p); err != nil {
+		t.Errorf("Origins spelled otherwise than the browser does: %v", err)
+	}
+	for _, origins := range [][]string{{"shop.example"}, {"https://shop.example/app"}, {"http://shop.example"}} {
+		p.Origins = origins
+		if _, err := mdocdcapi.VerifyResponse(ctx, p); err == nil || !strings.Contains(err.Error(), "Origins") {
+			t.Errorf("Origins %q: %v, want refused", origins, err)
+		}
 	}
 }
 
