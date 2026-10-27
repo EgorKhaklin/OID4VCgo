@@ -44,17 +44,34 @@ func valueEquals(got, want any) bool {
 }
 
 // number converts the numeric types a claim or a Values entry holds —
-// float64 or json.Number from JSON, int64 or uint64 from CBOR, int from
-// a query built in Go — to an exact rational, or reports false for
-// anything else.
+// float64 or json.Number from JSON, int64 or uint64 from CBOR, any of
+// Go's numeric kinds from a query built in Go (isValuesElement accepts
+// each) — to an exact rational, or reports false for anything else.
 func number(v any) (*big.Rat, bool) {
 	switch n := v.(type) {
 	case int:
 		return new(big.Rat).SetInt64(int64(n)), true
+	case int8:
+		return new(big.Rat).SetInt64(int64(n)), true
+	case int16:
+		return new(big.Rat).SetInt64(int64(n)), true
+	case int32:
+		return new(big.Rat).SetInt64(int64(n)), true
 	case int64:
 		return new(big.Rat).SetInt64(n), true
+	case uint:
+		return new(big.Rat).SetUint64(uint64(n)), true
+	case uint8:
+		return new(big.Rat).SetUint64(uint64(n)), true
+	case uint16:
+		return new(big.Rat).SetUint64(uint64(n)), true
+	case uint32:
+		return new(big.Rat).SetUint64(uint64(n)), true
 	case uint64:
 		return new(big.Rat).SetUint64(n), true
+	case float32:
+		r := new(big.Rat)
+		return r, r.SetFloat64(float64(n)) != nil
 	case float64:
 		r := new(big.Rat)
 		return r, r.SetFloat64(n) != nil

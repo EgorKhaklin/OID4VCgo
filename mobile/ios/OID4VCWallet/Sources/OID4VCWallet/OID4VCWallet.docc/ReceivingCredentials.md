@@ -122,7 +122,8 @@ completes it and returns an issuance ready for
 ``Issuance/requestCredentials()``. Handle every redirect this way: in
 SwiftUI, from `onOpenURL`. Outside development, resuming needs a
 `redirectURI` with the app's own URI scheme, such as
-`com.example.wallet:/callback`: it fails for an https Universal Link.
+`com.example.wallet:/callback`, so `Wallet` refuses an https Universal
+Link there.
 
 ```swift
 /// Completes an authorization the app was killed during, from the

@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,12 +172,13 @@ func TestIssueVerifyRoundTrip_WithStatusList(t *testing.T) {
 
 // TestIssueVerifyRoundTrip_WithIdentifierList mirrors ISO/IEC 18013-5's
 // own Annex D.6 "Identifier list example" worked values (id 0xcccc,
-// https://example.com/identifierlists/1) — §12.3.6.2/§12.3.6.4.
+// https://example.com/identifierlists/1) — §12.3.6.2/§12.3.6.4 — with
+// a real certificate in place of the example's elided h'aa...'.
 func TestIssueVerifyRoundTrip_WithIdentifierList(t *testing.T) {
 	f := newFixture(t)
 	status := issueAndVerifyWithStatus(t, f, false, func(c *Claims) {
 		c.IdentifierList = &IdentifierListRef{
-			ID: []byte{0xcc, 0xcc}, URI: "https://example.com/identifierlists/1", Certificate: []byte{0xaa, 0xbb, 0xcc},
+			ID: []byte{0xcc, 0xcc}, URI: "https://example.com/identifierlists/1", Certificate: f.cert,
 		}
 	})
 	if status == nil || status.IdentifierList == nil {
@@ -189,11 +191,35 @@ func TestIssueVerifyRoundTrip_WithIdentifierList(t *testing.T) {
 	if il.URI != "https://example.com/identifierlists/1" {
 		t.Errorf("URI = %q, want https://example.com/identifierlists/1", il.URI)
 	}
-	if !bytes.Equal(il.Certificate, []byte{0xaa, 0xbb, 0xcc}) {
-		t.Errorf("Certificate = %x, want aabbcc", il.Certificate)
+	if !bytes.Equal(il.Certificate, f.cert) {
+		t.Errorf("Certificate = %x, want the fixture's", il.Certificate)
 	}
 	if status.StatusList != nil {
 		t.Errorf("StatusList = %v, want nil", status.StatusList)
+	}
+}
+
+// TestIssueRejectsMalformedIdentifierList: §12.3.6.4's
+// IdentifierListInfo needs an id and a uri, and a certificate, which is
+// optional (as the round trips above show), must be one when present
+// (§12.3.6.2).
+func TestIssueRejectsMalformedIdentifierList(t *testing.T) {
+	f := newFixture(t)
+	const uri = "https://example.com/identifierlists/1"
+	for name, tc := range map[string]struct {
+		ref  IdentifierListRef
+		want string
+	}{
+		"no id":             {IdentifierListRef{URI: uri}, "IdentifierList.ID is required"},
+		"no uri":            {IdentifierListRef{ID: []byte{0xcc}}, "IdentifierList.URI is required"},
+		"not a certificate": {IdentifierListRef{ID: []byte{0xcc}, URI: uri, Certificate: []byte{0xaa, 0xbb}}, "isn't a DER X.509 certificate"},
+	} {
+		claims := f.claims
+		claims.IdentifierList = &tc.ref
+		_, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}})
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want an error containing %q", name, err, tc.want)
+		}
 	}
 }
 

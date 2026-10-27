@@ -425,5 +425,7 @@ func mdocStatusChecker(checker statuslist.Checker, credential string) (statuslis
 	} else {
 		checker.Options.LeafPolicy = trust.LeafPolicy
 	}
+	checker.Options.RequireExp = true
+	checker.Options.X5ChainProtectedOnly = true
 	return checker, nil
 }

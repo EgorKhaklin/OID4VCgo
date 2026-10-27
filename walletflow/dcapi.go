@@ -30,7 +30,7 @@ import (
 // Verifiers (Presentation.ShownTo).
 func (w *Wallet) StartDCAPIPresentation(ctx context.Context, protocol string, data []byte, origin string) (*Presentation, error) {
 	if protocol != wallet.DCAPIProtocolUnsigned && w.cfg.VerifierTrust == nil {
-		return nil, errors.New("walletflow: Config.VerifierTrust is required to answer a signed request")
+		return nil, fmt.Errorf("walletflow: Config.VerifierTrust is required to answer a signed request: %w", ErrNotConfigured)
 	}
 	req, err := w.core.ParseDCAPIRequestData(protocol, data, origin)
 	var rejected *wallet.RequestRejectedError

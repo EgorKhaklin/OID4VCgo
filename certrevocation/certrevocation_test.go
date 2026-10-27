@@ -7,6 +7,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"errors"
+	"math/big"
 	"testing"
 	"time"
 
@@ -86,6 +87,19 @@ func TestCRLs(t *testing.T) {
 		// An issuing distribution point extension (here an empty one)
 		// may limit the list's scope: it isn't read as complete.
 		"IDP-scoped CRL ignored": {[]*x509.RevocationList{testcert.CRLFromTemplate(t, withExtension(t, asn1.ObjectIdentifier{2, 5, 29, 28}, asn1.RawValue{Tag: asn1.TagSequence, Class: asn1.ClassUniversal, IsCompound: true}), p.inter, p.interKey), rootCRL}, certrevocation.ErrNoCurrentCRL},
+		// RFC 5280 §5.2 and §5.3: a CRL with a critical extension, or
+		// critical entry extension, nobody processes MUST NOT be used.
+		"unknown critical extension": {[]*x509.RevocationList{testcert.CRLFromTemplate(t, withExtension(t, asn1.ObjectIdentifier{1, 2, 3, 4, 99}, true), p.inter, p.interKey), rootCRL}, certrevocation.ErrNoCurrentCRL},
+		"unknown critical entry extension": {[]*x509.RevocationList{testcert.CRLFromTemplate(t, &x509.RevocationList{
+			RevokedCertificateEntries: []x509.RevocationListEntry{{SerialNumber: big.NewInt(7), RevocationTime: now.Add(-time.Hour), ExtraExtensions: withExtension(t, asn1.ObjectIdentifier{1, 2, 3, 4, 99}, true).ExtraExtensions}},
+		}, p.inter, p.interKey), rootCRL}, certrevocation.ErrNoCurrentCRL},
+		"unknown non-critical extension": {[]*x509.RevocationList{testcert.CRLFromTemplate(t, &x509.RevocationList{
+			ExtraExtensions: []pkix.Extension{{Id: asn1.ObjectIdentifier{1, 2, 3, 4, 99}, Value: []byte{0x05, 0x00}}},
+		}, p.inter, p.interKey), rootCRL}, nil},
+		// A CA whose clock runs a little fast: its fresh list is used.
+		"thisUpdate within clock skew": {[]*x509.RevocationList{testcert.CRLFromTemplate(t, &x509.RevocationList{
+			ThisUpdate: now.Add(certrevocation.CRLClockSkew - time.Minute), NextUpdate: now.Add(time.Hour),
+		}, p.inter, p.interKey), rootCRL}, nil},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -144,5 +158,38 @@ func TestNoCheck(t *testing.T) {
 	var checker certrevocation.Checker = certrevocation.NoCheck{}
 	if err := checker.CheckRevocation(context.Background(), certrevocation.Check{Chain: p.chain}); err != nil {
 		t.Errorf("NoCheck: %v", err)
+	}
+}
+
+// A chain of one certificate that isn't self-signed, a pinned leaf, is
+// checked against its CA's CRL, verified with the CA's certificate from
+// Issuers; a self-signed one alone has nothing to check.
+func TestCRLs_PinnedLeaf(t *testing.T) {
+	p := newPKI(t)
+	pinned := []*x509.Certificate{p.leaf}
+	tests := map[string]struct {
+		lists   []*x509.RevocationList
+		issuers []*x509.Certificate
+		chain   []*x509.Certificate
+		want    error
+	}{
+		"clean":         {[]*x509.RevocationList{testcert.CRL(t, p.inter, p.interKey)}, []*x509.Certificate{p.root, p.inter}, pinned, nil},
+		"revoked":       {[]*x509.RevocationList{testcert.CRL(t, p.inter, p.interKey, p.leaf.SerialNumber)}, []*x509.Certificate{p.inter}, pinned, certrevocation.ErrRevoked},
+		"no lists":      {nil, []*x509.Certificate{p.inter}, pinned, certrevocation.ErrNoCurrentCRL},
+		"no issuers":    {[]*x509.RevocationList{testcert.CRL(t, p.inter, p.interKey)}, nil, pinned, certrevocation.ErrNoCurrentCRL},
+		"forged issuer": {[]*x509.RevocationList{testcert.CRL(t, p.fakeInter, p.fakeKey)}, []*x509.Certificate{nil, p.fakeInter}, pinned, certrevocation.ErrNoCurrentCRL},
+		"self-signed":   {nil, nil, []*x509.Certificate{p.root}, nil},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			checker := certrevocation.CRLs{Lists: func(context.Context) ([]*x509.RevocationList, error) { return tc.lists, nil }, Issuers: tc.issuers}
+			err := checker.CheckRevocation(context.Background(), certrevocation.Check{Chain: tc.chain})
+			switch {
+			case tc.want == nil && err != nil:
+				t.Fatalf("CheckRevocation = %v, want nil", err)
+			case tc.want != nil && !errors.Is(err, tc.want):
+				t.Fatalf("CheckRevocation = %v, want %v", err, tc.want)
+			}
+		})
 	}
 }

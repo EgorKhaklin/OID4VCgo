@@ -55,7 +55,7 @@ FAPIgo" section for the specific list.
 
 > **⚠ Pre-1.0, APIs may still change.** Every package — `issuer`,
 > `wallet`, `verifier`, `walletflow`, `credential/sdjwtvc`,
-> `credential/mdoc`, `statuslist`, `certrevocation`, `attestation`,
+> `credential/mdoc`, `statuslist`, `identifierlist`, `certrevocation`, `attestation`,
 > `dcql`, `oid4vpmdoc`, `mdocdcapi`, `proximity`, `registration`,
 > `haip`, `storage` — and the
 > separate `mobile` module are implemented and tested. All four roles
@@ -107,8 +107,9 @@ Where to start, by role:
   `response_code` bound to the browser), with its `RequestObjectHandler`
   and `ResponseHandler` as ready `http.Handler`s over a
   `verifier.TransactionStore` (`storage.NewVerifierTransactionStore`
-  for development). `VerifiedCredential.StatusListRef` plus
-  `statuslist.Checker` check a credential's revocation; the issuer key
+  for development). `verifier.RequireValidStatus` (a `statuslist.Checker`)
+  checks a credential's revocation, an mdoc's identifier list included;
+  the issuer key
   resolvers' required `Revocation` (`certrevocation.CRLs`) checks its
   issuer certificate's.
 - **Wallet** — `wallet.EncryptionFromMetadata` picks credential
@@ -124,7 +125,8 @@ Where to start, by role:
   `DeferredCredentialHandler`/`NotificationEndpointHandler` serve the
   other two protected endpoints; `issuer.NewError` builds an OID4VCI error
   response (e.g. `credential_request_denied`); `statuslist.Publisher`
-  serves a signed Status List Token.
+  serves a signed Status List Token, and `identifierlist` signs (or
+  serves) an mdoc identifier list.
 - **A browser's Digital Credentials API** — the Verifier builds an
   OpenID4VP request with `Verifier.BuildDCAPIAuthorizationRequest` and
   checks the answer with `Verifier.VerifyResponse`, setting

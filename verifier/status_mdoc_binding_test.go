@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,7 +38,7 @@ func TestRequireValidStatus_MdocSignerUnderTheDocumentSignersIACA(t *testing.T) 
 	for path, ca := range map[string]struct {
 		cert *x509.Certificate
 		key  *ecdsa.PrivateKey
-	}{"/same": {iaca, iacaKey}, "/other": {other, otherKey}, "/named": {named, namedKey}} {
+	}{"/same": {iaca, iacaKey}, "/other": {other, otherKey}, "/named": {named, namedKey}, "/no-exp": {iaca, iacaKey}, "/unprotected": {iaca, iacaKey}} {
 		cert, key := testcert.Leaf(t, "status signer "+path, ca.cert, ca.key)
 		signers[path] = struct {
 			cert *x509.Certificate
@@ -57,9 +58,24 @@ func TestRequireValidStatus_MdocSignerUnderTheDocumentSignersIACA(t *testing.T) 
 			return
 		}
 		exp := time.Now().Add(time.Hour).Unix()
-		token, err := statuslist.IssueTokenCWTX5Chain(signer.key, cose.ES256, statuslist.TokenClaims{Sub: base + r.URL.Path, Iat: time.Now().Unix(), Exp: &exp, StatusList: sl}, []*x509.Certificate{signer.cert})
+		claims := statuslist.TokenClaims{Sub: base + r.URL.Path, Iat: time.Now().Unix(), Exp: &exp, StatusList: sl}
+		if r.URL.Path == "/no-exp" {
+			claims.Exp = nil
+		}
+		token, err := statuslist.IssueTokenCWTX5Chain(signer.key, cose.ES256, claims, []*x509.Certificate{signer.cert})
 		if err != nil {
 			t.Error(err)
+		}
+		if r.URL.Path == "/unprotected" {
+			// The same token with its x5chain moved to the unprotected header.
+			_, _, payload, err := cose.DecodeUnverifiedTagged(token)
+			if err != nil {
+				t.Error(err)
+			}
+			token, err = cose.SignTagged(cose.ES256, signer.key, cose.Headers{Typ: statuslist.CWTTokenMediaType}, cose.Headers{X5Chain: [][]byte{signer.cert.Raw}}, payload, nil)
+			if err != nil {
+				t.Error(err)
+			}
 		}
 		w.Header().Set("Content-Type", statuslist.CWTTokenMediaType)
 		_, _ = w.Write(token)
@@ -81,6 +97,13 @@ func TestRequireValidStatus_MdocSignerUnderTheDocumentSignersIACA(t *testing.T) 
 	}
 	if err := strict(ctx, "id", credential("/other", nil)); err == nil {
 		t.Error("accepted a list signed under another trusted IACA")
+	}
+	// ISO/IEC 18013-5 §12.3.6.3: exp present, x5chain protected.
+	if err := strict(ctx, "id", credential("/no-exp", nil)); err == nil || !strings.Contains(err.Error(), "missing the required exp") {
+		t.Errorf("a list without exp: %v", err)
+	}
+	if err := strict(ctx, "id", credential("/unprotected", nil)); err == nil || !strings.Contains(err.Error(), "token signer") {
+		t.Errorf("a list with an unprotected x5chain: %v", err)
 	}
 	if err := strict(ctx, "id", credential("/named", named.Raw)); err != nil {
 		t.Errorf("signed under the Certificate the MSO's status names: %v", err)

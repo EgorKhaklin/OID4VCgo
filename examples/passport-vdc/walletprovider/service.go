@@ -27,8 +27,11 @@ const (
 	// service issues is valid.
 	WalletAttestationLifetime = time.Hour
 	// KeyAttestationLifetime is how long a Key Attestation the service
-	// issues is valid: it's used once, right away.
-	KeyAttestationLifetime = 5 * time.Minute
+	// issues is valid. Its c_nonce makes it fresh when it's sent, but
+	// its exp is when the keys it attests expire too (OpenID4VCI 1.0
+	// Appendix D.1), which the issuer checks again when a review it
+	// deferred issuance for is approved: it outlasts that review.
+	KeyAttestationLifetime = 2 * time.Hour
 
 	maxRequestBytes = 16 * 1024
 	maxAttestedKeys = 10

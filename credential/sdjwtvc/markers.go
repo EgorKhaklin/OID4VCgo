@@ -1,6 +1,7 @@
 package sdjwtvc
 
 import (
+	"bytes"
 	"encoding"
 	"encoding/json"
 	"fmt"
@@ -77,8 +78,88 @@ func (s sealer) seal(v any) (any, []Disclosure, error) {
 		if hasSDMarker(v) {
 			return nil, nil, fmt.Errorf("sdjwtvc: an SD, SDElement or WithDecoys marker inside a %T, which Issue can't seal: use map[string]any and []any around it", v)
 		}
+		if !isJSONScalar(v) {
+			// A struct, json.Marshaler (json.RawMessage, say) or other
+			// value with an encoding of its own is sealed as the JSON
+			// it encodes to, so a reserved name inside it — user
+			// input copied into a claim planting an _sd digest the
+			// Holder could later disclose a claim of its own choosing
+			// for — is refused like one in a map[string]any.
+			generic, err := toGenericJSON(v)
+			if err != nil {
+				return nil, nil, err
+			}
+			return s.seal(generic)
+		}
 		return v, nil, nil
 	}
+}
+
+// isJSONScalar reports whether v encodes as a JSON null, boolean,
+// number or string with no encoding of its own, so holds no object
+// key at all.
+func isJSONScalar(v any) bool {
+	if v == nil {
+		return true
+	}
+	if _, ok := v.(json.Marshaler); ok {
+		return false
+	}
+	switch reflect.ValueOf(v).Kind() {
+	case reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
+}
+
+// toGenericJSON is v as the map[string]any, []any and scalars it
+// encodes to, numbers as json.Number so they encode again exactly as
+// v did.
+func toGenericJSON(v any) (any, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("sdjwtvc: encode a %T claim value: %w", v, err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var out any
+	if err := dec.Decode(&out); err != nil {
+		return nil, fmt.Errorf("sdjwtvc: decode a %T claim value: %w", v, err)
+	}
+	return out, nil
+}
+
+// isReservedName reports whether name is one of the claim names RFC
+// 9901 reserves for the SD-JWT's own structure (§4.2.4.1, §4.2.4.2,
+// §4.1.1), which only Issue's sealing may place.
+func isReservedName(name string) bool {
+	return name == "_sd" || name == "..." || name == "_sd_alg"
+}
+
+// reservedNameIn is the first reserved name (isReservedName) used as
+// an object key anywhere in v, a map[string]any/[]any tree, if any.
+func reservedNameIn(v any) (string, bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, child := range t {
+			if isReservedName(k) {
+				return k, true
+			}
+			if name, ok := reservedNameIn(child); ok {
+				return name, true
+			}
+		}
+	case []any:
+		for _, child := range t {
+			if name, ok := reservedNameIn(child); ok {
+				return name, true
+			}
+		}
+	}
+	return "", false
 }
 
 // sealWithDecoys seals a WithDecoys object, with its decoys.
@@ -150,7 +231,7 @@ func (s sealer) sealObject(m map[string]any, decoys int, nested bool) (map[strin
 	var disclosures []Disclosure
 
 	for k, v := range m {
-		if k == "_sd" || k == "_sd_alg" || k == "..." {
+		if isReservedName(k) {
 			return nil, nil, fmt.Errorf("sdjwtvc: claim name %q is reserved", k)
 		}
 		if sv, ok := v.(sdValue); ok {

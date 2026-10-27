@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
@@ -132,7 +133,7 @@ func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opt
 	if err != nil {
 		return TokenClaims{}, fmt.Errorf("statuslist: verify CWT signature: %w", err)
 	}
-	if protected.Typ != CWTTokenMediaType {
+	if !strings.EqualFold(protected.Typ, CWTTokenMediaType) {
 		return TokenClaims{}, fmt.Errorf("statuslist: CWT typ is %q, want %q", protected.Typ, CWTTokenMediaType)
 	}
 
@@ -188,6 +189,9 @@ func parseCWTClaims(decoded map[int]interface{}) (TokenClaims, error) {
 		if err != nil {
 			return TokenClaims{}, fmt.Errorf("statuslist: ttl claim: %w", err)
 		}
+		if i <= 0 {
+			return TokenClaims{}, fmt.Errorf("statuslist: ttl claim must be positive")
+		}
 		ttl = &i
 	}
 
@@ -222,16 +226,7 @@ func decodeCBORValue(v interface{}, out interface{}) error {
 // toNumericDateClaim reads a CWT NumericDate (RFC 8392 §2: an integer
 // or a floating-point number of seconds), dropping any fraction.
 func toNumericDateClaim(v interface{}) (int64, error) {
-	var f float64
-	switch n := v.(type) {
-	case float64:
-		f = n
-	case float32:
-		f = float64(n)
-	default:
-		return toInt64Claim(v)
-	}
-	at, err := jwtdate.FromFloat(f)
+	at, err := jwtdate.FromCBOR(v)
 	if err != nil {
 		return 0, err
 	}

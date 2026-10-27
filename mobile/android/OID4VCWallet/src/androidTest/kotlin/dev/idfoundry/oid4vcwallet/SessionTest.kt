@@ -317,11 +317,8 @@ class SessionTest {
     fun issuerRevocation(): Unit = runBlocking {
         val env = env()
         val w = wallet(env, configuration = env.configuration.copy(revocation = listOf(WalletConfiguration.RevocationRole.ISSUER)))
-        try {
-            receive(env, w)
-            fail("received a credential with no CRL for its issuer's CA")
-        } catch (_: WalletException) {
-        }
+        val refused = runCatching { receive(env, w) }.exceptionOrNull()
+        assertTrue("received a credential with no CRL for its issuer's CA: $refused", refused is WalletException)
         expectCode(WalletException.Code.invalidInput) { w.setCRLs("not a CRL") }
         w.setCRLs(env.env.issuerCRL(false))
         assertEquals(2, receive(env, w).credentials.size)

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.54.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.53.0...v0.54.0) (2026-10-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** outside Config.Development, walletflow's ResumeIssuance (resumeIssuance in the Swift and Kotlin libraries) fails when Config.RedirectURI is an https Universal Link or App Link: FAPIgo now takes the callback binding a resumed issuance uses only for a native app's redirect URI, a private-use URI scheme or loopback http to 127.0.0.1 or [::1]. A wallet that resumes issuances registers and uses such a redirect URI. On the issuer side, FAPIgo now refuses opaque access tokens issued before this release and refresh-token records written before FAPIgo v0.58.0, so wallets holding them must authorize again; see FAPIgo's UPGRADING.md for v0.61.0's other changes.
+
+### Bug Fixes
+
+* build with Go 1.26.10 for GO-2026-6809 ([6b7ae21](https://github.com/IDFoundry/OID4VCgo/commit/6b7ae2186a96b0c1cefcce9ee0c302af452276b7))
+* **deps:** pin FAPIgo v0.61.0 ([8a4351c](https://github.com/IDFoundry/OID4VCgo/commit/8a4351c16b417c3b156e74abafe57c5315a14990))
+* **walletflow:** send one jwt proof per key attestation, not one per copy ([f67214b](https://github.com/IDFoundry/OID4VCgo/commit/f67214b25e5583e9ef2733c139655dda99653246))
+
 ## [0.53.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.52.0...v0.53.0) (2026-10-25)
 
 

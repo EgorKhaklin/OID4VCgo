@@ -7,6 +7,7 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -26,7 +27,9 @@ var ErrNoCurrentCRL = errors.New("certrevocation: no current CRL from the certif
 // verified includes a revoked certificate.
 type Checker interface {
 	// CheckRevocation returns nil when no certificate in check.Chain
-	// below its last, the trust anchor, is revoked at check.Now. An
+	// below its last, the trust anchor, is revoked at check.Now (nor,
+	// in a chain of one certificate that isn't self-signed, that one:
+	// see Check.Chain). An
 	// error refuses the chain: one that wraps ErrRevoked when a
 	// certificate is revoked; any other when revocation can't be
 	// decided, which a Checker should treat as a refusal too rather
@@ -39,7 +42,11 @@ type Check struct {
 	// Chain is a verified certificate path, leaf first, ending at the
 	// trust anchor it was verified against. Every certificate below the
 	// anchor is checked against its issuer's — the next certificate's —
-	// revocation information; the anchor itself never is.
+	// revocation information; the anchor itself never is, with one
+	// exception: a path of one certificate that isn't self-signed, a
+	// leaf pinned as a trust anchor, is checked against the revocation
+	// information of the CA it names as its issuer. Otherwise pinning a
+	// leaf would exempt it from revocation altogether.
 	Chain []*x509.Certificate
 	// Now is the instant the chain was verified at, at which a CRL must
 	// be current; CRLs takes a zero Now as the current time.
@@ -53,16 +60,29 @@ type Check struct {
 //
 // A list is used for an issuer only when its issuer name matches, its
 // signature verifies against that issuer's key, and the check's Now
-// falls in [thisUpdate, nextUpdate). A list without a nextUpdate is
-// never current: it gives no time after which a relying party must
-// look again. Only complete, direct CRLs are used: a delta CRL, or one
+// falls in [thisUpdate, nextUpdate), its thisUpdate allowed up to
+// CRLClockSkew ahead of Now. A list without a nextUpdate is never
+// current: it gives no time after which a relying party must look
+// again. Only complete, direct CRLs are used: a delta CRL, or one
 // whose issuing distribution point extension limits its scope (to some
 // reasons, to CA or end-entity certificates, or to an indirect CRL's
-// other issuers), is skipped rather than read as complete. A
+// other issuers), is skipped rather than read as complete. So is one
+// carrying a critical extension, on the list or on an entry, other
+// than the few this package processes (the authority key identifier,
+// CRL number, reason code and invalidity date), which RFC 5280 §5.2
+// and §5.3 forbid using at all. A
 // certificate is refused with ErrRevoked when a usable list names its
 // serial number, and with ErrNoCurrentCRL when its issuer has no usable
 // list at all — a missing or stale CRL fails closed rather than letting
 // a revoked certificate through.
+//
+// A chain of one certificate that isn't self-signed — a leaf pinned in
+// the roots, which x509 verifies as the path [leaf] — is checked
+// against a CRL from the CA it names as its issuer. That CA isn't on
+// the path, so its certificate, needed to verify the CRL's signature,
+// comes from Issuers: without it there, the pinned certificate is
+// refused with ErrNoCurrentCRL. A self-signed one, a root used
+// directly, has no issuer to ask and passes.
 type CRLs struct {
 	// Lists returns the current CRLs: at least one from each CA that
 	// issues a certificate in a chain checked — the CA issuing leaf
@@ -74,11 +94,35 @@ type CRLs struct {
 	// over HTTP: pass its Lists method, or use Refresher.Checker. An
 	// error refuses the chain, wrapped. Required.
 	Lists func(ctx context.Context) ([]*x509.RevocationList, error)
+
+	// Issuers are the certificates of CAs that issued certificates
+	// pinned as trust anchors, used only to check such a pinned
+	// certificate: the one whose name and key issued it is the issuer
+	// its CRL must come from and be verified against. They're neither
+	// trust anchors nor checked for revocation themselves. Needed only
+	// where a leaf, rather than a CA, is pinned; Refresher.Checker sets
+	// its configured issuers here.
+	Issuers []*x509.Certificate
 }
+
+// CRLClockSkew is how far ahead of the current time a CRL's thisUpdate
+// may be and the CRL still be used, by CRLs and Refresher alike: a CA
+// whose clock runs a little fast would otherwise publish CRLs unusable
+// for their first moments.
+const CRLClockSkew = 5 * time.Minute
 
 var (
 	oidDeltaCRLIndicator        = asn1.ObjectIdentifier{2, 5, 29, 27}
 	oidIssuingDistributionPoint = asn1.ObjectIdentifier{2, 5, 29, 28}
+
+	// understoodCRLExtensions are the CRL extensions, and
+	// understoodEntryExtensions the CRL entry extensions, a critical
+	// one of which doesn't keep a list from being used: the authority
+	// key identifier and CRL number, which x509 parses, and the reason
+	// code and invalidity date, which don't change that an entry
+	// revokes its certificate.
+	understoodCRLExtensions   = []asn1.ObjectIdentifier{{2, 5, 29, 35}, {2, 5, 29, 20}}
+	understoodEntryExtensions = []asn1.ObjectIdentifier{{2, 5, 29, 21}, {2, 5, 29, 24}}
 )
 
 // Validate reports a CRLs that can't check anything: one without Lists.
@@ -104,12 +148,33 @@ func (c CRLs) CheckRevocation(ctx context.Context, check Check) error {
 	if now.IsZero() {
 		now = time.Now()
 	}
+	if len(check.Chain) == 1 && !selfSigned(check.Chain[0]) {
+		return c.checkPinned(check.Chain[0], lists, now)
+	}
 	for i := 0; i+1 < len(check.Chain); i++ {
 		if err := checkAgainstCRLs(check.Chain[i], check.Chain[i+1], lists, now); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// checkPinned checks cert, a pinned certificate that isn't self-signed,
+// against a CRL from the one of c.Issuers that issued it.
+func (c CRLs) checkPinned(cert *x509.Certificate, lists []*x509.RevocationList, now time.Time) error {
+	for _, issuer := range c.Issuers {
+		if issuer != nil && bytes.Equal(cert.RawIssuer, issuer.RawSubject) && cert.CheckSignatureFrom(issuer) == nil {
+			return checkAgainstCRLs(cert, issuer, lists, now)
+		}
+	}
+	return fmt.Errorf("%w: %q is pinned, and the certificate of its issuer %q, to verify a CRL against, isn't among CRLs.Issuers", ErrNoCurrentCRL, cert.Subject, cert.Issuer)
+}
+
+// selfSigned reports whether cert names itself as its issuer and its
+// own key verifies its signature.
+func selfSigned(cert *x509.Certificate) bool {
+	return bytes.Equal(cert.RawIssuer, cert.RawSubject) &&
+		cert.CheckSignature(cert.SignatureAlgorithm, cert.RawTBSCertificate, cert.Signature) == nil
 }
 
 // checkAgainstCRLs refuses cert when a usable CRL from issuer names it,
@@ -139,10 +204,35 @@ func crlUsableFor(list *x509.RevocationList, issuer *x509.Certificate, now time.
 	if list == nil || !bytes.Equal(list.RawIssuer, issuer.RawSubject) {
 		return false
 	}
-	if list.NextUpdate.IsZero() || now.Before(list.ThisUpdate) || !now.Before(list.NextUpdate) {
+	if list.NextUpdate.IsZero() || notYetValid(list, now) || !now.Before(list.NextUpdate) {
 		return false
 	}
-	return completeAndDirect(list) && list.CheckSignatureFrom(issuer) == nil
+	return completeAndDirect(list) && criticalUnderstood(list) && list.CheckSignatureFrom(issuer) == nil
+}
+
+// notYetValid reports whether list's thisUpdate is more than
+// CRLClockSkew after now.
+func notYetValid(list *x509.RevocationList, now time.Time) bool {
+	return now.Add(CRLClockSkew).Before(list.ThisUpdate)
+}
+
+// criticalUnderstood reports whether every critical extension list
+// carries, on the list itself or on an entry, is one this package
+// understands.
+func criticalUnderstood(list *x509.RevocationList) bool {
+	for _, ext := range list.Extensions {
+		if ext.Critical && !slices.ContainsFunc(understoodCRLExtensions, ext.Id.Equal) {
+			return false
+		}
+	}
+	for _, entry := range list.RevokedCertificateEntries {
+		for _, ext := range entry.Extensions {
+			if ext.Critical && !slices.ContainsFunc(understoodEntryExtensions, ext.Id.Equal) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // completeAndDirect reports whether list is neither a delta CRL nor one

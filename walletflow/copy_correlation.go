@@ -135,8 +135,8 @@ func dayAligned(v float64) bool {
 }
 
 // mdocMarks are an mdoc's copyMarks: its MSO's valueDigests, and its
-// validityInfo timestamps not on a UTC day boundary
-// (mdoc.RoundedValidity's, with a lifetime of whole days).
+// validityInfo timestamps, expectedUpdate among them, not on a UTC day
+// boundary (mdoc.RoundedValidity's, with a lifetime of whole days).
 func mdocMarks(credential string) copyMarks {
 	raw, err := base64.RawURLEncoding.DecodeString(credential)
 	if err != nil {
@@ -156,9 +156,13 @@ func mdocMarks(credential string) copyMarks {
 			m.digests = append(m.digests, string(d))
 		}
 	}
-	for name, at := range map[string]time.Time{
+	times := map[string]time.Time{
 		"signed": mso.ValidityInfo.Signed, "validFrom": mso.ValidityInfo.ValidFrom, "validUntil": mso.ValidityInfo.ValidUntil,
-	} {
+	}
+	if mso.ValidityInfo.ExpectedUpdate != nil {
+		times["expectedUpdate"] = *mso.ValidityInfo.ExpectedUpdate
+	}
+	for name, at := range times {
 		if !at.IsZero() && !at.Equal(at.UTC().Truncate(24*time.Hour)) {
 			m.times[name] = at.Unix()
 		}

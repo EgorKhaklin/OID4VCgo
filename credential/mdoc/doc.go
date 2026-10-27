@@ -38,9 +38,7 @@
 // §12.3.6 MUST). Either way this package never fetches or checks the
 // referenced list itself — that's the caller's own job (for
 // status_list, statuslist.CWTStatusClaim/ParseCWTStatusClaim plus an
-// actual list fetch; identifier_list has no equivalent library support
-// here, since it's an ISO-specific extension to Token Status List
-// rather than part of the base spec).
+// actual list fetch; for identifier_list, package identifierlist).
 //
 // # Algorithm and curve support
 //

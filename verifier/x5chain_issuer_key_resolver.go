@@ -125,6 +125,16 @@ func (r X5ChainIssuerKeyResolver) verify(ctx context.Context, x5chain [][]byte, 
 	return certchain.VerifyTrustedChainsAt(ctx, x5chain, roots, r.leafPolicy(), r.Revocation, verificationTime(ctx))
 }
 
+// anchorPools is every trust anchor set r verifies against: Roots and
+// RootsByDocType's.
+func (r X5ChainIssuerKeyResolver) anchorPools() []*x509.CertPool {
+	pools := []*x509.CertPool{r.Roots}
+	for _, roots := range r.RootsByDocType {
+		pools = append(pools, roots)
+	}
+	return pools
+}
+
 // rootsFor is the trust anchors a document of docType must chain to:
 // RootsByDocType's for a type it names, else Roots.
 func (r X5ChainIssuerKeyResolver) rootsFor(docType string) (*x509.CertPool, error) {

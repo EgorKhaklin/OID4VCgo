@@ -142,7 +142,7 @@ type Presentation struct {
 // or Decline.
 func (w *Wallet) StartPresentation(ctx context.Context, requestLink string) (*Presentation, error) {
 	if w.cfg.VerifierTrust == nil {
-		return nil, errors.New("walletflow: Config.VerifierTrust is required to present")
+		return nil, fmt.Errorf("walletflow: Config.VerifierTrust is required to present: %w", ErrNotConfigured)
 	}
 	link, err := wallet.ParseAuthorizationRequestLink(requestLink)
 	if err != nil {

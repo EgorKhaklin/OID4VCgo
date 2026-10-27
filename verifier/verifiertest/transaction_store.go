@@ -43,7 +43,7 @@ func TestTransactionStoreContract(t *testing.T, factory func() verifier.Transact
 func contractTransaction(id string) verifier.Transaction {
 	return verifier.Transaction{
 		ID: id, KeyID: "kid-" + id, State: "state-" + id, Nonce: "nonce-" + id,
-		RequestObject: "request-object-" + id, BrowserBindingHash: []byte("binding-hash-" + id),
+		RequestObject: "request-object-" + id, BrowserBindingHash: []byte("binding-hash-" + id), Owner: "owner-" + id,
 		ExpiresAt: time.Now().Add(time.Hour).Truncate(time.Second), Status: verifier.TransactionPending,
 	}
 }
@@ -65,7 +65,7 @@ func testTxStoreCreateAndGet(t *testing.T, store verifier.TransactionStore) {
 	}
 	if got.ID != want.ID || got.KeyID != want.KeyID || got.State != want.State || got.Nonce != want.Nonce ||
 		got.RequestObject != want.RequestObject || string(got.BrowserBindingHash) != string(want.BrowserBindingHash) ||
-		!got.ExpiresAt.Equal(want.ExpiresAt) || got.Status != want.Status {
+		!got.ExpiresAt.Equal(want.ExpiresAt) || got.Status != want.Status || got.Owner != want.Owner {
 		t.Errorf("Get = %+v, want %+v", got, want)
 	}
 	if id, err := store.IDByKeyID(ctx, want.KeyID); err != nil || id != want.ID {
