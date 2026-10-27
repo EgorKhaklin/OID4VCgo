@@ -33,6 +33,10 @@ const MediaType = "application/identifierlist+cwt"
 // compatibility with implementations that expect it, and Annex D.6's
 // informative example omits the prefix too. IssueToken issues MediaType
 // unless IssueOptions.Typ asks for this; verification accepts either.
+//
+// Annex D.6's example also misspells the typ, dropping the second "i"
+// of "identifier"; neither IssueToken nor verification takes that
+// spelling, which no clause of the standard names.
 const BareTyp = "identifierlist+cwt"
 
 // CWT claim keys: sub/exp/nbf/iat are RFC 8392's, ttl and status_list
@@ -195,8 +199,10 @@ type VerifyOptions struct {
 
 	// MaxAge, if set, refuses a token issued longer ago: a list signed
 	// before a revocation stays valid until its exp, so anyone serving
-	// bytes at the uri could replay it until then. Zero leaves
-	// freshness to exp. Negative is an error, not "no limit".
+	// bytes at the uri could replay it until then. It is the only bound
+	// on that replay this package sets: zero leaves freshness to exp,
+	// however far ahead the issuer put it, and a token's ttl only says
+	// how long it may be cached. Negative is an error, not "no limit".
 	MaxAge time.Duration
 
 	// MaxClockSkew is how far in the future iat and nbf may be; zero
