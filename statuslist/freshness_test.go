@@ -28,7 +28,7 @@ func TestVerifyToken_Freshness(t *testing.T) {
 		return token
 	}
 	outOfRange := int64(math.MaxInt64 - 10)
-	zero := int64(0)
+	zero, negative, iatNow := int64(0), int64(-1), now.Unix()
 	for name, tc := range map[string]struct {
 		token string
 		opts  VerifyOptions
@@ -41,6 +41,8 @@ func TestVerifyToken_Freshness(t *testing.T) {
 		"beyond a stated skew": {issue(now.Add(10*time.Second).Unix(), nil, nil), VerifyOptions{MaxClockSkew: time.Second}},
 		"no exp, RequireExp":   {issue(now.Unix(), nil, nil), VerifyOptions{RequireExp: true}},
 		"ttl 0":                {issue(now.Unix(), nil, &zero), VerifyOptions{}},
+		"ttl negative":         {issue(now.Unix(), nil, &negative), VerifyOptions{}},
+		"exp at iat":           {issue(iatNow, &iatNow, nil), VerifyOptions{Now: func() time.Time { return now.Add(-30 * time.Second) }}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := VerifyToken(tc.token, &key.PublicKey, jose.ES256, tc.opts); err == nil {

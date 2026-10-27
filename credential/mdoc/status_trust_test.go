@@ -7,8 +7,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
 type testCA struct {
@@ -184,5 +187,18 @@ func TestIssuerAuthStatus(t *testing.T) {
 	_ = status
 	if _, _, err := IssuerAuthStatus(IssuerSigned{IssuerAuth: []byte("junk")}); err == nil {
 		t.Error("junk IssuerAuth: accepted")
+	}
+	// Issue won't sign with an x5chain that isn't a certificate, so the
+	// fixture's MSO is signed again directly.
+	_, _, payload, err := cose.DecodeUnverified(f.signed.IssuerAuth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	junkChain := f.signed
+	if junkChain.IssuerAuth, err = cose.Sign(cose.ES256, f.issuerKey, cose.Headers{X5Chain: [][]byte{{1, 2, 3}}}, cose.Headers{}, payload, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := IssuerAuthStatus(junkChain); err == nil || !strings.Contains(err.Error(), "IssuerAuth x5chain") {
+		t.Errorf("an x5chain that isn't a certificate: %v", err)
 	}
 }
