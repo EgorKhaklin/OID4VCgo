@@ -33,9 +33,20 @@ import (
 // a.Claims.Issuer, when it has one, so a list whose signer's
 // certificate names that issuer is too — as verifier.RequireValidStatus
 // does for a credential's status list.
+//
+// An error refuses the key attestation. Wrap ErrKeyAttestationRevoked
+// in one that says the attestation is no longer valid (a status other
+// than VALID): a deferred transaction's re-check
+// (IssueDeferredCredential) denies the transaction only for that, and
+// otherwise, a Status List that couldn't be fetched say, leaves it
+// pending to try again.
 type AttestationStatusChecker interface {
 	CheckAttestationStatus(ctx context.Context, a VerifiedKeyAttestation) error
 }
+
+// ErrKeyAttestationRevoked is what an AttestationStatusChecker wraps
+// for a key attestation whose status says it's no longer valid.
+var ErrKeyAttestationRevoked = errors.New("issuer: the key attestation is revoked or suspended")
 
 // VerifiedKeyAttestation is a key attestation whose signature verified,
 // as AttestationStatusChecker sees it.

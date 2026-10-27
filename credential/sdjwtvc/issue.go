@@ -291,6 +291,25 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueO
 	return out, disclosures, nil
 }
 
+// checkNoReservedNames refuses a reserved name (isReservedName)
+// anywhere in v, the always-plaintext Claims field named field: Issue
+// signs it as given, so one there would be an _sd array or digest no
+// Verifier accepts (draft-19 §2.2.2.3), or one the Holder could later
+// disclose a claim of its own choosing for.
+func checkNoReservedNames(field string, v map[string]any) error {
+	if v == nil {
+		return nil
+	}
+	generic, err := toGenericJSON(v)
+	if err != nil {
+		return err
+	}
+	if name, ok := reservedNameIn(generic); ok {
+		return fmt.Errorf("sdjwtvc: claim name %q in Claims.%s is reserved", name, field)
+	}
+	return nil
+}
+
 // checkIssueInputs checks Issue's claims and options: a vct, a decoy
 // count in range, and an IssuerCertificate, if given, for signer's key.
 func checkIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) error {
@@ -301,6 +320,11 @@ func checkIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) er
 	}
 	if hasSDMarker(claims.Status) || hasSDMarker(claims.CNF) {
 		return fmt.Errorf("sdjwtvc: Claims.Status and Claims.CNF can't have selectively disclosable sub-claims (SD-JWT VC draft-19 §2.2.2.3)")
+	}
+	for field, v := range map[string]map[string]any{"Status": claims.Status, "CNF": claims.CNF} {
+		if err := checkNoReservedNames(field, v); err != nil {
+			return err
+		}
 	}
 	if claims.VCT == "" {
 		return fmt.Errorf("sdjwtvc: Claims.VCT is required")

@@ -513,9 +513,11 @@ func (s *Issuance) refreshWithAttestation(ctx context.Context, g RefreshGrant) (
 		return refreshResult{}, err
 	}
 	// The grant's own authorization server, so fapigo/client refuses to
-	// send its refresh token to any other.
+	// send its refresh token to any other, and its Credential Issuer as
+	// the resource (RFC 8707), as the authorization asked for.
 	tokens, err := s.client.RefreshTokens(ctx, client.RefreshTokenRequest{Tokens: client.TokenSet{
 		RefreshToken: g.RefreshToken, HasRefreshToken: true, Issuer: g.AuthorizationServer,
+		Resource: []string{g.CredentialIssuer},
 	}})
 	if err != nil {
 		return refreshResult{}, s.refreshFailed(ctx, g, err)
@@ -718,7 +720,10 @@ func (w *Wallet) revokeGrant(ctx context.Context, g RefreshGrant, configID strin
 	if err := s.newClient(ctx, g.AuthorizationServer, false); err != nil {
 		return
 	}
-	_ = s.client.RevokeToken(ctx, g.RefreshToken)
+	// The grant's own authorization server, as for a refresh.
+	_ = s.client.RevokeToken(ctx, client.TokenSet{
+		RefreshToken: g.RefreshToken, HasRefreshToken: true, Issuer: g.AuthorizationServer,
+	})
 }
 
 // revokePublicGrant revokes a GrantAuthNone grant's refresh token as a

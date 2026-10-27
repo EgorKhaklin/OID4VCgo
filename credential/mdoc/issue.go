@@ -163,6 +163,11 @@ func validateClaims(claims Claims) error {
 	if claims.Status != nil && claims.IdentifierList != nil {
 		return fmt.Errorf("mdoc: Claims.Status and Claims.IdentifierList must not both be set")
 	}
+	if claims.IdentifierList != nil {
+		if err := claims.IdentifierList.validate(); err != nil {
+			return err
+		}
+	}
 	if err := validateDecoys(claims); err != nil {
 		return err
 	}

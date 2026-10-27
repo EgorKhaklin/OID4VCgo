@@ -35,22 +35,15 @@ func TestRecommendedAttestationProofType(t *testing.T) {
 
 func TestRecommendedIssuerConfig(t *testing.T) {
 	rec := haip.RecommendedIssuerConfig()
-	if len(rec.ProofTypesSupported) != 2 {
-		t.Fatalf("ProofTypesSupported has %d entries, want 2", len(rec.ProofTypesSupported))
+	if len(rec.ProofTypesSupported) != 1 {
+		t.Fatalf("ProofTypesSupported has %d entries, want 1 (jwt)", len(rec.ProofTypesSupported))
 	}
 	jwtPTC, ok := rec.ProofTypesSupported[oid4vci.ProofTypeJWT]
 	if !ok {
 		t.Fatalf("ProofTypesSupported is missing %q", oid4vci.ProofTypeJWT)
 	}
-	if jwtPTC.KeyAttestationsRequired != nil {
-		t.Errorf("jwt proof type KeyAttestationsRequired = %v, want nil", jwtPTC.KeyAttestationsRequired)
-	}
-	attestationPTC, ok := rec.ProofTypesSupported[oid4vci.ProofTypeAttestation]
-	if !ok {
-		t.Fatalf("ProofTypesSupported is missing %q", oid4vci.ProofTypeAttestation)
-	}
-	if attestationPTC.KeyAttestationsRequired == nil {
-		t.Errorf("attestation proof type KeyAttestationsRequired = nil, want non-nil")
+	if jwtPTC.KeyAttestationsRequired == nil {
+		t.Errorf("jwt proof type KeyAttestationsRequired = nil, want a key attestation required")
 	}
 }
 
@@ -142,6 +135,32 @@ func TestValidateIssuerConfig_ScopeMapsToOneType(t *testing.T) {
 	}
 	if err := validate(issuer.CredentialConfiguration{Format: "mso_mdoc", Scope: "pid", DocType: "eu.europa.ec.eudi.pid.1"}); err == nil {
 		t.Error("an SD-JWT VC and an mdoc under one scope were accepted")
+	}
+}
+
+// Configurations sharing a scope must require the same key
+// attestations, whichever proof types carry them: a token for the
+// stricter would be good for the other.
+func TestValidateIssuerConfig_ScopeSharesKeyAttestations(t *testing.T) {
+	hardware := &oid4vci.KeyAttestationRequirement{KeyStorage: []string{"iso_18045_high"}}
+	validate := func(first, second map[string]oid4vci.ProofTypeConfiguration) error {
+		return haip.ValidateIssuerConfig(issuer.Config{
+			Assurance: issuer.AssuranceDevelopment,
+			CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
+				"pid_hw": {Format: "dc+sd-jwt", Scope: "pid", VCT: "urn:eudi:pid:1", ProofTypesSupported: first},
+				"pid_sw": {Format: "dc+sd-jwt", Scope: "pid", VCT: "urn:eudi:pid:1", ProofTypesSupported: second},
+			},
+		})
+	}
+	jwtHW := map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: {KeyAttestationsRequired: hardware}}
+	if err := validate(jwtHW, map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: {KeyAttestationsRequired: hardware}}); err != nil {
+		t.Errorf("the same key attestations by other proof types: %v", err)
+	}
+	if err := validate(jwtHW, map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: {}}); err == nil {
+		t.Error("a scope shared with a configuration requiring no key attestation was accepted")
+	}
+	if err := validate(jwtHW, map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: {KeyAttestationsRequired: &oid4vci.KeyAttestationRequirement{}}}); err == nil {
+		t.Error("a scope shared with a configuration requiring a weaker key attestation was accepted")
 	}
 }
 

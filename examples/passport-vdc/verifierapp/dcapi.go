@@ -103,7 +103,7 @@ func (a *App) handleDCAPIRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req, err := mdocdcapi.BuildRequest(mdocdcapi.RequestParams{
-		Origin: a.origin, DocType: credential.DocType, Elements: elements,
+		Origin: a.origin, Origins: []string{a.origin}, DocType: credential.DocType, Elements: elements,
 		Readers: []mdocdcapi.ReaderKey{a.readers[s.scenario]},
 	})
 	if err != nil {
@@ -224,6 +224,7 @@ func (a *App) verifyDCAPI(r *http.Request, s *session, pending mdocdcapi.Pending
 		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots, Revocation: issuerRevocation},
 		Now:        a.now, MaxClockSkew: time.Minute,
 		Assurance: verifier.AssuranceDevelopment,
+		Origins:   []string{a.origin},
 		// The demo's one issuer issues every document it asks for.
 		AnyIssuerForAnyType: true,
 		// The scenario's checks, revocation among them (checkStatus,

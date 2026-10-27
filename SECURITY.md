@@ -42,10 +42,16 @@ this for you: give it the distribution point URLs and the CA
 certificates that sign their CRLs, run `go r.Run(ctx)`, and pass
 `r.Checker()`. It fetches only from public addresses by default, keeps
 the last good list when a fetch fails, and refuses a list that isn't
-signed by one of those CAs or is older than the one it holds, so an
-unreachable or tampered-with distribution point (CRLs are often served
-over plain http) can't evict or roll back a good list. A missing or
-stale CRL fails closed. `certrevocation.NoCheck{}` declines the check explicitly, for
+signed by one of those CAs or is older than the newest it has accepted
+from that CA, so an unreachable or tampered-with distribution point
+(CRLs are often served over plain http) can't evict or roll back a good
+list. Bind each URL to its CA with `URLIssuers`, and persist what
+`OnAccept` hands over to pass back as `Floors` on restart. A missing or
+stale CRL fails closed. A leaf pinned as a trust anchor is checked
+against its CA's CRL too, so that CA's certificate must be in
+`CRLs.Issuers` (`r.Checker()` sets the Refresher's own `Issuers`
+there), or the pinned leaf is refused.
+`certrevocation.NoCheck{}` declines the check explicitly, for
 short-lived certificates or a trust framework that removes compromised
 issuers from the anchor set itself.
 
@@ -99,16 +105,33 @@ closing them is up to a party it doesn't control:
   issuer sharing the Authorization Server with another can redeem the
   token it receives at the other, for a credential about the End-User.
   `walletflow.ProfileHAIP` takes only DPoP-bound tokens.
-- **Key attestations sent as the `attestation` proof type, for mdocs.**
-  A key attestation names no audience, and the `c_nonce` it carries
-  comes from an unauthenticated Nonce Endpoint, so the issuer it's sent
-  to could redeem it at another issuer the wallet trusts. walletflow
-  sends it in a jwt proof's `key_attestation` header, where the proof's
-  `aud` names the issuer, wherever the issuer takes jwt proofs, and
-  refuses an SD-JWT VC whose `iss` isn't the offer's (unless
-  `Config.AllowForeignIss`). An mdoc names no issuer, so for an mdoc
-  issuer that takes only the `attestation` proof type, nothing but the
-  wallet's issuer trust stops the relay.
+- **Relayed key attestations.** A key attestation names no audience,
+  and the `c_nonce` it carries comes from an unauthenticated Nonce
+  Endpoint (OpenID4VCI 1.0 Appendix D, §7). An issuer can hand a wallet
+  a `c_nonce` it fetched from another issuer, and redeem the key
+  attestation the wallet returns there as the `attestation` proof type,
+  for a credential about whoever its own access token names, bound to
+  the wallet's keys. That works whether the wallet sent the key
+  attestation as that proof type or in a jwt proof's `key_attestation`
+  header, which carries the same JWT, and against any issuer that takes
+  the `attestation` proof type. Two things limit it:
+  - an `issuer` under production assurance refuses the `attestation`
+    proof type unless `Config.AllowAttestationProofType` takes it, so by
+    default only jwt proofs, whose `aud` names the issuer, are redeemed;
+  - walletflow refuses an SD-JWT VC whose `iss` isn't the offer's
+    (unless `Config.AllowForeignIss`). `issuer` names itself in `iss`
+    when `Prepare` sets none, but SD-JWT VC doesn't require `iss`, and
+    an mdoc names no issuer: for those, nothing on the wallet's side
+    stops the relay but the issuers it trusts.
+- **The first CRL fetched over plain http.** `certrevocation.Refresher`
+  refuses a list older than one it has accepted from the same CA, or
+  than its `Floors`, but nothing bounds the first list it ever accepts
+  from a CA. Over plain http, an attacker on the path can answer that
+  fetch with any list the CA signed that is still inside its validity,
+  one predating a revocation, for as long as the CA's CRL cadence
+  allows (ISO/IEC 18013-5 Annex B allows long ones for an IACA). Set
+  `RequireHTTPS` where the distribution points serve https; otherwise
+  seed `Floors` with a list obtained over a trusted channel.
 - **DCQL integers above 2^53.** A DCQL query decoded from JSON holds its
   numbers as float64, so a `values` filter on an integer larger than
   2^53 in magnitude is rounded: it can match a claim one off it, and

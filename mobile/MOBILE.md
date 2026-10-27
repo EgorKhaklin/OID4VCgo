@@ -630,6 +630,11 @@ authentication session, through an eID or banking app, say.
   the callback itself (from the verified signed response, under Message
   Signing). Resuming doesn't depend on the handle being the `state`.
   Every other issuance holds its handle and keeps the default binding.
+  Under production assurance FAPIgo (from v0.61.0) takes that binding
+  only for a native app's redirect URI — a private-use URI scheme or
+  loopback http — so resuming would fail for an https Universal Link or
+  App Link redirect, which `walletflow.New` (and so `NewWallet`)
+  therefore refuses outside development.
   RFC 9700 §4.7's binding of the session to the user agent holds by
   construction: nothing else writes the app's store, so an attacker's
   session is never in it. walletflow finds its own record by the

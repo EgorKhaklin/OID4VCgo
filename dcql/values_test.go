@@ -73,6 +73,24 @@ func TestSatisfiedBySDJWTVCClaims_EnforcesValues(t *testing.T) {
 	}
 }
 
+// Every Go numeric kind a query built in Go may hold in Values, as
+// Validate accepts, matches the claim's number.
+func TestSatisfiedBySDJWTVCClaims_ValuesOfEveryGoNumericKind(t *testing.T) {
+	claims := map[string]any{"vct": "urn:test", "age": float64(18)}
+	for _, v := range []any{
+		int(18), int8(18), int16(18), int32(18), int64(18),
+		uint(18), uint8(18), uint16(18), uint32(18), uint64(18), float32(18), float64(18),
+	} {
+		q := sdjwtQuery(t, []dcql.ClaimsQuery{{Path: key("age"), Values: []any{v}}}, nil)
+		if err := (dcql.Query{Credentials: []dcql.CredentialQuery{q}}).Validate(); err != nil {
+			t.Fatalf("%T: Validate: %v", v, err)
+		}
+		if err := q.SatisfiedBySDJWTVCClaims(claims); err != nil {
+			t.Errorf("%T(18) against 18: %v", v, err)
+		}
+	}
+}
+
 // TestSelectedSDJWTVCClaimPaths_ValuesSelectClaimSetOption: an option
 // whose value doesn't match is skipped for the next one.
 func TestSelectedSDJWTVCClaimPaths_ValuesSelectClaimSetOption(t *testing.T) {

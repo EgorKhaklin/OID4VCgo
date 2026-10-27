@@ -33,3 +33,23 @@ func FromFloat(v float64) (time.Time, error) {
 	}
 	return time.Unix(int64(v), 0), nil
 }
+
+// FromCBOR is FromUnix for a decoded CWT NumericDate (RFC 8392 §2: an
+// integer or floating-point number of seconds), its fraction dropped.
+func FromCBOR(v any) (time.Time, error) {
+	switch n := v.(type) {
+	case uint64:
+		if n > Max {
+			return time.Time{}, ErrOutOfRange
+		}
+		return FromUnix(int64(n))
+	case int64:
+		return FromUnix(n)
+	case float64:
+		return FromFloat(n)
+	case float32:
+		return FromFloat(float64(n))
+	default:
+		return time.Time{}, errors.New("jwtdate: not a NumericDate")
+	}
+}

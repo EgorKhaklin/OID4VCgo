@@ -163,8 +163,9 @@ func TestAuthorize_RejectsRequestWithoutOffer(t *testing.T) {
 }
 
 // TestMetadata_RequiresKeyAttestation checks both configurations accept
-// only proofs carrying a key attestation: jwt proofs with it in their
-// key_attestation header, or the attestation proof type.
+// only jwt proofs carrying a key attestation in their key_attestation
+// header, and not the attestation proof type, whose key attestation
+// another issuer could relay here.
 func TestMetadata_RequiresKeyAttestation(t *testing.T) {
 	env := demotest.New(t, nil)
 	resp, err := env.HTTP.Get(env.IssuerURL + "/.well-known/openid-credential-issuer")
@@ -178,10 +179,9 @@ func TestMetadata_RequiresKeyAttestation(t *testing.T) {
 	}
 	for _, id := range []string{issuerapp.MdocConfigurationID, issuerapp.SDJWTConfigurationID} {
 		proofTypes := meta.CredentialConfigurationsSupported[id].ProofTypesSupported
-		att, okAtt := proofTypes[oid4vci.ProofTypeAttestation]
 		jwt, okJWT := proofTypes[oid4vci.ProofTypeJWT]
-		if len(proofTypes) != 2 || !okAtt || !okJWT || att.KeyAttestationsRequired == nil || jwt.KeyAttestationsRequired == nil {
-			t.Errorf("%s proof_types_supported = %+v, want jwt and attestation, each with key_attestations_required", id, proofTypes)
+		if len(proofTypes) != 1 || !okJWT || jwt.KeyAttestationsRequired == nil {
+			t.Errorf("%s proof_types_supported = %+v, want only jwt, with key_attestations_required", id, proofTypes)
 		}
 	}
 }

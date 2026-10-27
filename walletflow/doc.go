@@ -62,7 +62,8 @@
 // none: a certrevocation.CRLs fails closed for a CA it has no list
 // from). An SD-JWT VC whose iss isn't the
 // offer's credential_issuer is refused too, unless
-// Config.AllowForeignIss allows it. ProfileHAIP also refuses an issuer
+// Config.AllowForeignIss allows it; one with no iss, like an mdoc,
+// names no issuer to check. ProfileHAIP also refuses an issuer
 // outside HAIP 1.0 §4, with ErrProfileViolation: see its doc comment.
 //
 // An issuance runs:

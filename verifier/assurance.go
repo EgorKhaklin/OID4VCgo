@@ -1,8 +1,12 @@
 package verifier
 
 import (
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"slices"
+
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 )
 
 // AssuranceLevel gates how strict this package's own validation is —
@@ -33,7 +37,11 @@ const (
 	//     client.AssuranceProduction runs against its own IssuerKeys, and
 	//     issuer.AssuranceProduction against AttestationVerifier/
 	//     ProofBindingKeys. Checked per call rather than in New because
-	//     these resolvers are supplied per call.
+	//     these resolvers are supplied per call;
+	//   - there too, an X5CIssuerKeyResolver or X5ChainIssuerKeyResolver
+	//     whose Roots (or a RootsByDocType entry) is the system root pool
+	//     (x509.SystemCertPool), which would accept any public CA's
+	//     certificate as an issuer's.
 	//
 	// Declaring capabilities is not optional under this level: a
 	// resolver that doesn't implement KeySourceAssurance at all is
@@ -109,5 +117,40 @@ func checkProductionKeySources(req VerifyResponseRequest) error {
 			return errors.New("mdoc_issuer_keys must verify issuer chains (verifier.MdocIssuerChainResolver, or Unwrap to one) under AssuranceProduction")
 		}
 	}
+	if anchoredBySystemPool(req.IssuerKeys) {
+		return errors.New("issuer_keys: Roots is the system root pool under AssuranceProduction: it anchors every public CA's certificates, a TLS server's among them; trust the credential issuers' own CAs")
+	}
+	for resolver, i := MdocIssuerKeyResolver(req.MdocIssuerKeys), 0; resolver != nil && i < 16; i++ {
+		if anchoredBySystemPool(resolver) {
+			return errors.New("mdoc_issuer_keys: Roots or RootsByDocType holds the system root pool under AssuranceProduction: it anchors every public CA's certificates; trust the IACAs")
+		}
+		wrapper, ok := resolver.(MdocIssuerKeyResolverWrapper)
+		if !ok {
+			break
+		}
+		resolver = wrapper.Unwrap()
+	}
 	return nil
+}
+
+// anchoredBySystemPool reports whether resolver is one of this
+// package's x5c resolvers with a system root pool as a trust anchor
+// set (certchain.IsSystemPool).
+func anchoredBySystemPool(resolver any) bool {
+	var pools []*x509.CertPool
+	switch r := resolver.(type) {
+	case X5CIssuerKeyResolver:
+		pools = []*x509.CertPool{r.Roots}
+	case *X5CIssuerKeyResolver:
+		if r != nil {
+			pools = []*x509.CertPool{r.Roots}
+		}
+	case X5ChainIssuerKeyResolver:
+		pools = r.anchorPools()
+	case *X5ChainIssuerKeyResolver:
+		if r != nil {
+			pools = r.anchorPools()
+		}
+	}
+	return slices.ContainsFunc(pools, certchain.IsSystemPool)
 }

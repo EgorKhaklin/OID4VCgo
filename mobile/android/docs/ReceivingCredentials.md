@@ -138,7 +138,10 @@ Android can end the app's process while the holder is at the issuer's
 pages. The authorization in progress is kept in the credential store,
 so when the redirect arrives at a relaunched app — a redirect
 `IssuerSignIn.redirected` didn't take — `Wallet.resumeIssuance` completes
-it and returns an issuance ready for `requestCredentials()`.
+it and returns an issuance ready for `requestCredentials()`. Outside
+development, resuming needs a `redirectURI` with the app's own URI
+scheme, such as `com.example.wallet:/callback`: it fails for an https
+App Link, which `Wallet` therefore refuses.
 
 ```kotlin
 /** Completes an authorization the app's process was killed during, from the redirect that relaunched it. */

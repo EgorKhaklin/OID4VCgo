@@ -28,8 +28,14 @@ import (
 // the IACA, and the document signer's certificate.
 func exchange(t *testing.T) (mdocdcapi.VerifyParams, *x509.CertPool, *x509.Certificate) {
 	t.Helper()
+	return exchangeAt(t, "https://shop.example")
+}
+
+// exchangeAt is exchange from a page at origin, which the VerifyParams
+// lists as the Verifier's Origins.
+func exchangeAt(t *testing.T, origin string) (mdocdcapi.VerifyParams, *x509.CertPool, *x509.Certificate) {
+	t.Helper()
 	const (
-		origin  = "https://shop.example"
 		docType = "org.iso.18013.5.1.mDL"
 		ns      = "org.iso.18013.5.1"
 	)
@@ -69,6 +75,7 @@ func exchange(t *testing.T) (mdocdcapi.VerifyParams, *x509.CertPool, *x509.Certi
 	return mdocdcapi.VerifyParams{
 		Pending: req.Pending, Response: base64.RawURLEncoding.EncodeToString(encrypted),
 		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}},
+		Origins:    []string{origin},
 	}, roots, ds
 }
 
@@ -111,7 +118,18 @@ func TestVerifyResponse_ProductionDecisions(t *testing.T) {
 		"decided": {func(p *mdocdcapi.VerifyParams) {
 			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
 		}, ""},
-		"development": {func(p *mdocdcapi.VerifyParams) { p.Assurance = verifier.AssuranceDevelopment }, ""},
+		"the system root pool": {func(p *mdocdcapi.VerifyParams) {
+			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
+			system, err := x509.SystemCertPool()
+			if err != nil {
+				t.Skipf("no system root pool: %v", err)
+			}
+			p.IssuerKeys = verifier.X5ChainIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}
+		}, "system root pool"},
+		"no origins": {func(p *mdocdcapi.VerifyParams) {
+			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck, p.Origins = verifier.AssuranceProduction, true, true, nil
+		}, "set Origins"},
+		"development": {func(p *mdocdcapi.VerifyParams) { p.Assurance, p.Origins = verifier.AssuranceDevelopment, nil }, ""},
 		// Revocation is required at every level, and applied: the IACA
 		// here publishes no CRL, so CRLs fails closed.
 		"no revocation": {func(p *mdocdcapi.VerifyParams) {
@@ -135,6 +153,44 @@ func TestVerifyResponse_ProductionDecisions(t *testing.T) {
 		case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
 			t.Errorf("%s: %v, want an error naming %q", name, err, tc.wantErr)
 		}
+	}
+}
+
+// A request built for an origin the Verifier doesn't serve — one taken
+// from the request, say — can't be answered: BuildRequest refuses it
+// when Origins are set, and VerifyResponse refuses its response. An
+// http page's request is answered only under AssuranceDevelopment.
+func TestOrigins(t *testing.T) {
+	ctx := context.Background()
+	elements := map[string]map[string]bool{"org.iso.18013.5.1": {"age_over_18": false}}
+	if _, err := mdocdcapi.BuildRequest(mdocdcapi.RequestParams{
+		Origin: "https://evil.example", Origins: []string{"https://shop.example"}, DocType: "org.iso.18013.5.1.mDL", Elements: elements,
+	}); err == nil || !strings.Contains(err.Error(), "Origins") {
+		t.Errorf("BuildRequest for an origin not in Origins: %v", err)
+	}
+
+	decided := func(p *mdocdcapi.VerifyParams) {
+		p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
+	}
+	p, _, _ := exchangeAt(t, "https://evil.example")
+	decided(&p)
+	p.Origins = []string{"https://shop.example"}
+	if _, err := mdocdcapi.VerifyResponse(ctx, p); err == nil || !strings.Contains(err.Error(), "Origins") {
+		t.Errorf("a response to a request for an origin not in Origins: %v", err)
+	}
+	p.Assurance, p.Origins = verifier.AssuranceDevelopment, []string{"https://shop.example"}
+	if _, err := mdocdcapi.VerifyResponse(ctx, p); err == nil {
+		t.Error("under development, a response to a request for an origin not in Origins: accepted")
+	}
+
+	p, _, _ = exchangeAt(t, "http://shop.example")
+	decided(&p)
+	if _, err := mdocdcapi.VerifyResponse(ctx, p); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Errorf("an http origin under production: %v", err)
+	}
+	p.Assurance = verifier.AssuranceDevelopment
+	if _, err := mdocdcapi.VerifyResponse(ctx, p); err != nil {
+		t.Errorf("an http origin under development: %v", err)
 	}
 }
 

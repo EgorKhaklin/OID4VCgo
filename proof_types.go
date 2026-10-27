@@ -19,9 +19,15 @@ const (
 	// another issuer's Nonce Endpoint, hand it to the Wallet as its
 	// own, and relay the key attestation the Wallet returns to that
 	// other issuer, which accepts it as if the Wallet had sent it.
-	// Where the deployment chooses proof_types_supported, prefer
-	// ProofTypeJWT with a key_attestation header (Appendix D.1, F.1):
-	// the proof itself is signed by an attested key and names the
-	// issuer in aud.
+	// The key attestation a Wallet puts in a jwt proof's key_attestation
+	// header (Appendix D.1, F.1) is the same JWT, carrying the same
+	// c_nonce, so the relaying issuer can redeem it as this proof type
+	// whichever way the Wallet sent it: only an issuer that doesn't take
+	// this proof type is safe from it. Where the deployment chooses
+	// proof_types_supported, take ProofTypeJWT with a key_attestation
+	// header instead: the proof itself is signed by an attested key and
+	// names the issuer in aud. issuer.New refuses this proof type under
+	// AssuranceProduction unless Config.AllowAttestationProofType takes
+	// it.
 	ProofTypeAttestation = "attestation"
 )

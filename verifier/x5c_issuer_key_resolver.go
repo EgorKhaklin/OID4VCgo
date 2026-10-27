@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/x509"
 	"errors"
+	"slices"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/certrevocation"
@@ -52,7 +53,10 @@ type X5CIssuerKeyResolver struct {
 	// would otherwise be accepted too: prefer Roots that anchor only
 	// this role's certificates, and use LeafPolicy to require what
 	// distinguishes them (an extended key usage, a certificate policy)
-	// where the anchors are shared.
+	// where the anchors are shared. nil means
+	// DefaultSDJWTIssuerLeafPolicy, which refuses the certificates
+	// whose key usage clearly denotes another role (a TLS server's,
+	// say); a LeafPolicy that's set replaces it.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 	// Revocation decides whether a certificate on a verified path — the
 	// issuer's own, or an intermediate CA's — has been revoked. A chain
@@ -87,6 +91,56 @@ func (r X5CIssuerKeyResolver) Validate() error {
 	return validateRevocation("X5CIssuerKeyResolver", r.Revocation)
 }
 
+// leafPolicy is LeafPolicy, or DefaultSDJWTIssuerLeafPolicy.
+func (r X5CIssuerKeyResolver) leafPolicy() func(*x509.Certificate, [][]*x509.Certificate) error {
+	if r.LeafPolicy != nil {
+		return r.LeafPolicy
+	}
+	return DefaultSDJWTIssuerLeafPolicy
+}
+
+// otherRoleEKUs are the extended key usages (RFC 5280 §4.2.1.12, and
+// the vendor ones crypto/x509 names) that denote a role other than
+// signing credentials: TLS, code signing, email, time stamping, IPsec.
+var otherRoleEKUs = []x509.ExtKeyUsage{
+	x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageCodeSigning,
+	x509.ExtKeyUsageEmailProtection, x509.ExtKeyUsageTimeStamping, x509.ExtKeyUsageOCSPSigning,
+	x509.ExtKeyUsageIPSECEndSystem, x509.ExtKeyUsageIPSECTunnel, x509.ExtKeyUsageIPSECUser,
+	x509.ExtKeyUsageMicrosoftServerGatedCrypto, x509.ExtKeyUsageNetscapeServerGatedCrypto,
+	x509.ExtKeyUsageMicrosoftCommercialCodeSigning, x509.ExtKeyUsageMicrosoftKernelCodeSigning,
+}
+
+// DefaultSDJWTIssuerLeafPolicy is the issuer certificate check
+// X5CIssuerKeyResolver makes where no LeafPolicy is set. Chain
+// validation alone accepts any certificate under Roots, so a TLS
+// server's certificate from an ecosystem CA that also issues those
+// would sign accepted credentials. It refuses a certificate whose key
+// usage extension doesn't allow digital signatures, that is an OCSP
+// signer, or whose extended key usage lists only purposes that denote
+// another role — TLS server or client authentication, code signing,
+// email protection, time stamping, IPsec. It accepts a certificate
+// without those extensions, or whose extended key usage lists any
+// other purpose (anyExtendedKeyUsage, or a private one): SD-JWT VC
+// defines no issuer purpose to require. A deployment whose issuer
+// certificates carry one sets LeafPolicy to require it.
+func DefaultSDJWTIssuerLeafPolicy(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
+	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return errors.New("the issuer certificate's key usage doesn't allow digital signatures")
+	}
+	if slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageOCSPSigning) {
+		return errors.New("the issuer certificate is an OCSP signer's")
+	}
+	if len(leaf.ExtKeyUsage) == 0 || len(leaf.UnknownExtKeyUsage) > 0 {
+		return nil
+	}
+	for _, eku := range leaf.ExtKeyUsage {
+		if !slices.Contains(otherRoleEKUs, eku) {
+			return nil
+		}
+	}
+	return errors.New("the issuer certificate's extended key usage lists only other roles' purposes (TLS, code signing, email, time stamping, IPsec)")
+}
+
 // ResolveIssuerChains implements SDJWTVCIssuerChainResolver: the paths
 // from the x5c header's leaf to Roots, as ResolveIssuerKey verifies it,
 // that LeafPolicy approves each on its own (certchain.ApprovedChains)
@@ -100,7 +154,7 @@ func (r X5CIssuerKeyResolver) ResolveIssuerChains(ctx context.Context, header ma
 	if err != nil {
 		return nil, err
 	}
-	_, chains, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, r.LeafPolicy, r.Revocation, verificationTime(ctx))
+	_, chains, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, r.leafPolicy(), r.Revocation, verificationTime(ctx))
 	return chains, err
 }
 
@@ -119,7 +173,7 @@ func (r X5CIssuerKeyResolver) ResolveIssuerKey(ctx context.Context, header, payl
 	if err := certchain.CheckNoAnchor(ders); err != nil {
 		return nil, "", err
 	}
-	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, r.LeafPolicy, r.Revocation, verificationTime(ctx))
+	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, r.leafPolicy(), r.Revocation, verificationTime(ctx))
 	if err != nil {
 		return nil, "", err
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -78,9 +79,9 @@ func signToken(signer crypto.Signer, alg jose.Alg, claims TokenClaims, header ma
 
 // VerifyOptions configures VerifyToken.
 type VerifyOptions struct {
-	// Now is the time the token's iat and exp, and its signer's
-	// certificates (CheckX5C, CheckCWTX5Chain), are checked at; it
-	// defaults to time.Now.
+	// Now is the time the token's iat, nbf and exp, and its signer's
+	// certificates (CheckX5C, CheckCWTX5Chain), are checked at, read
+	// once per check; it defaults to time.Now.
 	Now func() time.Time
 
 	// MaxAge, if set, refuses a token issued longer ago (its iat): a
@@ -88,12 +89,24 @@ type VerifyOptions struct {
 	// so anyone who can serve bytes at the status URI (a cache, a
 	// mirror) could replay it until then. Zero leaves freshness to exp
 	// for a token that has one, and refuses a token without exp issued
-	// more than DefaultMaxAgeWithoutExp ago.
+	// more than DefaultMaxAgeWithoutExp ago. Negative is an error, not
+	// "no limit".
 	MaxAge time.Duration
 
-	// MaxClockSkew is how far in the future a token's iat may be;
-	// zero means a minute.
+	// MaxClockSkew is how far in the future a token's iat and nbf may
+	// be; zero means a minute.
 	MaxClockSkew time.Duration
+
+	// RequireExp refuses a token without exp. draft-14 leaves exp
+	// optional; ISO/IEC 18013-5 §12.3.6.3 has it present in an mdoc's
+	// revocation list ("The exp claim shall be present").
+	RequireExp bool
+
+	// X5ChainProtectedOnly has CheckCWTX5Chain read the signer's
+	// x5chain from the protected header alone, as ISO/IEC 18013-5
+	// §12.3.6.3 has an mdoc's revocation list carry it. Unset, an
+	// unprotected x5chain is accepted too, as RFC 9360 allows.
+	X5ChainProtectedOnly bool
 
 	// LeafPolicy, used by CheckX5C/CheckCWTX5Chain only, is run on the
 	// token signer's chain-verified certificate and its verified paths,
@@ -157,7 +170,14 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 	if err != nil {
 		return TokenClaims{}, fmt.Errorf("statuslist: verify token signature: %w", err)
 	}
-	if typ, _ := header["typ"].(string); typ != TokenTyp {
+	// typ is a media type (RFC 7515 §4.1.9): matched case-insensitively,
+	// with "application/" implied when it has no "/".
+	typ, _ := header["typ"].(string)
+	mediaType := typ
+	if !strings.Contains(mediaType, "/") {
+		mediaType = "application/" + mediaType
+	}
+	if !strings.EqualFold(mediaType, TokenMediaType) {
 		return TokenClaims{}, fmt.Errorf("statuslist: token typ is %q, want %q", typ, TokenTyp)
 	}
 
@@ -197,6 +217,9 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 	if decoded.Iss != "" && opts.Issuer != "" && decoded.Iss != opts.Issuer {
 		return TokenClaims{}, fmt.Errorf("statuslist: token iss %q isn't the referenced token's issuer %q", decoded.Iss, opts.Issuer)
 	}
+	if decoded.TTL != nil && *decoded.TTL <= 0 {
+		return TokenClaims{}, fmt.Errorf("statuslist: token ttl must be positive")
+	}
 	if !decoded.StatusList.Bits.valid() {
 		return TokenClaims{}, fmt.Errorf("statuslist: token's status_list.bits is invalid")
 	}
@@ -214,67 +237,33 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 	}, nil
 }
 
-// defaultMaxClockSkew is VerifyOptions.MaxClockSkew's zero value's.
-const defaultMaxClockSkew = time.Minute
-
 // DefaultMaxAgeWithoutExp bounds how long ago a Status List Token with
 // no exp may have been issued, when VerifyOptions.MaxAge is unset.
-const DefaultMaxAgeWithoutExp = 24 * time.Hour
+const DefaultMaxAgeWithoutExp = jwtdate.DefaultMaxAgeWithoutExp
 
 // checkTokenTimes checks a Status List Token's iat, which draft-14
-// §5.1 requires, exp and nbf, against opts: issued not in the future
-// (past MaxClockSkew), not longer ago than MaxAge when it's set (or
-// DefaultMaxAgeWithoutExp, when neither it nor exp is), not
-// expired, and not before its nbf (RFC 7519 §4.1.5: it "MUST NOT be
-// accepted for processing" before then, past MaxClockSkew).
+// §5.1 requires, exp and nbf, against opts at Now (jwtdate.Window).
 func checkTokenTimes(iat int64, exp, nbf *int64, opts VerifyOptions) error {
-	now := time.Now
-	if opts.Now != nil {
-		now = opts.Now
-	}
-	t := now()
-	issued, err := jwtdate.FromUnix(iat)
-	if err != nil || iat == 0 {
-		return fmt.Errorf("statuslist: token iat is missing or out of range")
-	}
-	skew := opts.MaxClockSkew
-	if skew == 0 {
-		skew = defaultMaxClockSkew
-	}
-	if issued.After(t.Add(skew)) {
-		return fmt.Errorf("statuslist: token was issued in the future")
-	}
-	if nbf != nil {
-		notBefore, err := jwtdate.FromUnix(*nbf)
-		if err != nil {
-			return fmt.Errorf("statuslist: token nbf is out of range")
-		}
-		if notBefore.After(t.Add(skew)) {
-			return fmt.Errorf("statuslist: token isn't valid before %s", notBefore.UTC().Format(time.RFC3339))
-		}
-	}
-	maxAge := opts.MaxAge
-	if maxAge == 0 && exp == nil {
-		// Neither the token nor the caller bounds its freshness: a token
-		// without exp would otherwise be good forever, so a copy cached
-		// or replayed from before a revocation would keep saying valid.
-		maxAge = DefaultMaxAgeWithoutExp
-	}
-	if maxAge > 0 && issued.Before(t.Add(-maxAge)) {
-		return fmt.Errorf("statuslist: token was issued %s ago, over the %s allowed", t.Sub(issued).Round(time.Second), maxAge)
-	}
-	if exp != nil {
-		expires, err := jwtdate.FromUnix(*exp)
-		if err != nil {
-			return fmt.Errorf("statuslist: token exp is out of range")
-		}
-		// RFC 7519 §4.1.4: "the current date/time MUST be before the
-		// expiration date/time".
-		if !t.Before(expires) {
-			return fmt.Errorf("statuslist: token is expired")
-		}
+	window := jwtdate.Window{MaxAge: opts.MaxAge, MaxClockSkew: opts.MaxClockSkew, RequireExp: opts.RequireExp}
+	if err := window.Check(iat, exp, nbf, opts.now()); err != nil {
+		return fmt.Errorf("statuslist: %w", err)
 	}
 	return nil
+}
+
+func (o VerifyOptions) now() time.Time {
+	if o.Now == nil {
+		return time.Now()
+	}
+	return o.Now()
+}
+
+// atOneInstant is opts with Now read once, so a token's times and its
+// signer's certificates are checked at the same instant.
+func (o VerifyOptions) atOneInstant() VerifyOptions {
+	now := o.now()
+	o.Now = func() time.Time { return now }
+	return o
 }
 
 // validate refuses claims a Relying Party would refuse (draft-14 §5.1,

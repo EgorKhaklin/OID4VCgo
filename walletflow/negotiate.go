@@ -169,13 +169,17 @@ const (
 // otherwise as the attestation proof type (Appendix F.3). A jwt proof's
 // aud is the Credential Issuer Identifier (Appendix F.1), while a key
 // attestation names no audience and the c_nonce it carries comes from
-// an unauthenticated Nonce Endpoint: an issuer handed the attestation
-// proof type could fetch the c_nonce it signs from another issuer the
-// wallet trusts, and redeem the proof there for a credential bound to
-// the holder's keys. Receiving refuses an SD-JWT VC naming another
-// issuer (Config.AllowForeignIss), but an mdoc names none, so for an
-// mdoc from an issuer that takes only the attestation proof type
-// nothing stops that relay but the issuers the wallet trusts.
+// an unauthenticated Nonce Endpoint. So an issuer could fetch the
+// c_nonce it hands the wallet from another issuer the wallet trusts,
+// and redeem the key attestation the wallet returns there, as the
+// attestation proof type, for a credential bound to the holder's keys.
+// That works however the wallet sent it, since the key_attestation
+// header carries the same JWT, against any issuer that takes the
+// attestation proof type; only that issuer can rule it out, by not
+// taking it. Receiving refuses an SD-JWT VC naming another issuer
+// (Config.AllowForeignIss), but an SD-JWT VC needn't name one, and an
+// mdoc names none: for those, nothing on the wallet's side stops the
+// relay but the issuers it trusts.
 func (w *Wallet) chooseProof(conf oid4vci.CredentialConfigurationMetadata) (proofPlan, error) {
 	if err := checkBindable(conf); err != nil {
 		return 0, err

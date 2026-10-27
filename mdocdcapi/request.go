@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/fxamacker/cbor/v2"
 
@@ -41,6 +42,12 @@ type RequestParams struct {
 	// Digital Credentials API, from the Verifier's configuration — for
 	// example "https://verifier.example". REQUIRED.
 	Origin string
+	// Origins, if set, are the origins of the Verifier's own pages:
+	// BuildRequest refuses an Origin that isn't one of them, so one
+	// taken from the request (its Origin header, say) can't bind the
+	// response to a page the Verifier doesn't serve. VerifyParams.Origins
+	// checks the response's.
+	Origins []string
 	// DocType is the requested document type, for example
 	// "org.iso.18013.5.1.mDL". REQUIRED.
 	DocType string
@@ -153,6 +160,9 @@ func BuildRequest(p RequestParams) (Request, error) {
 func checkRequestParams(p RequestParams) error {
 	if err := checkOrigin(p.Origin); err != nil {
 		return err
+	}
+	if len(p.Origins) > 0 && !slices.Contains(p.Origins, p.Origin) {
+		return fmt.Errorf("mdocdcapi: origin %q isn't one of Origins", p.Origin)
 	}
 	if p.DocType == "" {
 		return errors.New("mdocdcapi: DocType is required")

@@ -702,13 +702,19 @@ func (iss *Issuer) issueInstance(cc CredentialConfiguration, instance Credential
 
 // issueSDJWT binds claims to key's public key via cnf.jwk (RFC 7800),
 // using key.JWKRaw — the key's public members only, so nothing the
-// Wallet chose beyond its key ends up in the signed credential.
+// Wallet chose beyond its key ends up in the signed credential. A
+// credential Prepare gave no iss names Config.Issuer: a Wallet refuses
+// one naming an issuer other than the one it asked, so a credential
+// another issuer relays to it as its own isn't stored as that issuer's.
 func (iss *Issuer) issueSDJWT(claims sdjwtvc.Claims, key resolvedKey, typeMetadata *sdjwtvc.TypeMetadata) (string, error) {
 	var cnfJWK map[string]any
 	if err := strictjson.Unmarshal(key.JWKRaw, &cnfJWK); err != nil {
 		return "", fmt.Errorf("issuer: unmarshal jwk for cnf: %w", err)
 	}
 	claims.CNF = map[string]any{"jwk": cnfJWK}
+	if claims.Iss == "" {
+		claims.Iss = iss.cfg.Issuer.String()
+	}
 
 	decoys, err := iss.deps.SDJWTSigner.Decoys.count(iss.deps.Random)
 	if err != nil {

@@ -3,6 +3,8 @@ package issuer
 import (
 	"crypto/rand"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -143,16 +145,21 @@ func checkKeySourceAssurance(name string, source any) error {
 	return nil
 }
 
-// checkProductionAttestationNonce refuses an attestation-type proof
+// checkProductionAttestationProofType refuses the attestation proof
+// type unless Config.AllowAttestationProofType takes it, and then
 // without a Nonce Endpoint: without a c_nonce, such a proof has no
-// freshness, nor any binding to this issuer.
-func checkProductionAttestationNonce(cfg Config) error {
-	if !cfg.Endpoints.Nonce.IsZero() {
-		return nil
-	}
-	for id, cc := range cfg.CredentialConfigurationsSupported {
-		if _, ok := cc.ProofTypesSupported[oid4vci.ProofTypeAttestation]; ok {
-			return fmt.Errorf("credential_configurations_supported[%q]: the %q proof type requires endpoints.nonce under AssuranceProduction (without a c_nonce an attestation-type proof has no freshness or binding to this issuer)", id, oid4vci.ProofTypeAttestation)
+// freshness. Even with one it isn't bound to this issuer, since anyone
+// can fetch a c_nonce (see AllowAttestationProofType).
+func checkProductionAttestationProofType(cfg Config) error {
+	for _, id := range slices.Sorted(maps.Keys(cfg.CredentialConfigurationsSupported)) {
+		if _, ok := cfg.CredentialConfigurationsSupported[id].ProofTypesSupported[oid4vci.ProofTypeAttestation]; !ok {
+			continue
+		}
+		switch {
+		case !cfg.AllowAttestationProofType:
+			return fmt.Errorf("credential_configurations_supported[%q]: the %q proof type names no audience, so another issuer can relay a Wallet's key attestation here; under AssuranceProduction take jwt proofs with a key_attestation header instead (haip.RecommendedJWTKeyAttestationProofType), or set config.allow_attestation_proof_type", id, oid4vci.ProofTypeAttestation)
+		case cfg.Endpoints.Nonce.IsZero():
+			return fmt.Errorf("credential_configurations_supported[%q]: the %q proof type requires endpoints.nonce under AssuranceProduction (without a c_nonce an attestation-type proof has no freshness)", id, oid4vci.ProofTypeAttestation)
 		}
 	}
 	return nil
@@ -174,8 +181,11 @@ func checkProductionAssurance(cfg Config, deps Dependencies) error {
 	if err := checkProductionHTTPS(cfg); err != nil {
 		return err
 	}
-	if err := checkProductionAttestationNonce(cfg); err != nil {
+	if err := checkProductionAttestationProofType(cfg); err != nil {
 		return err
+	}
+	if !cfg.Endpoints.Nonce.IsZero() && cfg.Limits.NonceLifetime > maxProductionNonceLifetime {
+		return fmt.Errorf("config: limits.nonce_lifetime is %s; under AssuranceProduction it must be at most %s", cfg.Limits.NonceLifetime, maxProductionNonceLifetime)
 	}
 	if deps.PreAuthorizedCodes != nil && cfg.PreAuthorizedCodeClientAuthentication == nil {
 		return fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (issuer.AnonymousPreAuthorizedCode{} accepts the redemption without client authentication, which HAIP 1.0 §4.4.1 doesn't allow)")
@@ -237,6 +247,12 @@ const (
 	minProductionDPoPClockSkew = 10 * time.Second
 	maxProductionDPoPClockSkew = 60 * time.Second
 )
+
+// maxProductionNonceLifetime is the longest Limits.NonceLifetime
+// AssuranceProduction takes: a c_nonce is a proof's only freshness, so
+// one valid much longer lets a Wallet's proofs be made well before
+// they're sent.
+const maxProductionNonceLifetime = time.Hour
 
 // checkProductionDPoPClockSkew holds Limits.MaxDPoPClockSkew to FAPI
 // 2.0's bounds where this issuer verifies the token request's DPoP

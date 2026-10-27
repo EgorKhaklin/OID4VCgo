@@ -58,6 +58,13 @@ package issuer
 // what's being issued, or to look up the pending issuance — with no
 // need to capture the value off the PAR request itself.
 //
+// The Wallet sends whatever issuer_state its offer carried, and a
+// Credential Offer can reach anyone, so issuer_state only says which
+// offer: it doesn't authenticate the End-User. Authenticate them at the
+// consent step and check they're the one the offer was made for before
+// issuing their Credential, and make issuer_state an unguessable value
+// (CreateCredentialOffer doesn't choose it).
+//
 // BeginAuthorization returns the InteractionRequest once, and the
 // consent step needs it back, with the handle, when the holder submits.
 // fapigo/server/interactioncookie carries both in one AES-256-GCM-sealed
