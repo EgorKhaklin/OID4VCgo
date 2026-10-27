@@ -42,7 +42,7 @@ func TestClassify(t *testing.T) {
 		},
 		"not configured": {
 			err:  fmt.Errorf("walletflow: Config.VerifierTrust is required to present: %w", walletflow.ErrNotConfigured),
-			code: CodeInvalidInput,
+			code: CodeInvalidInput, detail: DetailNotConfigured, mustNotSee: "Config.",
 		},
 		"rate limited": {
 			err:  &wallet.Error{HTTPStatus: 429, Code: "slow_down"},
@@ -86,6 +86,24 @@ func TestClassify(t *testing.T) {
 		}
 		if strings.ContainsAny(e.Message, "\n\t") || len([]rune(e.Message)) > maxMessage+1 {
 			t.Errorf("%s: the message isn't cleaned: %q", name, e.Message)
+		}
+	}
+}
+
+// A call the configuration lacks what it needs for is invalid_input
+// with the not_configured detail, telling it apart from a malformed
+// argument, and names NewWallet's keys, not walletflow's fields.
+func TestClassify_NotConfigured(t *testing.T) {
+	for in, want := range map[string]string{
+		"walletflow: Config.VerifierTrust is required to present":                                                     "verifier_roots is required to present",
+		"walletflow: Config.IssuerRoots is required to receive credentials":                                           "issuer_roots is required",
+		"walletflow: Config.RedirectURI is required to receive credentials with the authorization code grant":         "redirect_uri is required",
+		"walletflow: Dependencies.Provider and Config.ClientID are required to receive credentials under ProfileHAIP": `a WalletProvider and client_id are required to receive credentials under "issuance_profile": "haip"`,
+	} {
+		var e *Error
+		if !errors.As(classify(fmt.Errorf("%s: %w", in, walletflow.ErrNotConfigured)), &e) ||
+			e.Code != CodeInvalidInput || e.Detail != DetailNotConfigured || !strings.Contains(e.Message, want) {
+			t.Errorf("classify(%q) = %#v, want [invalid_input:not_configured] naming %q", in, e, want)
 		}
 	}
 }

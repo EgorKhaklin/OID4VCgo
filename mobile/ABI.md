@@ -22,6 +22,16 @@ ProximityReader). An older wrapper shows a
 code it doesn't know as it is. Check a library's release notes for the
 calls it has.
 
+Some error classifications changed within version 12 too. A call the
+configuration lacks what it needs for — `issuer_roots` or
+`redirect_uri` to receive credentials, `verifier_roots` to present, a
+provider and `client_id` under `"issuance_profile": "haip"` — was
+`protocol` and is now `invalid_input` with the detail
+`not_configured` (`DetailNotConfigured`), its message naming the
+configuration key. A `redirect_uri` in a form no issuance can
+authenticate with is `invalid_input` at `NewWallet` rather than
+`protocol` at each issuance (see Wallet).
+
 The version changes whenever a function, object, JSON result, record
 format or error code below changes incompatibly.
 
@@ -34,10 +44,11 @@ format or error code below changes incompatibly.
 - **Errors:** a failing call's error text is `[code] message`, or
   `[code:detail] message` when the issuer, Authorization Server or
   Verifier answered with an OAuth error code of its own (`detail`: for
-  example `invalid_grant`, which a wrong PIN gets). The code and detail
-  are stable; the message is for logs. A callback's error comes back to
-  the app as `platform`, carrying its message. (Version 1 had no
-  detail.)
+  example `invalid_grant`, which a wrong PIN gets), or with one of the
+  wallet's own (`request_refused`'s, and `invalid_input`'s
+  `not_configured`). The code and detail are stable; the message is for
+  logs. A callback's error comes back to the app as `platform`,
+  carrying its message. (Version 1 had no detail.)
 - **Threads:** every call blocks. Call from a background thread, never
   the main thread; callbacks run on the calling thread.
 - **Cancellation:** a call that waits on the network takes an
@@ -49,7 +60,7 @@ format or error code below changes incompatibly.
 
 | Code | Meaning |
 |---|---|
-| `invalid_input` | an argument or the configuration is malformed, or the configuration lacks what the call needs (`verifier_roots` to present, say) |
+| `invalid_input` | an argument or the configuration is malformed, or, with the detail `not_configured`, the configuration lacks what the call needs (`verifier_roots` to present, say): the message names the key |
 | `platform` | a callback into the app failed (its message follows) |
 | `network` | a request couldn't be made, got no answer, or timed out; retryable |
 | `unavailable` | the service answered with HTTP 5xx or 429; retryable later |

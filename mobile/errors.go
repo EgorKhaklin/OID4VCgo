@@ -82,8 +82,7 @@ func classify(err error) error {
 		// What the platform handed over, not a service's refusal.
 		return newError(CodeInvalidInput, walletflow.ErrMalformedRequest)
 	case errors.Is(err, walletflow.ErrNotConfigured):
-		// The configuration the app passed lacks what this call needs.
-		return newError(CodeInvalidInput, err)
+		return notConfigured(err)
 	case errors.Is(err, walletflow.ErrNotFound):
 		return newError(CodeNotFound, err)
 	case errors.Is(err, walletflow.ErrProfileViolation):
@@ -113,6 +112,32 @@ func classify(err error) error {
 	default:
 		return newError(CodeProtocol, err)
 	}
+}
+
+// DetailNotConfigured is the detail of an invalid_input error for a call
+// the configuration the app passed lacks what it needs for — issuer_roots
+// or redirect_uri to receive credentials, verifier_roots to present
+// them, a WalletProvider and client_id under the haip issuance profile —
+// rather than for a malformed argument: the integration to fix, not
+// the holder's input.
+const DetailNotConfigured = "not_configured"
+
+// configNames are walletflow's names for what a wallet is configured
+// with, and NewWallet's for them.
+var configNames = strings.NewReplacer(
+	"Config.IssuerRoots", "issuer_roots",
+	"Config.RedirectURI", "redirect_uri",
+	"Config.VerifierTrust", "verifier_roots",
+	"Config.ClientID", "client_id",
+	"Dependencies.Provider", "a WalletProvider",
+	"under ProfileHAIP", `under "issuance_profile": "haip"`,
+)
+
+// notConfigured is err, a walletflow.ErrNotConfigured, as invalid_input
+// with DetailNotConfigured, naming NewWallet's configuration keys
+// rather than walletflow's fields.
+func notConfigured(err error) error {
+	return &Error{Code: CodeInvalidInput, Detail: DetailNotConfigured, Message: cleanText(configNames.Replace(err.Error()))}
 }
 
 // refused is a remote party's error response: by whom, its HTTP status
