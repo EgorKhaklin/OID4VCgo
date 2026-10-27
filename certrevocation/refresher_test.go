@@ -156,14 +156,22 @@ func TestNewRefresher_Validates(t *testing.T) {
 	p := newPKI(t)
 	issuers := []*x509.Certificate{p.inter}
 	tests := map[string]certrevocation.RefresherConfig{
-		"no URLs":         {Issuers: issuers},
-		"not http":        {URLs: []string{"ftp://crl.example/ca.crl"}, Issuers: issuers},
-		"no host":         {URLs: []string{"http:///ca.crl"}, Issuers: issuers},
-		"repeated URL":    {URLs: []string{"http://crl.example/ca.crl", "http://crl.example/ca.crl"}, Issuers: issuers},
-		"no issuers":      {URLs: []string{"http://crl.example/ca.crl"}},
-		"nil issuer":      {URLs: []string{"http://crl.example/ca.crl"}, Issuers: []*x509.Certificate{nil}},
-		"negative size":   {URLs: []string{"http://crl.example/ca.crl"}, Issuers: issuers, MaxBytes: -1},
-		"loopback+client": {URLs: []string{"http://crl.example/ca.crl"}, Issuers: issuers, HTTPClient: &http.Client{}, AllowLoopback: true},
+		"no URLs":            {Issuers: issuers},
+		"not http":           {URLs: []string{"ftp://crl.example/ca.crl"}, Issuers: issuers},
+		"no host":            {URLs: []string{"http:///ca.crl"}, Issuers: issuers},
+		"repeated URL":       {URLs: []string{"http://crl.example/ca.crl", "http://crl.example/ca.crl"}, Issuers: issuers},
+		"no issuers":         {URLs: []string{"http://crl.example/ca.crl"}},
+		"nil issuer":         {URLs: []string{"http://crl.example/ca.crl"}, Issuers: []*x509.Certificate{nil}},
+		"negative size":      {URLs: []string{"http://crl.example/ca.crl"}, Issuers: issuers, MaxBytes: -1},
+		"loopback+client":    {URLs: []string{"http://crl.example/ca.crl"}, Issuers: issuers, HTTPClient: &http.Client{}, AllowLoopback: true},
+		"http, RequireHTTPS": {URLs: []string{"https://crl.example/a.crl", "http://crl.example/b.crl"}, Issuers: issuers, RequireHTTPS: true},
+		"binds an unknown URL": {URLs: []string{"http://crl.example/ca.crl"}, Issuers: issuers,
+			URLIssuers: map[string]*x509.Certificate{"http://crl.example/other.crl": p.inter}},
+		"binds to a non-issuer": {URLs: []string{"http://crl.example/ca.crl"}, Issuers: issuers,
+			URLIssuers: map[string]*x509.Certificate{"http://crl.example/ca.crl": p.root}},
+		"binds to nil": {URLs: []string{"http://crl.example/ca.crl"}, Issuers: issuers,
+			URLIssuers: map[string]*x509.Certificate{"http://crl.example/ca.crl": nil}},
+		"nil floor": {URLs: []string{"http://crl.example/ca.crl"}, Issuers: issuers, Floors: []*x509.RevocationList{nil}},
 	}
 	for name, cfg := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -172,8 +180,114 @@ func TestNewRefresher_Validates(t *testing.T) {
 			}
 		})
 	}
-	if _, err := certrevocation.NewRefresher(certrevocation.RefresherConfig{URLs: []string{"https://crl.example/ca.crl"}, Issuers: issuers}); err != nil {
+	if _, err := certrevocation.NewRefresher(certrevocation.RefresherConfig{URLs: []string{"https://crl.example/ca.crl"}, Issuers: issuers, RequireHTTPS: true,
+		URLIssuers: map[string]*x509.Certificate{"https://crl.example/ca.crl": p.inter},
+		// A list no configured issuer signed is ignored, not refused.
+		Floors: []*x509.RevocationList{testcert.CRL(t, p.inter, p.interKey), testcert.CRL(t, p.otherCA, p.otherKey)},
+	}); err != nil {
 		t.Errorf("NewRefresher, valid: %v", err)
+	}
+}
+
+// A URL bound to its issuer never holds another configured issuer's
+// list, so one wrong answer — a mix-up, or an attacker on plain http
+// serving another CA's genuine list — can't keep its own CA's out.
+func TestRefresher_URLIssuers(t *testing.T) {
+	p := newPKI(t)
+	srv := newCRLServer(t)
+	interURL, rootURL := srv.URL+"/inter.crl", srv.URL+"/root.crl"
+	r := newRefresher(t, certrevocation.RefresherConfig{
+		URLs: []string{interURL, rootURL}, Issuers: []*x509.Certificate{p.inter, p.root},
+		URLIssuers: map[string]*x509.Certificate{interURL: p.inter},
+	})
+	rootList := numbered(t, p.root, p.rootKey, 1, -time.Hour)
+	srv.serveCRL("/inter.crl", rootList)
+	srv.serveCRL("/root.crl", rootList)
+	if err := r.Refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "binds this URL to") {
+		t.Fatalf("Refresh, another issuer's list on the bound URL = %v, want it refused", err)
+	}
+	srv.serveCRL("/inter.crl", numbered(t, p.inter, p.interKey, 5, -time.Minute))
+	if err := r.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh, the bound issuer's list: %v", err)
+	}
+	if err := r.Checker().CheckRevocation(context.Background(), certrevocation.Check{Chain: p.chain}); err != nil {
+		t.Errorf("CheckRevocation: %v", err)
+	}
+}
+
+// An unbound URL holding another configured issuer's list refuses its
+// own issuer's only while that list is current: once past its
+// nextUpdate, a current list from any configured issuer replaces it.
+func TestRefresher_UnboundURLReplacesExpiredForeignList(t *testing.T) {
+	p := newPKI(t)
+	srv := newCRLServer(t)
+	now := time.Now()
+	r := newRefresher(t, certrevocation.RefresherConfig{
+		URLs: []string{srv.URL + "/inter.crl", srv.URL + "/root.crl"}, Issuers: []*x509.Certificate{p.inter, p.root},
+		Clock: func() time.Time { return now },
+	})
+	srv.serveCRL("/inter.crl", numbered(t, p.root, p.rootKey, 1, -time.Hour)) // current for another hour
+	srv.serveCRL("/root.crl", numbered(t, p.root, p.rootKey, 2, 0))
+	if err := r.Refresh(context.Background()); err != nil {
+		t.Fatalf("first Refresh: %v", err)
+	}
+	srv.serveCRL("/inter.crl", numbered(t, p.inter, p.interKey, 5, 0))
+	if err := r.Refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "another issuer") {
+		t.Fatalf("Refresh while the other issuer's list is current = %v, want it refused", err)
+	}
+	now = now.Add(90 * time.Minute)
+	if err := r.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh after it expired: %v", err)
+	}
+	if err := r.Checker().CheckRevocation(context.Background(), certrevocation.Check{Chain: p.chain, Now: now}); err != nil {
+		t.Errorf("CheckRevocation: %v", err)
+	}
+}
+
+// Floors and OnAccept carry the rollback floor across a restart: what
+// one Refresher accepted, handed to OnAccept, refuses an older list in
+// the next, from any URL; and within one Refresher, a list accepted
+// from one URL is a floor for its issuer's lists from every other.
+func TestRefresher_Floors(t *testing.T) {
+	p := newPKI(t)
+	srv := newCRLServer(t)
+	urls := []string{srv.URL + "/a.crl", srv.URL + "/b.crl"}
+	var accepted []*x509.RevocationList
+	first := newRefresher(t, certrevocation.RefresherConfig{URLs: urls[:1], Issuers: []*x509.Certificate{p.inter},
+		OnAccept: func(u string, list *x509.RevocationList) {
+			if u != urls[0] {
+				t.Errorf("OnAccept URL = %s, want %s", u, urls[0])
+			}
+			accepted = append(accepted, list)
+		},
+	})
+	old := numbered(t, p.inter, p.interKey, 4, -90*time.Minute)
+	newer := numbered(t, p.inter, p.interKey, 5, -time.Hour)
+	srv.serveCRL("/a.crl", newer)
+	if err := first.Refresh(context.Background()); err != nil || len(accepted) != 1 {
+		t.Fatalf("first Refresh: %v, %d lists accepted", err, len(accepted))
+	}
+
+	// A restart, with the persisted list as a floor: a replay of an older
+	// list, still current, is refused from a URL that holds nothing yet.
+	srv.serveCRL("/a.crl", old)
+	srv.serveCRL("/b.crl", old)
+	restarted := newRefresher(t, certrevocation.RefresherConfig{URLs: urls, Issuers: []*x509.Certificate{p.inter}, Floors: accepted})
+	err := restarted.Refresh(context.Background())
+	if err == nil || strings.Count(err.Error(), "newest list accepted from its issuer") != 2 {
+		t.Fatalf("Refresh of an older list after a restart = %v, want both URLs refused", err)
+	}
+	if lists, _ := restarted.Lists(context.Background()); len(lists) != 0 {
+		t.Errorf("Lists = %d lists, want none", len(lists))
+	}
+
+	// Within one Refresher: the newer list from one URL, then the older
+	// from the other, which holds nothing yet.
+	fresh := newRefresher(t, certrevocation.RefresherConfig{URLs: urls, Issuers: []*x509.Certificate{p.inter}})
+	srv.serveCRL("/a.crl", newer)
+	err = fresh.Refresh(context.Background())
+	if err == nil || !strings.Contains(err.Error(), urls[1]+": the CRL's thisUpdate") || strings.Contains(err.Error(), urls[0]+":") {
+		t.Fatalf("Refresh = %v, want only %s refused, as older", err, urls[1])
 	}
 }
 
@@ -227,8 +341,8 @@ func TestRefresher_KeepsHeldList(t *testing.T) {
 		"swapped issuer": {http.StatusOK, testcert.CRL(t, p.otherCA, p.otherKey).Raw, "another issuer"},
 		"forged signer":  {http.StatusOK, numbered(t, p.fakeInter, p.fakeKey, 6, 0).Raw, "configured issuers"},
 		"older thisUpdate": {http.StatusOK, numbered(t, p.inter, p.interKey, 6, -90*time.Minute).Raw,
-			"before the held one's"},
-		"lower CRL number": {http.StatusOK, numbered(t, p.inter, p.interKey, 4, 0).Raw, "lower than the held one's"},
+			"before that of the newest"},
+		"lower CRL number": {http.StatusOK, numbered(t, p.inter, p.interKey, 4, 0).Raw, "lower than that of the newest"},
 		"no nextUpdate":    {http.StatusOK, withoutNextUpdate(t, numbered(t, p.inter, p.interKey, 6, 0), p.interKey), "no nextUpdate"},
 		"expired": {http.StatusOK, testcert.CRLFromTemplate(t, &x509.RevocationList{
 			Number: big.NewInt(6), ThisUpdate: time.Now().Add(-30 * time.Minute), NextUpdate: time.Now().Add(-time.Minute),
