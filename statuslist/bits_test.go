@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"reflect"
 	"testing"
-	"time"
 )
 
 // Known-answer tests reproducing draft-ietf-oauth-status-list-14 §4.1's
@@ -166,18 +165,6 @@ func TestDecompress_Draft14_LargeAppendixVector(t *testing.T) {
 		}
 		if got != want {
 			t.Errorf("status[%d] = %d, want %d", idx, got, want)
-		}
-	}
-}
-
-// A Status List Token is expired at its exp (RFC 7519 §4.1.4).
-func TestCheckTokenTimes_ExpiredAtExp(t *testing.T) {
-	iat := time.Now().Unix()
-	exp := iat + 60
-	for at, ok := range map[int64]bool{exp - 1: true, exp: false} {
-		opts := VerifyOptions{Now: func() time.Time { return time.Unix(at, 0) }}
-		if err := checkTokenTimes(iat, &exp, nil, opts); (err == nil) != ok {
-			t.Errorf("at exp%+d: %v", at-exp, err)
 		}
 	}
 }

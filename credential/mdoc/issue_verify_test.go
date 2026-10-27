@@ -200,8 +200,9 @@ func TestIssueVerifyRoundTrip_WithIdentifierList(t *testing.T) {
 }
 
 // TestIssueRejectsMalformedIdentifierList: §12.3.6.4's
-// IdentifierListInfo needs a uri, and a certificate, which is optional
-// (as the round trips above show), must be one when present (§12.3.6.2).
+// IdentifierListInfo needs an id and a uri, and a certificate, which is
+// optional (as the round trips above show), must be one when present
+// (§12.3.6.2).
 func TestIssueRejectsMalformedIdentifierList(t *testing.T) {
 	f := newFixture(t)
 	const uri = "https://example.com/identifierlists/1"
@@ -209,6 +210,7 @@ func TestIssueRejectsMalformedIdentifierList(t *testing.T) {
 		ref  IdentifierListRef
 		want string
 	}{
+		"no id":             {IdentifierListRef{URI: uri}, "IdentifierList.ID is required"},
 		"no uri":            {IdentifierListRef{ID: []byte{0xcc}}, "IdentifierList.URI is required"},
 		"not a certificate": {IdentifierListRef{ID: []byte{0xcc}, URI: uri, Certificate: []byte{0xaa, 0xbb}}, "isn't a DER X.509 certificate"},
 	} {

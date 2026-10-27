@@ -74,27 +74,45 @@ func TestVerifyTokenCWTRejectsExpired(t *testing.T) {
 	}
 }
 
-func TestVerifyTokenCWTRejectsWrongTyp(t *testing.T) {
+// A CWT's typ is a media type, matched case-insensitively; another is
+// refused, as is a ttl that isn't positive (draft-14 §5.2).
+func TestVerifyTokenCWT_TypAndTTL(t *testing.T) {
 	key := testKey(t)
 	sl, err := New(Bits1, []uint8{0}, "")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	payload := map[int]interface{}{
-		cwtClaimSub:        "https://example.com/statuslists/1",
-		cwtClaimIat:        time.Now().Unix(),
-		cwtClaimStatusList: cwtStatusList{Bits: sl.Bits, Lst: []byte{0}},
+	sign := func(typ string, ttl any) []byte {
+		t.Helper()
+		payload := map[int]interface{}{
+			cwtClaimSub:        "https://example.com/statuslists/1",
+			cwtClaimIat:        time.Now().Unix(),
+			cwtClaimStatusList: cwtStatusList{Bits: sl.Bits, Lst: []byte{0}},
+		}
+		if ttl != nil {
+			payload[cwtClaimTTL] = ttl
+		}
+		raw, err := cbor.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		sign1, err := cose.SignTagged(cose.ES256, key, cose.Headers{Typ: typ}, cose.Headers{}, raw, nil)
+		if err != nil {
+			t.Fatalf("SignTagged: %v", err)
+		}
+		return sign1
 	}
-	raw, err := cbor.Marshal(payload)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	sign1, err := cose.SignTagged(cose.ES256, key, cose.Headers{Typ: "not-a-statuslist+cwt"}, cose.Headers{}, raw, nil)
-	if err != nil {
-		t.Fatalf("SignTagged: %v", err)
-	}
-	if _, err := VerifyTokenCWT(sign1, &key.PublicKey, cose.ES256, VerifyOptions{}); err == nil {
-		t.Errorf("VerifyTokenCWT accepted the wrong typ header")
+	for name, tc := range map[string]struct {
+		token []byte
+		ok    bool
+	}{
+		"typ in another case": {sign("Application/StatusList+CWT", nil), true},
+		"another typ":         {sign("not-a-statuslist+cwt", nil), false},
+		"ttl 0":               {sign(CWTTokenMediaType, 0), false},
+	} {
+		if _, err := VerifyTokenCWT(tc.token, &key.PublicKey, cose.ES256, VerifyOptions{}); (err == nil) != tc.ok {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
+
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
@@ -282,5 +284,37 @@ func TestCheckCWTX5Chain_HonorsIssuerKey(t *testing.T) {
 	}
 	if _, _, err := CheckCWTX5Chain(cwt, roots, ref, VerifyOptions{IssuerKey: &otherKey.PublicKey}); err == nil {
 		t.Error("a list another key signed was accepted for this issuer")
+	}
+}
+
+// An unprotected x5chain is accepted (RFC 9360), unless
+// X5ChainProtectedOnly asks for ISO/IEC 18013-5 §12.3.6.3's protected one.
+func TestCheckCWTX5Chain_X5ChainProtectedOnly(t *testing.T) {
+	ca, caKey := testcert.CA(t, "status list test CA")
+	leaf, leafKey := testcert.Leaf(t, "status list signer", ca, caKey)
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	sl, err := New(Bits1, []uint8{0}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwtSL, err := toCWTStatusList(sl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := cbor.Marshal(map[int]any{cwtClaimSub: x5cTestURI, cwtClaimIat: time.Now().Unix(), cwtClaimStatusList: cwtSL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := cose.SignTagged(cose.ES256, leafKey, cose.Headers{Typ: CWTTokenMediaType}, cose.Headers{X5Chain: [][]byte{leaf.Raw}}, raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := StatusListRef{URI: x5cTestURI}
+	if _, _, err := CheckCWTX5Chain(token, roots, ref, VerifyOptions{}); err != nil {
+		t.Errorf("unprotected x5chain: %v", err)
+	}
+	if _, _, err := CheckCWTX5Chain(token, roots, ref, VerifyOptions{X5ChainProtectedOnly: true}); err == nil {
+		t.Error("unprotected x5chain accepted with X5ChainProtectedOnly")
 	}
 }
