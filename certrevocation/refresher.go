@@ -106,6 +106,13 @@ type RefresherConfig struct {
 	// the URL (its password redacted) it was fetched from, after it
 	// replaced the held one: the list to persist for Floors. It runs on
 	// the goroutine calling Refresh or Run, and must not block for long.
+	// Calls never overlap, even from concurrent Refresh and Run passes,
+	// and come in the order the lists were accepted, so a list handed
+	// over is never older than one handed over before from its issuer:
+	// persisting the last one received from each issuer keeps its
+	// newest. Until it
+	// returns, no other fetched list is accepted; it mustn't call
+	// Refresh itself.
 	OnAccept func(url string, list *x509.RevocationList)
 
 	// HTTPClient makes the fetches. Nil means a client built with
@@ -180,6 +187,10 @@ type Refresher struct {
 	// jitter returns a random duration in [0, n); tests replace them.
 	wait   func(ctx context.Context, d time.Duration) bool
 	jitter func(n time.Duration) time.Duration
+
+	// acceptMu serialises accepting a fetched list with handing it to
+	// onAccept (see refreshOne). It's taken before mu, never after.
+	acceptMu sync.Mutex
 
 	mu   sync.RWMutex
 	held map[string]heldCRL
@@ -399,9 +410,15 @@ func (r *Refresher) refresh(ctx context.Context, fail func(url string, err error
 }
 
 // refreshOne fetches u and keeps the list if it's acceptable, telling
-// OnAccept when it is.
+// OnAccept when it is. Accepting and telling OnAccept happen together
+// under acceptMu, so concurrent passes deliver lists in the order they
+// were accepted — never, for one issuer, an older list after a newer
+// one — while a slow OnAccept holds up only other acceptances, not
+// Lists.
 func (r *Refresher) refreshOne(ctx context.Context, u string) error {
 	fetched, fetchErr := r.fetch(ctx, u)
+	r.acceptMu.Lock()
+	defer r.acceptMu.Unlock()
 	if err := r.keep(u, fetched, fetchErr); err != nil {
 		return err
 	}
