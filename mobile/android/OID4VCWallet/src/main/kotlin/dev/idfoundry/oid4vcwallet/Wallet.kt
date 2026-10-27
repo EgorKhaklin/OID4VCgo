@@ -233,8 +233,9 @@ public data class WalletConfiguration(
     /**
      * The trust roles whose certificate chains must pass a CRL check
      * against [crls]. A role listed fails closed for any CA it has no
-     * current CRL from, until [Wallet.setCRLs] supplies one; a role not
-     * listed checks no revocation.
+     * current CRL from, until [Wallet.setCRLs] supplies one. Outside
+     * [development], each role whose roots are set must be listed here or
+     * in [noRevocationCheck], or the wallet isn't made (`invalid_input`).
      */
     @SerialName("revocation") val revocation: List<RevocationRole> = emptyList(),
     /**
@@ -245,6 +246,13 @@ public data class WalletConfiguration(
      * its CA here, a pinned certificate that isn't self-signed is refused.
      */
     @SerialName("crl_issuers") val crlIssuers: String = "",
+    /**
+     * The trust roles that decline checking revocation, as an explicit
+     * choice: only where something else stands in for it, such as
+     * certificates too short-lived to be worth revoking. A role can't be
+     * in both this and [revocation].
+     */
+    @SerialName("no_revocation_check") val noRevocationCheck: List<RevocationRole> = emptyList(),
 ) {
     /** A trust role whose certificates can be checked for revocation. */
     @Serializable

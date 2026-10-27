@@ -108,3 +108,41 @@ func TestNew_RefusesIncompleteRevocation(t *testing.T) {
 		}
 	}
 }
+
+// Under AssuranceProduction, issuer metadata roots and an
+// X5CVerifierRoots VerifierTrust need a revocation Checker, NoCheck{} to
+// decline; AssuranceDevelopment takes either without one.
+func TestNew_ProductionRequiresRevocationChoice(t *testing.T) {
+	roots := x509.NewCertPool()
+	for name, tc := range map[string]struct {
+		set   func(*wallet.Config, certrevocation.Checker)
+		field string
+	}{
+		"issuer metadata": {func(c *wallet.Config, r certrevocation.Checker) {
+			c.IssuerMetadataRoots, c.IssuerMetadataRevocation = roots, r
+		}, "issuer_metadata_revocation"},
+		"verifier trust": {func(c *wallet.Config, r certrevocation.Checker) {
+			c.VerifierTrust = wallet.X5CVerifierRoots{Roots: roots, Revocation: r}
+		}, "X5CVerifierRoots.Revocation"},
+		"verifier trust by pointer": {func(c *wallet.Config, r certrevocation.Checker) {
+			c.VerifierTrust = &wallet.X5CVerifierRoots{Roots: roots, Revocation: r}
+		}, "X5CVerifierRoots.Revocation"},
+	} {
+		cfg := validConfig()
+		cfg.Assurance = wallet.AssuranceProduction
+		cfg.Fetch.AllowLoopbackHTTP = false
+		tc.set(&cfg, nil)
+		if _, err := wallet.New(cfg, productionDependencies()); err == nil || !strings.Contains(err.Error(), tc.field) || !strings.Contains(err.Error(), "NoCheck") {
+			t.Errorf("%s without revocation: err = %v, want it refused naming %s", name, err, tc.field)
+		}
+		tc.set(&cfg, certrevocation.NoCheck{})
+		if _, err := wallet.New(cfg, productionDependencies()); err != nil {
+			t.Errorf("%s declined: %v", name, err)
+		}
+		dev := validConfig()
+		tc.set(&dev, nil)
+		if _, err := wallet.New(dev, validDependencies()); err != nil {
+			t.Errorf("%s without revocation in development: %v", name, err)
+		}
+	}
+}

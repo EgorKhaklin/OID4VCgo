@@ -18,6 +18,7 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
@@ -469,7 +470,7 @@ func TestNew_RejectsNoVerifierTrustInProduction(t *testing.T) {
 			t.Errorf("New(%T) under AssuranceProduction: error = %v, want it rejected", trust, err)
 		}
 	}
-	cfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: x509.NewCertPool()}
+	cfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	if _, err := wallet.New(cfg, productionDependencies()); err != nil {
 		t.Errorf("New(X5CVerifierRoots) under AssuranceProduction: %v", err)
 	}

@@ -125,6 +125,24 @@ This release pins FAPIgo v0.62.0.
   (a Verifier's leaf in `verifier_roots`, say) whose role is listed in
   `revocation` is checked against its CA's CRL: give that CA's
   certificate in the new `crl_issuers`, or it's refused.
+- **Revocation is an explicit choice.** Outside `Development`,
+  `walletflow.New` refuses a trust role in use without a revocation
+  Checker: `IssuerRevocation` and `StatusRevocation` when
+  `IssuerRoots`, `MdocIssuerRoots` or `MdocIssuerRootsByDocType` is
+  set, `IssuerMetadataRevocation` with `IssuerMetadataRoots`,
+  `RegistrarRevocation` with `RegistrarRoots`, `MdocReaderRevocation`
+  with `MdocReaderRoots`, and `Revocation` on a
+  `wallet.X5CVerifierRoots` `VerifierTrust`. Set each to a
+  `certrevocation.Refresher`'s `Checker()` (or your own Checker), or to
+  `certrevocation.NoCheck{}` to keep the old behaviour of checking
+  nothing. `wallet.New` under `wallet.AssuranceProduction` requires the
+  same of `IssuerMetadataRevocation` and an `X5CVerifierRoots`. In the
+  mobile libraries, outside `development`, each role whose roots are set
+  must be named in `revocation` (checked against `crls`) or in the new
+  `no_revocation_check` (`noRevocationCheck` in Swift and Kotlin) to
+  decline, or `NewWallet` is `invalid_input`; a role can't be in both.
+  The roles are `issuer` and `status` (for `issuer_roots` and the mdoc
+  roots), `issuer_metadata`, `registrar`, `mdoc_reader` and `verifier`.
 
 ### Revocation lists (`statuslist`, `identifierlist`, `certrevocation`, `mdoc`)
 

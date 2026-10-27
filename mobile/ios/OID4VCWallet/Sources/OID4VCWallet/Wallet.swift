@@ -143,9 +143,16 @@ public struct WalletConfiguration: Codable, Sendable {
     public var crls: String
     /// The trust roles whose certificate chains must pass a CRL check
     /// against `crls`. A role listed fails closed for any CA it has no
-    /// current CRL from, until `Wallet.setCRLs(_:)` supplies one; a role
-    /// not listed checks no revocation.
+    /// current CRL from, until `Wallet.setCRLs(_:)` supplies one.
+    /// Outside `development`, each role whose roots are set must be
+    /// listed here or in `noRevocationCheck`, or the wallet isn't made
+    /// (`invalidInput`).
     public var revocation: [RevocationRole]
+    /// The trust roles that decline checking revocation, as an explicit
+    /// choice: only where something else stands in for it, such as
+    /// certificates too short-lived to be worth revoking. A role can't be
+    /// in both this and `revocation`.
+    public var noRevocationCheck: [RevocationRole]
     /// PEM certificates of the CAs that issued certificates pinned in the
     /// roots (a leaf in `verifierRoots`, say), for a role in
     /// `revocation`: a pinned certificate is checked against its CA's CRL,
@@ -224,7 +231,8 @@ public struct WalletConfiguration: Codable, Sendable {
                 issuerMetadataRoots: String = "", requireSignedIssuerMetadata: Bool = false,
                 requireIssuerMetadataName: Bool = false, maxIssuerMetadataAgeSeconds: Int = 0, allowForeignIss: Bool = false,
                 mdocIssuerRoots: String = "", mdocIssuerRootsByDocType: [String: String] = [:], mdocIssuerRequireEKU: String = "",
-                crls: String = "", revocation: [RevocationRole] = [], crlIssuers: String = "") {
+                crls: String = "", revocation: [RevocationRole] = [], crlIssuers: String = "",
+                noRevocationCheck: [RevocationRole] = []) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -258,6 +266,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.crls = crls
         self.revocation = revocation
         self.crlIssuers = crlIssuers
+        self.noRevocationCheck = noRevocationCheck
     }
 
     enum CodingKeys: String, CodingKey {
@@ -275,7 +284,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case allowForeignIss = "allow_foreign_iss"
         case mdocIssuerRoots = "mdoc_issuer_roots", mdocIssuerRootsByDocType = "mdoc_issuer_roots_by_doctype"
         case mdocIssuerRequireEKU = "mdoc_issuer_require_eku"
-        case crls, revocation, crlIssuers = "crl_issuers"
+        case crls, revocation, crlIssuers = "crl_issuers", noRevocationCheck = "no_revocation_check"
     }
 
     /// Decodes a configuration, refusing a key it doesn't know: a
@@ -319,7 +328,8 @@ public struct WalletConfiguration: Codable, Sendable {
                   mdocIssuerRequireEKU: try c.decodeIfPresent(String.self, forKey: .mdocIssuerRequireEKU) ?? "",
                   crls: try c.decodeIfPresent(String.self, forKey: .crls) ?? "",
                   revocation: try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? [],
-                  crlIssuers: try c.decodeIfPresent(String.self, forKey: .crlIssuers) ?? "")
+                  crlIssuers: try c.decodeIfPresent(String.self, forKey: .crlIssuers) ?? "",
+                  noRevocationCheck: try c.decodeIfPresent([RevocationRole].self, forKey: .noRevocationCheck) ?? [])
     }
 
     /// The scheme of `redirectURI`: the callback scheme an

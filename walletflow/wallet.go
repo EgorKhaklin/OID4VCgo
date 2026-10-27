@@ -83,23 +83,29 @@ type Config struct {
 	// IssuerLeafPolicy, and one under MdocIssuerRoots or
 	// MdocIssuerRootsByDocType mdoc.DefaultDocumentSignerPolicy.
 	MdocIssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
-	// IssuerRevocation, if set, checks a received credential's issuer
+	// IssuerRevocation checks a received credential's issuer
 	// certificate chain for revocation, under IssuerRoots and the mdoc
 	// roots alike (wallet.VerifyIssuedCredentialParams.IssuerRevocation):
 	// a credential whose signer, or a CA above it, is revoked is refused
 	// on receipt, deferred or refreshed alike, with an error wrapping
 	// certrevocation.ErrRevoked. A certrevocation.CRLs fails closed for
-	// a CA it has no current list from, so set it only where the
+	// a CA it has no current list from, so use one only where the
 	// issuers' CAs publish CRLs; each role has its own field for that
-	// reason. nil checks no revocation; see certrevocation.
+	// reason. Outside Development, New requires it, and StatusRevocation,
+	// whenever IssuerRoots, MdocIssuerRoots or MdocIssuerRootsByDocType
+	// is set: certrevocation.NoCheck{} declines. In Development, nil
+	// checks no revocation; see certrevocation.
 	IssuerRevocation certrevocation.Checker
 
-	// StatusRevocation, if set, checks the certificate chain of a status
-	// list's signer for revocation in CheckStatus
+	// StatusRevocation checks the certificate chain of a status list's
+	// signer for revocation in CheckStatus
 	// (statuslist.VerifyOptions.Revocation): a list signed under a
 	// revoked certificate is refused. An mdoc's list may chain to the
-	// Certificate its MSO names, whose CRL is then needed too. nil
-	// checks no revocation; see certrevocation.
+	// Certificate its MSO names, whose CRL is then needed too. Outside
+	// Development, New requires it whenever the wallet receives
+	// credentials, as IssuerRevocation: any credential may name a status
+	// list. certrevocation.NoCheck{} declines; in Development, nil checks
+	// no revocation.
 	StatusRevocation certrevocation.Checker
 
 	// StatusIssuers are the Status Issuers that may sign a credential
@@ -143,7 +149,9 @@ type Config struct {
 	// IssuerMetadataRoots set, signed metadata (OpenID4VCI §12.2.3, HAIP
 	// 1.0 §4.1) is asked for and verified, and RequireSignedIssuerMetadata
 	// refuses an issuer without it, before the holder authenticates or
-	// enters a transaction code. See wallet.Config for each.
+	// enters a transaction code. See wallet.Config for each. Outside
+	// Development, New requires IssuerMetadataRevocation with
+	// IssuerMetadataRoots: certrevocation.NoCheck{} declines.
 	IssuerMetadataRoots         *x509.CertPool
 	IssuerMetadataLeafPolicy    func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 	IssuerMetadataRevocation    certrevocation.Checker
@@ -160,7 +168,8 @@ type Config struct {
 	// (OpenID4VP 1.0 §5.9.3). REQUIRED for StartPresentation, and for a
 	// signed request to StartDCAPIPresentation. A
 	// wallet.X5CVerifierRoots checks its Verifiers' certificates for
-	// revocation with its own Revocation.
+	// revocation with its own Revocation, which New requires outside
+	// Development: certrevocation.NoCheck{} declines.
 	VerifierTrust wallet.VerifierTrust
 
 	// RegistrarRoots, if set, are the registrars whose registrations of
@@ -177,10 +186,12 @@ type Config struct {
 	// RegistrarRoots may sign registrations: an extended key usage or
 	// certificate policy the ecosystem defines for registrars, say.
 	RegistrarLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
-	// RegistrarRevocation, if set, checks a registrar's certificate
-	// chain for revocation (registration.Registrars.Revocation): a
-	// registration signed under a revoked certificate isn't verified.
-	// nil checks no revocation; see certrevocation.
+	// RegistrarRevocation checks a registrar's certificate chain for
+	// revocation (registration.Registrars.Revocation): a registration
+	// signed under a revoked certificate isn't verified. Outside
+	// Development, New requires it with RegistrarRoots:
+	// certrevocation.NoCheck{} declines. In Development, nil checks no
+	// revocation.
 	RegistrarRevocation certrevocation.Checker
 
 	// MdocReaderRoots, if set, are the mdoc readers the wallet
@@ -196,11 +207,13 @@ type Config struct {
 	// usage, so a certificate issued under the same roots for another
 	// role isn't taken for a reader.
 	MdocReaderLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
-	// MdocReaderRevocation, if set, checks a reader's certificate chain
-	// for revocation, for org-iso-mdoc and in-person requests alike: a
+	// MdocReaderRevocation checks a reader's certificate chain for
+	// revocation, for org-iso-mdoc and in-person requests alike: a
 	// reader whose certificate is revoked isn't recognized, so it's
-	// shown as untrusted, or refused under RequireTrustedMdocReader. nil
-	// checks no revocation; see certrevocation.
+	// shown as untrusted, or refused under RequireTrustedMdocReader.
+	// Outside Development, New requires it with MdocReaderRoots:
+	// certrevocation.NoCheck{} declines. In Development, nil checks no
+	// revocation.
 	MdocReaderRevocation certrevocation.Checker
 	// RequireTrustedMdocReader refuses an org-iso-mdoc or in-person
 	// request no reader under MdocReaderRoots signed, and nothing is
@@ -266,8 +279,8 @@ type Config struct {
 	//   - skips the checks New makes at production assurance: Durable
 	//     Authorizations (and Grants, with RequestRefresh), Keys
 	//     declaring durable custody, Random crypto/rand, roles' pools
-	//     sharing no anchor (or leaf policies) — and fapigo/client's
-	//     own production checks.
+	//     sharing no anchor (or leaf policies), a revocation Checker for
+	//     each role in use — and fapigo/client's own production checks.
 	Development bool
 
 	// TLSPins, if set, pins hosts' certificates (see TLSPins) on the
@@ -418,6 +431,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		return nil, err
 	}
 	if !cfg.Development {
+		if err := cfg.checkRevocationChosen(); err != nil {
+			return nil, err
+		}
 		if err := checkRoleSeparation(cfg); err != nil {
 			return nil, err
 		}
@@ -599,6 +615,38 @@ func (c Config) validateRevocation() error {
 	return nil
 }
 
+// checkRevocationChosen refuses, in production, a trust role that's in
+// use without a revocation Checker, so a role's certificates go
+// unchecked only where the configuration says so with
+// certrevocation.NoCheck{}, as verifier's and issuer's production
+// configurations must: each role whose roots are set needs its own
+// Checker. Receiving credentials needs StatusRevocation as well as
+// IssuerRevocation, since any credential received may name a status
+// list, signed under the same roots, that CheckStatus fetches.
+func (c Config) checkRevocationChosen() error {
+	const issuerRoots = "IssuerRoots, MdocIssuerRoots or MdocIssuerRootsByDocType"
+	receives := c.receivesCredentials()
+	verifier, hasVerifier := x5cVerifierRoots(c.VerifierTrust)
+	for _, r := range []struct {
+		inUse   bool
+		field   string
+		roots   string
+		checker certrevocation.Checker
+	}{
+		{receives, "IssuerRevocation", issuerRoots, c.IssuerRevocation},
+		{receives, "StatusRevocation", issuerRoots, c.StatusRevocation},
+		{c.IssuerMetadataRoots != nil, "IssuerMetadataRevocation", "IssuerMetadataRoots", c.IssuerMetadataRevocation},
+		{hasVerifier, "VerifierTrust's wallet.X5CVerifierRoots.Revocation", "VerifierTrust", verifier.Revocation},
+		{c.RegistrarRoots != nil, "RegistrarRevocation", "RegistrarRoots", c.RegistrarRevocation},
+		{c.MdocReaderRoots != nil, "MdocReaderRevocation", "MdocReaderRoots", c.MdocReaderRevocation},
+	} {
+		if r.inUse && r.checker == nil {
+			return fmt.Errorf("walletflow: Config.%s is required outside Development when Config.%s is set: %s", r.field, r.roots, certchain.RevocationChoices)
+		}
+	}
+	return nil
+}
+
 // checkRoleSeparation refuses, in production, two roles whose
 // certificate pools may share an anchor unless both narrow their
 // certificates by a leaf policy (an extended key usage, say): otherwise
@@ -654,15 +702,25 @@ type trustRole struct {
 // verifierTrustRole is VerifierTrust's pool, by value or by pointer;
 // false for a VerifierTrust without one.
 func verifierTrustRole(t wallet.VerifierTrust) (trustRole, bool) {
+	v, ok := x5cVerifierRoots(t)
+	if !ok {
+		return trustRole{}, false
+	}
+	return trustRole{"VerifierTrust", v.Roots, v.LeafPolicy != nil, ""}, true
+}
+
+// x5cVerifierRoots is t as a wallet.X5CVerifierRoots, by value or by
+// pointer; false for any other VerifierTrust, or a nil pointer.
+func x5cVerifierRoots(t wallet.VerifierTrust) (wallet.X5CVerifierRoots, bool) {
 	switch v := t.(type) {
 	case wallet.X5CVerifierRoots:
-		return trustRole{"VerifierTrust", v.Roots, v.LeafPolicy != nil, ""}, true
+		return v, true
 	case *wallet.X5CVerifierRoots:
 		if v != nil {
-			return trustRole{"VerifierTrust", v.Roots, v.LeafPolicy != nil, ""}, true
+			return *v, true
 		}
 	}
-	return trustRole{}, false
+	return wallet.X5CVerifierRoots{}, false
 }
 
 // separated refuses a's and b's pools when they may share an anchor,

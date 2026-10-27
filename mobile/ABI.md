@@ -18,7 +18,8 @@ OID4VCWallet 0.7.0 (Swift); `StartDCAPIPresentation`, proximity
 `tls_pin` code, later the KeyAgreement (`SetKeyAgreement`,
 `CheckKeyAgreement`, `proximity_device_auth`), and then certificate
 revocation (`crls`, `revocation`, `SetCRLs` on a Wallet and a
-ProximityReader, later `crl_issuers`). An older wrapper shows a
+ProximityReader, later `crl_issuers` and a Wallet's
+`no_revocation_check`). An older wrapper shows a
 code it doesn't know as it is. Check a library's release notes for the
 calls it has.
 
@@ -30,7 +31,11 @@ provider and `client_id` under `"issuance_profile": "haip"` — was
 `not_configured` (`DetailNotConfigured`), its message naming the
 configuration key. A `redirect_uri` in a form no issuance can
 authenticate with is `invalid_input` at `NewWallet` rather than
-`protocol` at each issuance (see Wallet).
+`protocol` at each issuance (see Wallet). Outside `development`, a
+configuration that sets a trust role's roots without naming the role
+in `revocation` or `no_revocation_check` is `invalid_input` at
+`NewWallet`, where it used to check that role for nothing (see
+Wallet).
 
 The version changes whenever a function, object, JSON result, record
 format or error code below changes incompatibly.
@@ -221,7 +226,8 @@ library's an `IOException`.
  "status_issuers": {"https://issuer.example": ["https://status.example"]},
  "require_issuer_name": false, "issuer_metadata_roots": "<PEM>", "require_signed_issuer_metadata": false,
  "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0, "allow_foreign_iss": false,
- "crls": "<PEM X509 CRLs>", "revocation": ["issuer", "verifier"], "crl_issuers": "<PEM>"}
+ "crls": "<PEM X509 CRLs>", "revocation": ["issuer", "verifier"], "crl_issuers": "<PEM>",
+ "no_revocation_check": ["status", "issuer_metadata", "registrar", "mdoc_reader"]}
 ```
 
 `issuer_roots` is needed to receive credentials, and `verifier_roots` to
@@ -410,8 +416,20 @@ received, deferred or refreshed credential's signer, under
 of signed issuer metadata), `registrar`, `mdoc_reader` (org-iso-mdoc and
 in-person readers), `verifier` (a Verifier's request-signing
 certificate, under `verifier_roots`) and `status` (a status list's
-signer, in `CheckStatus`). A role not named checks no revocation. A
-role named accepts a certificate only through a verified path on which
+signer, in `CheckStatus`). `no_revocation_check` names the roles that
+decline checking revocation, an explicit choice for where something
+else stands in for it (certificates too short-lived to be worth
+revoking, say). Outside `development`, each role whose roots are set —
+`issuer` and `status` for `issuer_roots`, `mdoc_issuer_roots` or
+`mdoc_issuer_roots_by_doctype`, `issuer_metadata` for
+`issuer_metadata_roots`, `registrar` for `registrar_roots`,
+`mdoc_reader` for `mdoc_reader_roots` and `verifier` for
+`verifier_roots` — must be named in one of the two, or `NewWallet` is
+`invalid_input`, its message naming the roots' key; a role named in
+both is `invalid_input` too. In `development`, a role in neither checks
+no revocation. `no_revocation_check`, and the refusal, were added within
+ABI 12: before them, a role not named checked no revocation in
+production too. A role named in `revocation` accepts a certificate only through a verified path on which
 each certificate below the trust anchor has a current CRL (its
 nextUpdate not passed) from its issuer that doesn't list it; the trust
 anchor itself isn't checked, unless it's a certificate pinned in the
@@ -781,7 +799,8 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   `invalid_input`. An MSO's status list chaining to the certificate its
   status names needs that certificate's list too. `crl_issuers` are
   the CAs of certificates pinned in the roots, as a Wallet's. Additive
-  within ABI 12.
+  within ABI 12. A reader has no `development` setting, and no
+  `no_revocation_check`: a role it doesn't name checks no revocation.
 
 | Method | Result |
 |---|---|

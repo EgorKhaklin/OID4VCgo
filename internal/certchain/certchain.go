@@ -194,6 +194,10 @@ func NotRevokedChains(ctx context.Context, chains [][]*x509.Certificate, revocat
 	}
 }
 
+// RevocationChoices is what a production configuration refusing a nil
+// revocation Checker offers in its place.
+const RevocationChoices = "pass certrevocation.CRLs{...} (a certrevocation.Refresher's Checker), your own certrevocation.Checker, or certrevocation.NoCheck{} to decline"
+
 // ValidateRevocation reports a revocation Checker that says it can't
 // check anything (certrevocation.CRLs.Validate), for a configuration
 // whose revocation check is optional: a nil Checker, no check, passes.

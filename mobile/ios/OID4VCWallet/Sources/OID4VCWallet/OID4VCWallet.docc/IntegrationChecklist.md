@@ -45,13 +45,16 @@ is a complete, working app on this package to compare against.
 - Errors are shown with `localizedDescription`, logged with
   ``WalletError/message``, and retried only when
   ``WalletError/isRetryable`` says so. (<doc:HandlingErrors>)
-- Revocation, where your ecosystem's CAs publish CRLs: the roles to
-  check in ``WalletConfiguration/revocation``, their CAs' CRLs in
+- Revocation, for every role whose roots you set: where your
+  ecosystem's CAs publish CRLs, the role in
+  ``WalletConfiguration/revocation``, its CAs' CRLs in
   ``WalletConfiguration/crls``, and, for a certificate pinned in the
-  roots, its CA's certificate in ``WalletConfiguration/crlIssuers``.
-  Fresh CRLs are fetched in the background and handed over with
-  ``Wallet/setCRLs(_:)`` before the old ones expire. *Check:* a
-  certificate on a CRL is refused. (<doc:GoingToProduction>)
+  roots, its CA's certificate in ``WalletConfiguration/crlIssuers``;
+  otherwise the role in ``WalletConfiguration/noRevocationCheck``, a
+  deliberate decision. Fresh CRLs are fetched in the background and
+  handed over with ``Wallet/setCRLs(_:)`` before the old ones expire.
+  *Check:* `Wallet(...)` succeeds with your production configuration,
+  and a certificate on a CRL is refused. (<doc:GoingToProduction>)
 
 ### 2. Receiving credentials
 

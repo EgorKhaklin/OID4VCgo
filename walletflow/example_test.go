@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
@@ -14,7 +15,9 @@ import (
 // durably, and its keys in hardware (the mobile libraries' Keychain and
 // Keystore stores): New refuses memory stores in production. Give each
 // role its own trust anchors; where they share one, a leaf policy (an
-// extended key usage) on each.
+// extended key usage) on each. Each role in use also needs a revocation
+// check in production: a certrevocation.Refresher's Checker over its
+// CAs' CRLs, or certrevocation.NoCheck{} to decline.
 func ExampleNew() {
 	var (
 		issuerRoots, verifierRoots *x509.CertPool                // the ecosystem's trust anchors, one pool per role
@@ -22,10 +25,12 @@ func ExampleNew() {
 		credentials                walletflow.CredentialStore    // durable, under the platform's data protection
 		authorizations             walletflow.AuthorizationStore // durable, so an authorization survives a suspension
 		provider                   walletflow.WalletProvider     // attests the wallet and its keys, for issuers that require it
+		issuerCRLs, verifierCRLs   *certrevocation.Refresher     // each role's CAs' CRLs, refreshed in the background
 	)
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: "https://wallet.example.com", RedirectURI: "com.example.wallet:/callback",
-		IssuerRoots: issuerRoots, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
+		IssuerRoots: issuerRoots, IssuerRevocation: issuerCRLs.Checker(), StatusRevocation: issuerCRLs.Checker(),
+		VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots, Revocation: verifierCRLs.Checker()},
 	}, walletflow.Dependencies{Keys: keys, Credentials: credentials, Authorizations: authorizations, Provider: provider})
 	if err != nil {
 		panic(err)
