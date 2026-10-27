@@ -20,10 +20,14 @@ its issuance half (OID4VCI 1.0, HAIP §4) and its presentation half
 (OID4VP 1.0, HAIP §5). See [SPECIFICATIONS.md](SPECIFICATIONS.md) for the
 exact spec and Internet-Draft versions this targets.
 
-This is not a generic, profile-agnostic OID4VCI/OID4VP implementation
-with HAIP layered optionally on top — HAIP's overrides are unconditional
-in `issuer`/`wallet`/`verifier` themselves, not gated behind a separate
-opt-in. See "Relationship to FAPIgo" below for the specific list.
+HAIP is opted into rather than unconditional. Production assurance
+(`AssuranceProduction`, or `walletflow` without `Development`) enforces
+the HAIP requirements that bind any deployment; package `haip` gives
+HAIP's configuration (its `Recommended*` functions) and checks an
+issuer's HAIP-specific profiling (`haip.ValidateIssuerConfig`, which
+`issuer.New` doesn't run itself); and `walletflow.ProfileHAIP` holds a
+wallet to HAIP issuers. See "Relationship to FAPIgo" below for HAIP's
+overrides of FAPI 2.0.
 
 A mobile wallet SDK sits on top of this library: `walletflow`, a
 session-oriented wallet over key, credential and Wallet Provider

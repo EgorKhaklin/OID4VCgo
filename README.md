@@ -33,12 +33,17 @@ compliance with the applicable provisions of FAPI 2.0 Security Profile
 Final, the same security profile FAPIgo implements and is OpenID
 Certified™ against.
 
-This isn't a generic, profile-agnostic OID4VCI/OID4VP implementation
-with HAIP as an optional layer on top: HAIP's overrides — DPoP
-mandatory, Wallet Attestation in place of `private_key_jwt`/mTLS, HAIP's
-own algorithm requirements — are unconditional in the `issuer`/`wallet`/
-`verifier` packages themselves. See ARCHITECTURE.md's "Relationship to
-FAPIgo" section for the specific list.
+HAIP is what a deployment opts into, not what every configuration
+gets. Production assurance (`AssuranceProduction` in `issuer`, `wallet`,
+`verifier` and `mdocdcapi`; `walletflow` without `Development`) enforces
+the HAIP requirements that bind any deployment. Package `haip` gives
+HAIP's configuration (`RecommendedIssuerConfig`,
+`RecommendedVerifierConfig`, `RecommendedWalletConfig`,
+`RecommendedAuthorizationServerConfig`) and checks an issuer's
+HAIP-specific profiling (`haip.ValidateIssuerConfig`, which `issuer.New`
+doesn't run). `walletflow.ProfileHAIP` holds a wallet to HAIP issuers.
+See ARCHITECTURE.md's "Relationship to FAPIgo" section for HAIP's
+overrides of FAPI 2.0.
 
 [![OpenID Certified](assets/openid-certified-badge.png)](https://openid.net/certification/)
 
@@ -131,10 +136,13 @@ Where to start, by role:
   OpenID4VP request with `Verifier.BuildDCAPIAuthorizationRequest` and
   checks the answer with `Verifier.VerifyResponse`, setting
   `VerifyResponseRequest.Origin` to its page's origin and
-  `ExpectedOrigins` to the request's. A wallet parses the request with
+  `ExpectedOrigins` to the request's — or lets `verifier.Transactions`
+  do both, with `TransactionsConfig.Origins` listing the pages that may
+  ask (required under production). A wallet parses the request with
   `wallet.ParseDCAPIRequestData` (unsigned, signed or multi-signed).
   Safari's `org-iso-mdoc` protocol is package `mdocdcapi`, both sides:
-  `BuildRequest` and `VerifyResponse` for the page, `ParseRequest` and
+  `BuildRequest` and `VerifyResponse` for the page (with
+  `VerifyParams.Origins`, required under production), `ParseRequest` and
   `Incoming.Respond` for the wallet.
 - **In person** — package `proximity` is ISO/IEC 18013-5 over BLE:
   `NewDeviceSession` for the holder, `NewReaderSession` for the reader.
