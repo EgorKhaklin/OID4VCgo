@@ -5,12 +5,11 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"net/url"
 	"slices"
-	"strings"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
+	"github.com/idfoundry/oid4vcgo/internal/weborigin"
 )
 
 // DCAPIProtocolSigned is the Digital Credentials API protocol of a
@@ -56,16 +55,19 @@ type BegunDCAPI struct {
 // Lookup and Close work as for Begin's requests.
 //
 // origin is the page's serialized origin (scheme, host and optional
-// port): the answer is verified as bound to it (Appendix A.4). It must
-// be one of TransactionsConfig.Origins, which under AssuranceProduction
-// must be set; under AssuranceDevelopment without them, any https
-// origin, or loopback http, as browsers offer the Digital Credentials
-// API to secure contexts only. browserBinding is as for Begin, and the
-// page's answer must arrive with it.
+// port): the answer is verified as bound to it (Appendix A.4). It is
+// normalized as TransactionsConfig.Origins are (its scheme and host
+// lowercased, without a trailing "/" or the scheme's default port), and
+// must then be one of them, which under AssuranceProduction must be
+// set; under AssuranceDevelopment without them, any https origin, or
+// loopback http, as browsers offer the Digital Credentials API to
+// secure contexts only. browserBinding is as for Begin, and the page's
+// answer must arrive with it.
 func (t *Transactions) BeginDCAPI(ctx context.Context, query dcql.Query, browserBinding, origin string) (BegunDCAPI, error) {
 	if len(browserBinding) < MinBrowserBindingLength {
 		return BegunDCAPI{}, fmt.Errorf("verifier: transactions: a browser binding of at least %d bytes is required: an unguessable random token", MinBrowserBindingLength)
 	}
+	origin = weborigin.Normalize(origin)
 	if err := t.checkDCAPIOrigin(origin); err != nil {
 		return BegunDCAPI{}, fmt.Errorf("verifier: transactions: %w", err)
 	}
@@ -96,71 +98,21 @@ func (t *Transactions) BeginDCAPI(ctx context.Context, query dcql.Query, browser
 	return BegunDCAPI{ID: id, Request: DCAPIRequest{Protocol: DCAPIProtocolSigned, Data: DCAPIRequestData{Request: built.RequestObject}}}, nil
 }
 
-// checkDCAPIOrigin checks BeginDCAPI's origin is one of
-// TransactionsConfig.Origins, or without them, under
-// AssuranceDevelopment, one a page can use the Digital Credentials API
-// from.
+// checkDCAPIOrigin checks BeginDCAPI's origin, normalized, is one of
+// TransactionsConfig.Origins (normalized by NewTransactions), or
+// without them, under AssuranceDevelopment, one a page can use the
+// Digital Credentials API from.
 func (t *Transactions) checkDCAPIOrigin(origin string) error {
 	switch {
 	case len(t.cfg.Origins) > 0:
 		if !slices.Contains(t.cfg.Origins, origin) {
-			return fmt.Errorf("origin %q isn't one of TransactionsConfig.Origins", origin)
+			return fmt.Errorf("origin %q (normalized) isn't one of TransactionsConfig.Origins %q", origin, t.cfg.Origins)
 		}
 		return nil
 	case t.v.cfg.Assurance == AssuranceProduction:
 		return errors.New("under AssuranceProduction, BeginDCAPI needs TransactionsConfig.Origins: the origins of the pages that make Digital Credentials API requests")
 	}
-	return checkPageOrigin(origin, t.v.cfg.Assurance)
-}
-
-// pageOrigins is origins, each normalized (normalizeOrigin) and checked
-// to be one a page can use the Digital Credentials API from.
-func pageOrigins(origins []string, assurance AssuranceLevel) ([]string, error) {
-	var out []string
-	for _, origin := range origins {
-		normalized := normalizeOrigin(origin)
-		if err := checkPageOrigin(normalized, assurance); err != nil {
-			return nil, fmt.Errorf("verifier: transactions: origins: %w", err)
-		}
-		out = append(out, normalized)
-	}
-	return out, nil
-}
-
-// normalizeOrigin is origin as a browser serializes it: its scheme and
-// host lowercased, without a trailing "/" or the scheme's default port.
-// Anything else it carries is kept, for checkPageOrigin to refuse.
-func normalizeOrigin(origin string) string {
-	u, err := url.Parse(origin)
-	if err != nil || u.Scheme == "" || u.Host == "" || (u.Path != "" && u.Path != "/") ||
-		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.User != nil || u.Opaque != "" {
-		return origin
-	}
-	host := strings.ToLower(u.Host)
-	switch u.Scheme {
-	case "https":
-		host = strings.TrimSuffix(host, ":443")
-	case "http":
-		host = strings.TrimSuffix(host, ":80")
-	}
-	return u.Scheme + "://" + host
-}
-
-// checkPageOrigin checks origin is a serialized origin a page can use
-// the Digital Credentials API from: https, or loopback http under
-// AssuranceDevelopment.
-func checkPageOrigin(origin string, assurance AssuranceLevel) error {
-	if err := checkSerializedOrigin(origin); err != nil {
-		return err
-	}
-	u, _ := url.Parse(origin)
-	switch {
-	case u.Scheme == "https":
-		return nil
-	case u.Scheme == "http" && assurance == AssuranceDevelopment && isLoopback(u.Hostname()):
-		return nil
-	}
-	return fmt.Errorf("origin %q must be https", origin)
+	return weborigin.CheckPage(origin, true)
 }
 
 // HandleDCAPIResponse processes the answer to the Digital Credentials

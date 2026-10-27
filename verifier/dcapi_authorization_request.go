@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/weborigin"
 )
 
 // dcAPIResponseMode is the Response Mode every BuildDCAPIAuthorizationRequest
@@ -100,7 +101,7 @@ func (v *Verifier) BuildDCAPIAuthorizationRequest(req BuildDCAPIAuthorizationReq
 		return BuildDCAPIAuthorizationRequestResult{}, fmt.Errorf("verifier: build dc api authorization request: expected_origins must be non-empty")
 	}
 	for _, origin := range req.ExpectedOrigins {
-		if err := checkSerializedOrigin(origin); err != nil {
+		if err := weborigin.Check(origin); err != nil {
 			return BuildDCAPIAuthorizationRequestResult{}, fmt.Errorf("verifier: build dc api authorization request: expected_origins: %w", err)
 		}
 	}

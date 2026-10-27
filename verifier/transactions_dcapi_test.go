@@ -233,7 +233,7 @@ func TestTransactions_BeginDCAPIValidates(t *testing.T) {
 	ctx := context.Background()
 	for name, origin := range map[string]string{
 		"empty":          "",
-		"a path":         "https://verifier.example.com/",
+		"a path":         "https://verifier.example.com/app",
 		"http":           "http://verifier.example.com",
 		"no scheme":      "verifier.example.com",
 		"with a query":   "https://verifier.example.com?x=1",
@@ -246,6 +246,15 @@ func TestTransactions_BeginDCAPIValidates(t *testing.T) {
 	}
 	if _, err := f.txs.BeginDCAPI(ctx, f.query, testBinding, "http://localhost:8443"); err != nil {
 		t.Errorf("loopback http under development: %v", err)
+	}
+	// An origin is normalized as the browser serializes it: the request
+	// and its answer are bound to that form.
+	spelled, err := f.txs.BeginDCAPI(ctx, f.query, testBinding, "HTTPS://Verifier.Example.com:443/")
+	if err != nil {
+		t.Fatalf("an origin spelled otherwise than the browser does: %v", err)
+	}
+	if _, err := f.txs.HandleDCAPIResponse(ctx, spelled.ID, testBinding, f.dcapiAnswer(spelled, dcapiOrigin)); err != nil {
+		t.Errorf("its answer, bound to the normalized origin: %v", err)
 	}
 	if _, err := f.txs.BeginDCAPI(ctx, f.query, "short", dcapiOrigin); err == nil {
 		t.Error("a short browser binding was accepted")

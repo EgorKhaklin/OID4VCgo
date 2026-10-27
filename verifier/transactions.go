@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/weborigin"
 )
 
 // TransactionStatus is where a presentation request is in its life.
@@ -237,10 +237,15 @@ type TransactionsConfig struct {
 	// Origins are the serialized origins of the pages that may make a
 	// Digital Credentials API request (BeginDCAPI): each https, or
 	// loopback http under AssuranceDevelopment, with no path, query or
-	// fragment. BeginDCAPI refuses any other origin, so one taken from
-	// the request (its Origin header, say) can't bind a presentation to
-	// a page the Verifier doesn't serve. REQUIRED for BeginDCAPI under
-	// AssuranceProduction; under AssuranceDevelopment, empty allows any.
+	// fragment; each is normalized as a browser serializes an origin
+	// (scheme and host lowercased, no trailing "/" or default port).
+	// BeginDCAPI refuses any other origin, so one taken from the request
+	// (its Origin header, say) can't bind a presentation to a page the
+	// Verifier doesn't serve. REQUIRED for BeginDCAPI under
+	// AssuranceProduction: NewTransactions refuses a production
+	// Transactions without them only when it has no RequestURIBase
+	// either, and so can serve nothing else; otherwise BeginDCAPI
+	// refuses each request. Under AssuranceDevelopment, empty allows any.
 	Origins []string
 
 	// NoStatusCheck declares that this Verifier deliberately checks no
@@ -318,9 +323,9 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 			return nil, err
 		}
 	}
-	origins, err := pageOrigins(cfg.Origins, v.cfg.Assurance)
+	origins, err := weborigin.NormalizeAll(cfg.Origins, v.cfg.Assurance == AssuranceDevelopment)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("verifier: transactions: origins: %w", err)
 	}
 	cfg.Origins = origins
 	if cfg.Lifetime < 0 {
@@ -421,6 +426,11 @@ func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig)
 	}
 	if cfg.Verify.IssuerAuthorized == nil && !cfg.Verify.AnyIssuerForAnyType {
 		return errors.New("verifier: transactions: under AssuranceProduction, set verify.issuer_authorized (which issuers may issue which types) or verify.any_issuer_for_any_type: without either, any trusted issuer is accepted for any type")
+	}
+	if cfg.RequestURIBase == "" && len(cfg.Origins) == 0 {
+		// Without RequestURIBase only BeginDCAPI can begin a request,
+		// and without Origins it refuses every one.
+		return errors.New("verifier: transactions: under AssuranceProduction, a Transactions without request_uri_base serves the Digital Credentials API alone: set origins, the origins of the pages that make its requests")
 	}
 	return nil
 }
@@ -1006,13 +1016,7 @@ func withQuery(raw, key, value string) string {
 	return u.String()
 }
 
-func isLoopback(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
+func isLoopback(host string) bool { return weborigin.IsLoopback(host) }
 
 // checkVerifies refuses a query the Verify configuration can't verify
 // an answer to, so the mistake shows when the request is made, not as
