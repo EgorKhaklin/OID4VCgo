@@ -58,7 +58,7 @@ func TestTLSPins(t *testing.T) {
 	}
 
 	newWallet := func(pins string) error {
-		_, err := NewWallet(`{"client_id":"c","redirect_uri":"c:/cb","development":true,"development_roots":`+quote(ca)+`,"tls_pins":`+pins+`}`,
+		_, err := NewWallet(`{"client_id":"c","redirect_uri":"com.example.wallet:/cb","development":true,"development_roots":`+quote(ca)+`,"tls_pins":`+pins+`}`,
 			&goKeyStore{keys: map[string]*ecdsa.PrivateKey{}}, memStore{records: map[string][]byte{}}, nil)
 		return err
 	}
@@ -71,7 +71,7 @@ func TestTLSPins(t *testing.T) {
 		t.Errorf("valid tls_pins: %v", err)
 	}
 	// Without development_roots, walletflow pins its own client.
-	if _, err := NewWallet(`{"client_id":"c","redirect_uri":"c:/cb","development":true,"tls_pins":{"issuer.example":["`+good+`"]}}`,
+	if _, err := NewWallet(`{"client_id":"c","redirect_uri":"com.example.wallet:/cb","development":true,"tls_pins":{"issuer.example":["`+good+`"]}}`,
 		&goKeyStore{keys: map[string]*ecdsa.PrivateKey{}}, memStore{records: map[string][]byte{}}, nil); err != nil {
 		t.Errorf("tls_pins without development_roots: %v", err)
 	}

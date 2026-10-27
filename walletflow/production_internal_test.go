@@ -232,10 +232,7 @@ func TestNew_RoleSeparationSystemPool(t *testing.T) {
 // kind a resumed issuance's fapigo/client accepts at production
 // assurance: an https one would fail only once ResumeIssuance runs.
 func TestProductionRedirectURI(t *testing.T) {
-	deps := Dependencies{
-		Keys: durableKeyStore{NewMemoryKeyStore()}, Credentials: NewMemoryCredentialStore(),
-		Provider: attestingProvider{}, Authorizations: durableAuthorizations{NewMemoryAuthorizationStore()},
-	}
+	deps := redirectDeps()
 	for uri, ok := range map[string]bool{
 		"com.example.wallet:/cb":    true,
 		"http://127.0.0.1/cb":       true,
@@ -256,21 +253,7 @@ func TestProductionRedirectURI(t *testing.T) {
 			continue
 		}
 		// Every redirect New takes, a resumed issuance's client takes too.
-		s := &Issuance{w: w, offer: oid4vci.CredentialOffer{CredentialIssuer: "https://issuer.example"}, resumed: true}
-		if s.instanceKey, err = newKey(context.Background(), w.deps.Keys, KeyPurposeInstance); err != nil {
-			t.Fatal(err)
-		}
-		if s.dpopKey, err = w.newDPoPKey(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		issuer, endpoints, err := wallet.AuthorizationServerMetadata{
-			Issuer: "https://as.example", AuthorizationEndpoint: "https://as.example/authorize",
-			TokenEndpoint: "https://as.example/token", PushedAuthorizationRequestEndpoint: "https://as.example/par",
-		}.ClientEndpoints()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.oauthClient(issuer, endpoints, "https://as.example", client.StaticAttestation("eyJ.attestation.jwt")); err != nil {
+		if err := issuanceClient(t, w, true); err != nil {
 			t.Errorf("RedirectURI %q: a resumed issuance's client doesn't build: %v", uri, err)
 		}
 	}

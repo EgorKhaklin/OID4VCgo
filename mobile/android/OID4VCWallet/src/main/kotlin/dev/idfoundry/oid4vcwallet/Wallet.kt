@@ -34,8 +34,9 @@ public data class WalletConfiguration(
     @SerialName("client_id") val clientID: String = "",
     /**
      * Where the issuer's pages send the holder back to: a private-use URI
-     * the app receives. Empty for a wallet that receives only
-     * pre-authorized codes.
+     * the app receives, in `reverse.domain:/path` form
+     * (`com.example.wallet:/callback`). Empty for a wallet that receives
+     * only pre-authorized codes.
      */
     @SerialName("redirect_uri") val redirectURI: String = "",
     /** PEM certificates: the trust anchors for issuers' credentials. A credential signed by a certificate that doesn't chain to them is refused. */

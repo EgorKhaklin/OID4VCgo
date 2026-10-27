@@ -617,6 +617,39 @@ func TestSessions_ProductionNeedsDurableStores(t *testing.T) {
 	}
 }
 
+// Without development, NewWallet takes only a native app's redirect_uri
+// in the form fapigo/client takes, refusing anything else as
+// invalid_input when the wallet is made, not as protocol at the first
+// issuance.
+func TestSessions_ProductionRedirectURI(t *testing.T) {
+	h := newHarness(t, false)
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(h.env.ConfigJSON()), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["development"] = false
+	prev := testHTTP.Swap(nil)
+	defer testHTTP.Store(prev)
+	for uri, ok := range map[string]bool{
+		"https://wallet.example/callback": false, // ResumeIssuance couldn't complete it
+		"myapp:/callback":                 false, // not a reverse-order domain name
+		"com.example.wallet://callback":   false, // an authority, not a path
+		"com.example.wallet:/callback#f":  false,
+		"com.example.wallet:/callback":    true,
+		"http://127.0.0.1/callback":       true,
+	} {
+		cfg["redirect_uri"] = uri
+		raw, _ := json.Marshal(cfg)
+		_, err := NewWallet(string(raw), h.keys, newGoCredentialStore(), h.env.Provider())
+		switch {
+		case ok && err != nil:
+			t.Errorf("NewWallet(redirect_uri %q) = %v, want it taken", uri, err)
+		case !ok && code(err) != CodeInvalidInput:
+			t.Errorf("NewWallet(redirect_uri %q) = %v, want invalid_input", uri, err)
+		}
+	}
+}
+
 // A received credential's summary carries the issuer's display metadata
 // and its expiry; CheckStatus reads its status, and sees a revocation.
 func TestSessions_DisplayAndStatus(t *testing.T) {

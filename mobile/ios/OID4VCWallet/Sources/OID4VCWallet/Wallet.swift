@@ -7,7 +7,8 @@ public struct WalletConfiguration: Codable, Sendable {
     /// wallet with no `WalletProvider`.
     public var clientID: String
     /// Where the issuer's pages send the holder back to: a private-use URI the
-    /// app opens, registered with the issuers' Authorization Servers. Empty
+    /// app opens, registered with the issuers' Authorization Servers, in
+    /// `reverse.domain:/path` form (`com.example.wallet:/callback`). Empty
     /// for a wallet that receives only pre-authorized codes.
     public var redirectURI: String
     /// PEM certificates: the trust anchors for issuers' credentials. A

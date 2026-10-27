@@ -16,8 +16,13 @@
 // (Wallet.Deferred, Wallet.ResumeIssuance, Wallet.RefreshCredential).
 // At production assurance, receiving credentials needs a KeyStore
 // declaring durable custody, and the authorization code grant a Durable
-// AuthorizationStore. walletflow owns the protocols: every network
-// request, every protocol message, and every check on what comes back.
+// AuthorizationStore. Config.RedirectURI is a private-use URI scheme in
+// reverse.domain:/path form, such as com.example.wallet:/callback (RFC
+// 8252 §7.1), or loopback http (§7.3) — or, in Development only, https —
+// with no fragment or credentials; New refuses anything else, since no
+// issuance could authenticate with it. walletflow owns the protocols:
+// every network request, every protocol message, and every check on
+// what comes back.
 //
 // # Following the issuer's metadata
 //

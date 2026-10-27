@@ -33,15 +33,15 @@ func TestDevelopmentRoots(t *testing.T) {
 	}
 
 	for _, tc := range []struct{ config, want string }{
-		{`{"client_id":"c","redirect_uri":"c:/cb","development_roots":` + quote(ca) + `}`, "development_roots needs development"},
-		{`{"client_id":"c","redirect_uri":"c:/cb","development":true,"development_roots":"x"}`, "development_roots"},
+		{`{"client_id":"c","redirect_uri":"com.example.wallet:/cb","development_roots":` + quote(ca) + `}`, "development_roots needs development"},
+		{`{"client_id":"c","redirect_uri":"com.example.wallet:/cb","development":true,"development_roots":"x"}`, "development_roots"},
 	} {
 		_, err := NewWallet(tc.config, &goKeyStore{keys: map[string]*ecdsa.PrivateKey{}}, memStore{records: map[string][]byte{}}, nil)
 		if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.HasPrefix(err.Error(), "["+CodeInvalidInput+"]") {
 			t.Errorf("NewWallet(%s) = %v, want invalid_input naming %q", tc.config, err, tc.want)
 		}
 	}
-	if _, err := NewWallet(`{"client_id":"c","redirect_uri":"c:/cb","development":true,"development_roots":`+quote(ca)+`}`,
+	if _, err := NewWallet(`{"client_id":"c","redirect_uri":"com.example.wallet:/cb","development":true,"development_roots":`+quote(ca)+`}`,
 		&goKeyStore{keys: map[string]*ecdsa.PrivateKey{}}, memStore{records: map[string][]byte{}}, nil); err != nil {
 		t.Fatalf("a development wallet with development_roots: %v", err)
 	}
@@ -51,7 +51,7 @@ func quote(s string) string { return `"` + strings.ReplaceAll(s, "\n", `\n`) + `
 
 // A misspelled key is refused, not silently left at its default.
 func TestNewWalletRefusesUnknownKeys(t *testing.T) {
-	_, err := NewWallet(`{"client_id":"c","redirect_uri":"c:/cb","development":true,"require_signed_dcapi_request":true}`,
+	_, err := NewWallet(`{"client_id":"c","redirect_uri":"com.example.wallet:/cb","development":true,"require_signed_dcapi_request":true}`,
 		&goKeyStore{keys: map[string]*ecdsa.PrivateKey{}}, memStore{records: map[string][]byte{}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "require_signed_dcapi_request") {
 		t.Errorf("NewWallet with a misspelled key = %v, want refused", err)

@@ -231,7 +231,14 @@ authentication needs none of them. Outside `development`, a
 `redirect_uri` must be the app's own URI scheme
 (`com.example.wallet:/callback`) or loopback http to 127.0.0.1 or
 [::1], or `NewWallet` is `invalid_input`: `ResumeIssuance` can't
-complete an https one.
+complete an https one. In `development` too, a private-use scheme must
+be a domain name in reverse order followed by a single slash,
+`reverse.domain:/path` (RFC 8252 §7.1), and no `redirect_uri` may carry
+a fragment or credentials: `myapp:/callback`,
+`com.example.wallet://callback` and `com.example.wallet:callback` are
+`invalid_input` at `NewWallet`. (Earlier within ABI 12 `NewWallet`
+took them, and every issuance that authenticated then failed as
+`protocol`.)
 `registrar_roots`, if set, are the registrars whose registrations of
 Verifiers the wallet checks (OpenID4VP `verifier_info`, OID4VCgo's
 `registration` format); without them, registrations are ignored.
