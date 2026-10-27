@@ -217,7 +217,7 @@ func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
 //		return err
 //	}
 //	if b.SenderConstrain != storage.SenderConstrainDPoP {
-//		return errDPoPRequired // the token must be DPoP-bound
+//		return errors.New("the access token must be DPoP-bound")
 //	}
 //	details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
 //	if err != nil {

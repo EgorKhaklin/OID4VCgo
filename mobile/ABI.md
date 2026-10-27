@@ -347,12 +347,16 @@ The two requirements need `issuer_metadata_roots`. Added within ABI
 version 12.
 `development`
 relaxes what production requires, for a wallet talking to services on a
-development machine. Never ship an app with it set. It lets issuers,
-Authorization Servers, Verifiers and status lists be on loopback
-addresses, over http there too; with `development_roots`, makes requests
-through an ordinary HTTPS client, without the hardened one's refusal of
-private network addresses; and skips the production checks on
-receiving credentials: durable stores and keys, and the random source. `development_roots`, only with
+development machine. Never ship an app with it set, nor set it just to
+use memory stores: it also drops the network protections. It lets
+issuers, Authorization Servers, Verifiers and status lists be on
+loopback addresses, over http there too; makes every request through an
+ordinary HTTP client, which reaches private network addresses and
+follows redirects, instead of the hardened one (with or without
+`development_roots`); and skips the checks made in production: durable stores and
+keys, the random source, roles' roots sharing no trust anchor, the
+private-use or loopback `redirect_uri` rule, and FAPIgo's own client
+checks. `development_roots`, only with
 `development`, are CAs the wallet's HTTPS requests trust besides the
 system's: a development service's own, where the platform's trust store
 can't be given it — Go on Android reads only the system's CA files. `locales` are the holder's

@@ -56,6 +56,10 @@ automatically — see `release-please-config.json` and
 not straight to `1.0.0` — that jump is a deliberate, manual decision, not
 something a commit message alone should trigger.
 
+A breaking change also gets an entry in [UPGRADING.md](UPGRADING.md),
+under the release it will ship in: what a caller has to change, grouped
+by role.
+
 ## Before you open a PR
 
 - `gofmt -l .`, `go vet ./...`, `go build ./...`, `go test -race ./...`,

@@ -1,0 +1,151 @@
+# Upgrading
+
+What to change when upgrading OID4VCgo, release by release. Each entry
+covers the breaking changes a caller has to act on; CHANGELOG.md lists
+everything else. A release that pins a new FAPIgo release passes on
+that release's own breaking changes: see FAPIgo's UPGRADING.md for
+them.
+
+## v0.54.0 → v0.55.0
+
+This release pins FAPIgo v0.62.0.
+
+### Credential Issuer (`issuer`, `haip`)
+
+- **Revocation choices under production.** Under
+  `issuer.AssuranceProduction`, every `issuer.X5CAttestationVerifier`
+  and `issuer.X5CProofBindingKeyResolver` in Dependencies must set
+  `Revocation`: `certrevocation.CRLs` (a `certrevocation.Refresher`'s
+  `Checker()`, say), your own `certrevocation.Checker`, or
+  `certrevocation.NoCheck{}` to keep accepting certificates without a
+  revocation check.
+- **Attestation proof type.** Under production, `issuer.New` refuses a
+  Credential Configuration that takes the `attestation` proof type
+  unless `Config.AllowAttestationProofType` is set: a key attestation
+  sent that way can be relayed to another issuer. Take jwt proofs
+  carrying it in their `key_attestation` header instead
+  (`haip.RecommendedJWTKeyAttestationProofType`).
+  `haip.RecommendedIssuerConfig` no longer includes the attestation
+  proof type, or a jwt proof type without a key attestation.
+- **iss.** An SD-JWT VC whose `Prepare` sets no `Iss` now carries `iss`
+  set to `Config.Issuer`.
+- **Key attestation status.** An `AttestationStatusChecker` that should
+  deny a revoked or suspended key attestation must wrap
+  `issuer.ErrKeyAttestationRevoked`. Any other error now leaves a
+  pending deferred transaction pending
+  (`ErrDeferredAttestationStatusUnknown`) until it's decided or expires,
+  and is answered `server_error` (500) at a Credential Request instead
+  of `invalid_proof`. The same holds for a key attestation's or an x5c
+  proof key's certificate whose revocation can't be decided: no current
+  CRL, or a cancelled request.
+- **Nonce lifetime.** Under production, `issuer.New` refuses a
+  `Limits.NonceLifetime` over an hour.
+- **HAIP scopes.** `haip.ValidateIssuerConfig` refuses a scope shared by
+  Credential Configurations that require different key attestations.
+- **The Authorization Server** (fapigo/server, FAPIgo v0.62.0): an
+  `X5CAttesterChain` must set `Revocation` at every assurance level, to
+  `server.ClientCertificateCRLs` or
+  `server.NoClientCertificateRevocationCheck{}`. Under production with
+  attestation-based client authentication,
+  `Dependencies.ClientAttestationStatus` is required: a checker of the
+  Wallet Attestation's status claim, or
+  `server.NoClientAttestationStatusCheck{}`. A custom
+  `ClientCertificateRevocation` must wrap `server.ErrCertificateRevoked`
+  for a revoked certificate; any other error now answers `server_error`.
+  See `haip.RecommendedAuthorizationServerConfig`.
+
+### Verifier (`verifier`, `mdocdcapi`)
+
+- **Transaction stores.** A `TransactionStore` must persist the new
+  `Transaction.Owner`: `Begin` and `BeginDCAPI` read the first
+  transaction back and fail if it was dropped (`verifiertest`'s contract
+  checks it). Under production, transactions saved before the upgrade
+  can't be read: let pending ones expire first.
+- **Shared stores.** `Transactions` instances sharing a store each read
+  only their own transactions. Instances meant to handle each other's
+  requests must have the same client_id, response_uri and
+  `RequestURIBase`, or set the same `TransactionsConfig.Scope`.
+  Instances with all three in common but different policies, such as
+  several DC-API-only `Transactions` on one Verifier, set a distinct
+  `Scope` each.
+- **DC API origins.** Under production, `TransactionsConfig.Origins`
+  must list the origins of the pages that call
+  `navigator.credentials.get`. `BeginDCAPI` refuses any other, and
+  `NewTransactions` refuses a DC-API-only configuration (no
+  `RequestURIBase`) without them. `mdocdcapi.VerifyParams.Origins` is
+  required under production; `BuildRequest` refuses an origin that isn't
+  https or loopback http, and `VerifyResponse` refuses a non-loopback
+  http origin, in development too. List origins as
+  `scheme://host[:port]`.
+- **SD-JWT VC issuer certificates.** With `X5CIssuerKeyResolver.LeafPolicy`
+  unset, an issuer certificate is refused when its extended key usage
+  lists only other roles' purposes (TLS server or client, code signing,
+  email, time stamping, IPsec), lists OCSP signing or the mdoc reader
+  authentication purpose at all, or when every path to it goes through
+  an intermediate restricted to other roles. Issue SD-JWT VC issuers
+  their own certificates, or set `LeafPolicy`: call
+  `verifier.DefaultSDJWTIssuerLeafPolicy` from yours to keep these
+  refusals, or set `verifier.AnyIssuerLeaf` to accept every
+  chain-verified leaf.
+- **System roots.** Under production, issuer roots must be the issuers'
+  own CAs. `x509.SystemCertPool()` is refused, and on Linux and other
+  Unix systems so is a pool built by adding certificates to it.
+- **Status checks.** `RequireValidStatus` refuses a credential whose
+  status list signer it can't bind to the credential's issuer: one
+  verified by a custom key resolver that reports no issuer chain, with
+  no iss (SD-JWT VC) or no MSO status Certificate (mdoc). Report the
+  chain (`SDJWTVCIssuerChainResolver`, `MdocIssuerChainResolver`), or
+  use `RequireValidStatusFrom` with a `StatusIssuerPolicy`
+  (`verifier.AnyStatusListSigner` where every signer under the roots may
+  decide every credential's status). A non-object SD-JWT VC `status`
+  claim is an error.
+
+### Wallet (`walletflow`, the mobile libraries)
+
+- **Redirect URIs.** `walletflow.New`, and the mobile `NewWallet` as
+  `invalid_input`, refuse a `RedirectURI` that isn't a private-use
+  scheme in `reverse.domain:/path` form (`com.example.wallet:/callback`)
+  or loopback http (or, in development, https), or that carries a
+  fragment or credentials. Outside development, loopback must be
+  `127.0.0.1` or `[::1]`. A wallet with any other redirect URI could never complete an
+  authenticated issuance.
+- **Identifier lists.** `Wallet.CheckStatus` records
+  `walletflow.StatusUnknown` for an mdoc naming an ISO/IEC 18013-5
+  identifier list, which the wallet doesn't check yet, and the mobile
+  `ProximityReader` reports `unknown` for one; treat it as not checked.
+  The Swift and Kotlin `CredentialStatus.Value` gain an `unknown` case:
+  add it to exhaustive `switch` and `when` expressions.
+- **Missing configuration.** The mobile libraries report a missing
+  `issuer_roots`, `redirect_uri`, `verifier_roots` or HAIP provider as
+  `invalid_input` with the detail `not_configured`, not as `protocol`.
+- **Status lists.** An mdoc's status list without `exp`, or with its
+  `x5chain` outside the protected header, is refused (ISO/IEC 18013-5
+  §12.3.6.3).
+- **Pinned certificates and CRLs.** A certificate pinned in a roots PEM
+  (a Verifier's leaf in `verifier_roots`, say) whose role is listed in
+  `revocation` is checked against its CA's CRL: give that CA's
+  certificate in the new `crl_issuers`, or it's refused.
+
+### Revocation lists (`statuslist`, `identifierlist`, `certrevocation`, `mdoc`)
+
+- **Status List Tokens.** A token whose `ttl` is 0 or negative, or whose
+  `exp` isn't after its `iat`, is refused, and a negative
+  `VerifyOptions.MaxAge` is an error instead of turning freshness checks
+  off.
+- **CWT Status List Tokens.** `statuslist.Checker.Check` and
+  `RequireValid` with cwt true refuse a token without `exp` or with an
+  unprotected `x5chain`. To check a CWT token outside ISO/IEC 18013-5,
+  fetch it with `Fetcher` and call `statuslist.CheckCWTX5Chain` with the
+  options it needs. Elsewhere, `statuslist.VerifyOptions.RequireExp` and
+  `X5ChainProtectedOnly` apply the same rules.
+- **Identifier lists.** `identifierlist.Check` and `Checker.Check`
+  refuse a reference with no Certificate when no document signer path is
+  given: pass the MSO's verified IssuerAuth x5chain, or set
+  `VerifyOptions.UnboundSigner` (`identifierlist.AnyListSigner` where
+  every CA under the roots may decide every MSO's revocation).
+- **Issuing mdocs.** `mdoc.Issue` refuses an `IdentifierList` reference
+  with no ID or URI, or whose Certificate isn't an X.509 certificate.
+- **Pinned leaves.** `certrevocation.CRLs` checks a pinned leaf
+  certificate against its CA's CRL: add the CA's certificate to
+  `CRLs.Issuers`, or to a `Refresher`'s `Issuers`, or the leaf is
+  refused with `ErrNoCurrentCRL`.

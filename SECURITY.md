@@ -91,8 +91,12 @@ The mobile library exposes them as the wallet's and reader's `crls` and
 they expire (`mobile/ABI.md`). `dcql.AKITrustedAuthoritiesChecker`
 checks none of its own: the verifier hands it the path its issuer key
 resolver already checked. A Wallet Attestation's signer is verified by
-FAPIgo's server (`server.X5CAttesterChain`), which doesn't check
-revocation.
+FAPIgo's server (`server.X5CAttesterChain`), whose `Revocation`
+(`server.ClientCertificateCRLs`, or
+`server.NoClientCertificateRevocationCheck{}` to decline) is required
+since FAPIgo v0.62.0; the attestation's own status claim is checked by
+`server.Dependencies.ClientAttestationStatus`, which production
+requires (`server.NoClientAttestationStatusCheck{}` to decline).
 
 ## Known limitations
 

@@ -21,11 +21,12 @@ func ExampleNew() {
 		keys                       walletflow.KeyStore           // hardware-backed, declaring durable custody
 		credentials                walletflow.CredentialStore    // durable, under the platform's data protection
 		authorizations             walletflow.AuthorizationStore // durable, so an authorization survives a suspension
+		provider                   walletflow.WalletProvider     // attests the wallet and its keys, for issuers that require it
 	)
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: "https://wallet.example.com", RedirectURI: "com.example.wallet:/callback",
 		IssuerRoots: issuerRoots, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
-	}, walletflow.Dependencies{Keys: keys, Credentials: credentials, Authorizations: authorizations})
+	}, walletflow.Dependencies{Keys: keys, Credentials: credentials, Authorizations: authorizations, Provider: provider})
 	if err != nil {
 		panic(err)
 	}

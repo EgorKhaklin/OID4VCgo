@@ -35,8 +35,60 @@ is a complete, working app on this library to compare against.
 - [ ] Errors are shown with `WalletException.description` and
   `ProximityException.description`, and retried only when the guide
   says so. ([Handling errors](HandlingErrors.md))
+- [ ] Revocation, where your ecosystem's CAs publish CRLs: the roles to
+  check in `revocation`, their CAs' CRLs in `crls`, and, for a
+  certificate pinned in the roots, its CA's certificate in
+  `crlIssuers`. Fresh CRLs are fetched in the background and handed
+  over with `Wallet.setCRLs` before the old ones expire. *Check:* a
+  certificate on a CRL is refused.
+  ([Going to production](GoingToProduction.md))
 
-## 2. In person, QR code (holder)
+## 2. Receiving credentials
+
+- [ ] An intent filter opens `openid-credential-offer://` links in the
+  app, and each goes to `Wallet.startIssuance`. Show `offer` (who is
+  offering what) before going on.
+- [ ] `redirectURI` uses the app's own scheme, a domain name in reverse
+  order and a single slash, such as `com.example.wallet:/callback`, and
+  an intent filter for that scheme. Not an https App Link, and not
+  `myapp:/callback` or `com.example.wallet://callback`. *Check:*
+  `Wallet(...)` succeeds with your production configuration.
+- [ ] Pre-authorized code: ask for the PIN when `offer.txCode` is set,
+  and ask again when `redeemPreAuthorizedCode` throws a retryable error.
+  Authorization code: open `beginAuthorization()`'s URL in an Auth Tab
+  (a Custom Tab where there are none), ephemeral, and pass the redirect
+  to `completeAuthorization`. A redirect that arrives at a relaunched
+  app goes to `Wallet.resumeIssuance`.
+- [ ] `requestCredentials()`, then `close()` the issuance whatever
+  happens. Show `Issuance.Result`'s received, deferred and failed
+  credentials.
+- [ ] Deferred credentials are polled (`Wallet.pollDeferred`) at the
+  interval the issuer asks for, after relaunches too
+  (`Wallet.deferredCredentials()`).
+- [ ] `Wallet.checkStatus(id)` before relying on a held credential;
+  show `CredentialStatus.Value.Unknown` as not checked, not as valid.
+- [ ] *Check:* both grants against your issuer, including a killed
+  process during sign-in; an offer from an issuer outside `issuerRoots`
+  is refused. ([Receiving credentials](ReceivingCredentials.md))
+
+## 3. Presenting from a link
+
+- [ ] An intent filter opens `openid4vp://` links in the app, and each
+  goes to `Wallet.startPresentation`. An `untrustedVerifier` error is
+  shown as such, with nothing presented.
+- [ ] Show `verifier` (and its `registration` when there is one), each
+  query's claims and any `unregistered` ones, and what `preview` says
+  would be disclosed, before the holder agrees. Then `respond`, or
+  `decline`.
+- [ ] Open `redirectURI`, when there is one, in the browser the request
+  came from.
+- [ ] `deliveryUnknown` isn't retried: tell the holder to check with the
+  Verifier.
+- [ ] *Check:* a Verifier outside `verifierRoots` is refused before
+  anything is shown; the Verifier receives exactly the claims the
+  holder chose. ([Presenting from a link](PresentingFromALink.md))
+
+## 4. In person, QR code (holder)
 
 - [ ] Request `ProximityPermissions.holder(modes)` at runtime before
   `Wallet.startProximityPresentation(context, modes = modes)`. Pass
@@ -50,7 +102,7 @@ is a complete, working app on this library to compare against.
 - [ ] *Check:* on two phones, a reader scanning the code gets the
   elements the holder chose, and nothing else.
 
-## 3. In person, NFC tap (holder)
+## 5. In person, NFC tap (holder)
 
 - [ ] A subclass `class IdentityNfcService : NfcEngagementService()` in
   the app, declared in the app's manifest:
@@ -112,7 +164,7 @@ is a complete, working app on this library to compare against.
     the preferred foreground service while presenting, and not after
     the outcome is shown.
 
-## 4. In person, reader (verifier)
+## 6. In person, reader (verifier)
 
 - [ ] `ProximityReader(ProximityReaderConfiguration(issuerRoots = …))`,
   plus a reader key and chain with the reader-authentication EKU if
@@ -133,7 +185,7 @@ is a complete, working app on this library to compare against.
 - [ ] *Check:* both a QR holder and an NFC holder verify; an mdoc from
   an issuer outside `issuerRoots` is refused.
 
-## 5. Before shipping
+## 7. Before shipping
 
 - [ ] [Going to production](GoingToProduction.md) is done.
 - [ ] Interop beyond your own app: test your holder against at least
