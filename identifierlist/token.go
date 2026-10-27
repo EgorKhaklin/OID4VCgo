@@ -210,10 +210,30 @@ type VerifyOptions struct {
 	// themselves; LeafPolicy narrows that further, never widens it.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
+	// UnboundSigner decides the list's signer when Check and Checker
+	// have nothing to bind it to the mdoc's issuer with: the reference
+	// names no Certificate and no document signer path is given. It is
+	// run, as LeafPolicy is and before it, on a signer that chains to
+	// the roots: nil to accept it, an error to refuse. Nil refuses every
+	// such check, since any CA under the roots could otherwise sign a
+	// list that says another issuer's MSO isn't revoked. AnyListSigner
+	// accepts every signer under the roots: set it only where every CA
+	// they anchor may decide every MSO's revocation — roots of one
+	// issuer alone, say. VerifyToken, which binds no signer, ignores it.
+	UnboundSigner func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+
 	// Revocation, if set, checks the signer's certificate chain for
 	// revocation; see certrevocation.
 	Revocation certrevocation.Checker
 }
+
+// AnyListSigner is a VerifyOptions.UnboundSigner accepting every
+// identifier list signer under the roots.
+func AnyListSigner(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+
+// errUnboundSigner refuses a check that nothing ties the list's signer
+// to the mdoc's issuer for.
+var errUnboundSigner = errors.New("identifierlist: the list's signer can't be bound to the mdoc's issuer: pass the MSO's document signer path (its IssuerAuth x5chain as verified), or set VerifyOptions.UnboundSigner (AnyListSigner accepts every signer under the roots)")
 
 func (o VerifyOptions) now() time.Time {
 	if o.Now == nil {
@@ -275,7 +295,8 @@ func verifyToken(ctx context.Context, token []byte, roots *x509.CertPool, policy
 // signer (for an mDL, the IACA), with documentSignerPath the MSO's
 // IssuerAuth x5chain as verified, leaf first, with or without its
 // anchor (credential/mdoc.IdentifierListTrust). With neither, the
-// chain must verify to roots.
+// check is refused unless opts.UnboundSigner accepts the signer, which
+// must then chain to roots.
 //
 // ref and documentSignerPath must come from an MSO whose signature and
 // document signer chain were verified: an unverified MSO could name
@@ -299,17 +320,9 @@ func check(ctx context.Context, token []byte, roots *x509.CertPool, ref Ref, doc
 	if err := ref.validate(); err != nil {
 		return TokenClaims{}, err
 	}
-	policy := opts.LeafPolicy
-	if len(ref.Certificate) > 0 || len(documentSignerPath) > 0 {
-		trust, err := mdoc.IdentifierListTrust(&mdoc.IdentifierListRef{Certificate: ref.Certificate}, documentSignerPath)
-		if err != nil {
-			return TokenClaims{}, fmt.Errorf("identifierlist: the list's signer can't be bound to the mdoc's issuer: %w", err)
-		}
-		if trust.Roots != nil {
-			roots = trust.Roots
-		} else {
-			policy = certchain.BothPolicies(trust.LeafPolicy, opts.LeafPolicy)
-		}
+	roots, policy, err := signerTrust(roots, ref, documentSignerPath, opts)
+	if err != nil {
+		return TokenClaims{}, err
 	}
 	if roots == nil {
 		return TokenClaims{}, errors.New("identifierlist: no trust anchors: roots is nil and the reference names no certificate")
@@ -322,6 +335,25 @@ func check(ctx context.Context, token []byte, roots *x509.CertPool, ref Ref, doc
 		return TokenClaims{}, fmt.Errorf("identifierlist: token sub %q isn't the reference's uri %q", claims.Sub, ref.URI)
 	}
 	return claims, nil
+}
+
+// signerTrust is the roots and leaf policy a list's signer must meet
+// for ref, as Check describes.
+func signerTrust(roots *x509.CertPool, ref Ref, documentSignerPath []*x509.Certificate, opts VerifyOptions) (*x509.CertPool, func(*x509.Certificate, [][]*x509.Certificate) error, error) {
+	if len(ref.Certificate) == 0 && len(documentSignerPath) == 0 {
+		if opts.UnboundSigner == nil {
+			return nil, nil, errUnboundSigner
+		}
+		return roots, certchain.BothPolicies(opts.UnboundSigner, opts.LeafPolicy), nil
+	}
+	trust, err := mdoc.IdentifierListTrust(&mdoc.IdentifierListRef{Certificate: ref.Certificate}, documentSignerPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("identifierlist: the list's signer can't be bound to the mdoc's issuer: %w", err)
+	}
+	if trust.Roots != nil {
+		return trust.Roots, opts.LeafPolicy, nil
+	}
+	return roots, certchain.BothPolicies(trust.LeafPolicy, opts.LeafPolicy), nil
 }
 
 type identifierListClaim struct {

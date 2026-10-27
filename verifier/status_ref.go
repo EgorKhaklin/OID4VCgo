@@ -20,8 +20,9 @@ import (
 // statuslist.Checker.Check takes it. ok is false when vc has no status
 // list reference; err is set when it has a malformed one, or when it's
 // an mdoc whose only status is an identifier list, which isn't a Token
-// Status List (identifierlist.Checker checks it) — so a caller that
-// checks status when ok doesn't skip it.
+// Status List (identifierlist.Checker checks it, given the mdoc's
+// document signer path) — so a caller that checks status when ok
+// doesn't skip it.
 //
 //	ref, cwt, ok, err := vc.StatusListRef()
 //	if err == nil && ok {
@@ -40,7 +41,7 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 			if vc.MdocStatus.IdentifierList != nil {
 				// A status this package can't check isn't "no status":
 				// read as one, a revoked mdoc would pass.
-				return statuslist.StatusListRef{}, false, false, fmt.Errorf("verifier: the mdoc's status is an identifier list, not a status list: check it with identifierlist.Checker")
+				return statuslist.StatusListRef{}, false, false, fmt.Errorf("verifier: the mdoc's status is an identifier list, not a status list: check it with RequireValidStatus, or with identifierlist.Checker given the mdoc's document signer path (its IssuerChain)")
 			}
 			return statuslist.StatusListRef{}, false, false, nil
 		}
@@ -68,10 +69,12 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 // list (identifierlist.ErrRevoked), when a status can't be read, or
 // when a reference is malformed. An mdoc's identifier list is checked
 // with an identifierlist.Checker that has checker's Fetcher, Roots and
-// Options. A credential with no status reference passes: it has no
-// status to check, and nothing here can revoke it. Where every
-// credential accepted must be revocable, wrap it in
-// RequireStatusReference.
+// Options, so checker.Fetcher.MaxBytes caps an identifier list's size
+// too (zero there means identifierlist's own 4 MiB, not 1 MiB: a list
+// grows with the MSOs it revokes). A credential with no status
+// reference passes: it has no status to check, and nothing here can
+// revoke it. Where every credential accepted must be revocable, wrap
+// it in RequireStatusReference.
 //
 // Only the credential's own status is checked here. Its issuer's
 // certificate chain was checked for revocation when it was verified
@@ -204,7 +207,7 @@ func requireNotOnIdentifierList(ctx context.Context, checker statuslist.Checker,
 		if statusIssuers == nil {
 			return errUnboundStatusSigner
 		}
-		c.Options.LeafPolicy = certchain.BothPolicies(o.LeafPolicy, unnamedStatusIssuer(statusIssuers))
+		c.Options.UnboundSigner = unnamedStatusIssuer(statusIssuers)
 	}
 	return c.RequireNotRevoked(ctx, ref, path)
 }

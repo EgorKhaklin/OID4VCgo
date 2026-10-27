@@ -19,13 +19,25 @@ import (
 // every credential: each Check is given the MSO's reference and its
 // document signer path, and binds the list's signer to that mdoc's
 // issuer (ISO/IEC 18013-5 §12.3.6.2) itself.
+//
+// A Checker caches nothing: each Check fetches the list and verifies
+// it again, and a list near the 4 MiB limit takes a noticeable fraction
+// of a second to verify. A token's ttl (TokenClaims.TTL) only says how
+// long a Relying Party may cache it, and nothing here acts on it. A
+// caller checking many MSOs against one list can cache what Check
+// returns, keyed by the reference's uri and Certificate and the CA that
+// signed the document signer (what binds the list's signer), for no
+// longer than the token's ttl and exp allow, and test each further
+// MSO's id with TokenClaims.Contains.
 type Checker struct {
 	Fetcher statuslist.Fetcher
 
 	// Roots are the trust anchors for list signers when the reference
 	// names no Certificate: normally the IACA certificates the mdoc
 	// issuers chain to. A signer must also be under the CA that signed
-	// the mdoc's document signer, not just under any of them.
+	// the mdoc's document signer, not just under any of them: Check
+	// refuses a reference with no Certificate given no document signer
+	// path, unless Options.UnboundSigner decides the signer.
 	Roots *x509.CertPool
 
 	Options VerifyOptions
