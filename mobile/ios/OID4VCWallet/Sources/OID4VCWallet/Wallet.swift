@@ -365,6 +365,10 @@ public struct CredentialStatus: Decodable, Equatable, Sendable {
         case valid, revoked, suspended
         /// A status the issuer's list defines itself, as "0x" and its value.
         case other(String)
+        /// An mdoc naming an identifier list (ISO/IEC 18013-5 §12.3.6.4),
+        /// which isn't checked, and no status list saying otherwise than
+        /// valid: the status isn't known.
+        case unknown
     }
     /// The status found.
     public let value: Value
@@ -377,6 +381,7 @@ public struct CredentialStatus: Decodable, Equatable, Sendable {
         case "valid": value = .valid
         case "invalid": value = .revoked
         case "suspended": value = .suspended
+        case "unknown": value = .unknown
         case let v: value = .other(v)
         }
         checkedAt = try c.decode(Date.self, forKey: .checkedAt)

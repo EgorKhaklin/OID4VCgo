@@ -475,7 +475,11 @@ presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
   (`request_refresh`), so `RefreshCredential` can replace its copies.
   The Authorization Server may still refuse it (`reissue_required`).
 - `status` is its revocation status as last checked: `{"value": "valid"
-  | "invalid" | "suspended" | "0x…", "checked_at"}`.
+  | "invalid" | "suspended" | "0x…" | "unknown", "checked_at"}`.
+  `unknown` is an mdoc whose MSO names an identifier list (ISO/IEC
+  18013-5 §12.3.6.4), which the wallet can't check, and no status list
+  on which it's anything but valid (added within ABI 12: before, such an
+  mdoc was returned with no `status`).
 
 `display`, `valid_until` and `status` are absent when unknown.
 
@@ -815,7 +819,9 @@ another IACA the reader trusts. It returns `{"abi", "status"}`, where
 `status` is `valid`, `invalid` (revoked), `suspended`, another status
 the list defines (`0x` and its value), `none` (the MSO names no
 revocation list) or `unknown` (an identifier list, §12.3.6.3, which this
-reader can't check). Rely on the document only on `valid` or `none`. A
+reader can't check, and no status list or one on which the document is
+valid; within ABI 12, an MSO naming both was reported by its status
+list alone). Rely on the document only on `valid` or `none`. A
 failed fetch is `network`, a list that doesn't verify `protocol`, and
 cancelling `op` makes it `cancelled`. The list covers many documents, so
 fetching it doesn't tell its publisher which one was presented; it can

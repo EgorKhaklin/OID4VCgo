@@ -371,7 +371,8 @@ public data class CredentialDisplay(
 public data class CredentialStatus(
     /**
      * The status as the issuer's list names it: `valid`, `invalid`, `suspended`, or "0x" and a
-     * value of the list's own. [value] reads it.
+     * value of the list's own; or `unknown`, for an mdoc naming an identifier list, which isn't
+     * checked. [value] reads it.
      */
     @SerialName("value") val rawValue: String,
     /** When it was checked. */
@@ -392,6 +393,12 @@ public data class CredentialStatus(
          * @property value The status, as "0x" and its value.
          */
         public data class Other(val value: String) : Value
+
+        /**
+         * An mdoc naming an identifier list (ISO/IEC 18013-5 §12.3.6.4), which isn't checked,
+         * and no status list saying otherwise than valid: the status isn't known.
+         */
+        public data object Unknown : Value
     }
 
     /** [rawValue], read. */
@@ -400,6 +407,7 @@ public data class CredentialStatus(
             "valid" -> Value.Valid
             "invalid" -> Value.Revoked
             "suspended" -> Value.Suspended
+            "unknown" -> Value.Unknown
             else -> Value.Other(rawValue)
         }
 }

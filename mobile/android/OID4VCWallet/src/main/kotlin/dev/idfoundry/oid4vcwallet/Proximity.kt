@@ -977,8 +977,8 @@ public sealed interface MdocStatus {
     public data object NoStatus : MdocStatus
 
     /**
-     * The MSO names an identifier list (ISO/IEC 18013-5 §12.3.6.3), which isn't checked: the
-     * status isn't known.
+     * The MSO names an identifier list (ISO/IEC 18013-5 §12.3.6.3), which isn't checked, and no
+     * status list saying otherwise than valid: the status isn't known.
      */
     public data object Unknown : MdocStatus
 }

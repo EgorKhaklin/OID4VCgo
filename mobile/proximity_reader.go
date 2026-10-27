@@ -425,8 +425,9 @@ func verifiedOf(v proximity.Verified) *verifiedJSON {
 // status is "valid", "invalid" (revoked), "suspended", another status
 // the list defines as "0x" and its value, "none" (the MSO names no
 // revocation list) or "unknown" (it names an identifier list,
-// §12.3.6.3, which this reader can't check): rely on the document only
-// on "valid" or "none". The list covers many documents, so fetching it
+// §12.3.6.3, which this reader can't check, and either no status list
+// or one on which it's valid): rely on the document only on "valid" or
+// "none". The list covers many documents, so fetching it
 // doesn't tell its publisher which one is checked. It's fetched over
 // https from public addresses only. A failed fetch is network, a list
 // that doesn't verify protocol, and before a verified mdoc it's
@@ -479,6 +480,11 @@ func (r *ProximityReader) checkStatus(ctx context.Context, v proximity.Verified)
 	status, _, err := checker.Check(ctx, statuslist.StatusListRef{Idx: ref.Idx, URI: ref.URI}, true)
 	if err != nil {
 		return "", err
+	}
+	if status == statuslist.StatusValid && v.Status.IdentifierList != nil {
+		// Valid on the status list, but the identifier list the MSO
+		// names too, which this reader can't check, may still revoke it.
+		return walletflow.StatusUnknown, nil
 	}
 	return statusValue(status), nil
 }

@@ -182,13 +182,18 @@ const (
 	StatusValid     = "valid"
 	StatusInvalid   = "invalid"
 	StatusSuspended = "suspended"
+	// StatusUnknown is an mdoc whose MSO names an identifier list
+	// (ISO/IEC 18013-5 §12.3.6.4), which the wallet can't check, and
+	// either no status list or one on which it's valid: the identifier
+	// list may still revoke it.
+	StatusUnknown = "unknown"
 )
 
 // CredentialStatus is a credential's revocation status, as the wallet
 // last found it in the issuer's status list (Wallet.CheckStatus): Value
-// is StatusValid, StatusInvalid (revoked), StatusSuspended, or another
-// status the list defines as "0x" and its value; empty when never
-// checked.
+// is StatusValid, StatusInvalid (revoked), StatusSuspended, another
+// status the list defines as "0x" and its value, or StatusUnknown;
+// empty when never checked.
 type CredentialStatus struct {
 	Value     string
 	CheckedAt time.Time
@@ -201,7 +206,10 @@ type CredentialStatus struct {
 // returned with its Status. A credential without a status list has
 // nothing to check, and is returned as it is, as is an expired one: it
 // isn't valid whatever its status, so its status list isn't fetched
-// (draft-ietf-oauth-status-list §8.3). The status list tells the
+// (draft-ietf-oauth-status-list §8.3). An mdoc naming an identifier
+// list (ISO/IEC 18013-5 §12.3.6.4), which the wallet can't check, is
+// StatusUnknown, unless a status list it names too says it's revoked,
+// suspended or another status than valid. The status list tells the
 // issuer nothing about which credential is checked: it's one list for
 // many credentials (the Token Status List's herd privacy).
 func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, error) {
@@ -209,30 +217,21 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	if err != nil {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential: %w", err)
 	}
-	live := liveStatusRefs(c, w.deps.Clock())
-	if len(live) == 0 {
+	now := w.deps.Clock()
+	live := liveStatusRefs(c, now)
+	listed := identifierListed(c, now)
+	if len(live) == 0 && !listed {
 		return c, nil
 	}
-	// The roots the credential itself was checked against on receipt.
-	roots, _ := w.cfg.issuerTrust(c.Format, c.DocType)
-	checker := statuslist.Checker{
-		Fetcher: statuslist.Fetcher{HTTP: w.deps.HTTP, AllowLoopback: w.cfg.Development},
-		Roots:   roots,
-		Options: statuslist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation},
-	}
-	// Its status is its issuer's to sign, or one of its Status Issuers',
-	// not another issuer's under IssuerRoots.
-	if c.StatusListCWT {
-		if checker, err = mdocStatusChecker(checker, c.Credential); err != nil {
+	status := statuslist.StatusValid
+	if len(live) > 0 {
+		if status, err = w.checkStatusLists(ctx, c, live); err != nil {
 			return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
 		}
-	} else {
-		iss, _ := c.Claims["iss"].(string)
-		checker.Options = statusOptionsFor(checker.Options, iss, signerKey(c.Credential), w.cfg.StatusIssuers[iss])
 	}
-	status, err := checkCopies(ctx, checker, live, c.StatusListCWT)
-	if err != nil {
-		return StoredCredential{}, fmt.Errorf("walletflow: credential %q's status: %w", id, err)
+	value := statusValue(status)
+	if listed && status == statuslist.StatusValid {
+		value = StatusUnknown
 	}
 	// Recorded on the credential as it is now: a presentation or a
 	// refresh may have changed it meanwhile. A refreshed one references
@@ -243,14 +242,66 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 	if err != nil {
 		return StoredCredential{}, fmt.Errorf("walletflow: credential: %w", err)
 	}
-	if !slices.Equal(statusRefs(cur), statusRefs(c)) {
+	if !slices.Equal(statusRefs(cur), statusRefs(c)) || identifierListed(cur, now) != listed {
 		return cur, nil
 	}
-	cur.Status = CredentialStatus{Value: statusValue(status), CheckedAt: w.deps.Clock().UTC()}
+	cur.Status = CredentialStatus{Value: value, CheckedAt: now.UTC()}
 	if err := w.deps.Credentials.Put(ctx, cur); err != nil {
 		return StoredCredential{}, fmt.Errorf("walletflow: store credential %q's status: %w", id, err)
 	}
 	return cur, nil
+}
+
+// checkStatusLists is the status of c's copies on the status list
+// entries live, their issuer's.
+func (w *Wallet) checkStatusLists(ctx context.Context, c StoredCredential, live []statuslist.StatusListRef) (statuslist.StatusType, error) {
+	// The roots the credential itself was checked against on receipt.
+	roots, _ := w.cfg.issuerTrust(c.Format, c.DocType)
+	checker := statuslist.Checker{
+		Fetcher: statuslist.Fetcher{HTTP: w.deps.HTTP, AllowLoopback: w.cfg.Development},
+		Roots:   roots,
+		Options: statuslist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation},
+	}
+	// Its status is its issuer's to sign, or one of its Status Issuers',
+	// not another issuer's under IssuerRoots.
+	if c.StatusListCWT {
+		var err error
+		if checker, err = mdocStatusChecker(checker, c.Credential); err != nil {
+			return 0, err
+		}
+	} else {
+		iss, _ := c.Claims["iss"].(string)
+		checker.Options = statusOptionsFor(checker.Options, iss, signerKey(c.Credential), w.cfg.StatusIssuers[iss])
+	}
+	return checkCopies(ctx, checker, live, c.StatusListCWT)
+}
+
+// identifierListed reports whether a copy of c, an mdoc, not yet
+// expired at now names an identifier list in its MSO's status
+// (mdocStatus).
+func identifierListed(c StoredCredential, now time.Time) bool {
+	if c.Format != mdoc.CredentialFormat {
+		return false
+	}
+	for _, cp := range c.AllCopies() {
+		if !copyLive(c, cp, now) {
+			continue
+		}
+		if status, err := mdocStatus(cp.Credential); err == nil && status != nil && status.IdentifierList != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// copyLive reports whether copy cp of c hasn't yet expired at now: its
+// own ValidUntil, or for a copy stored before copies kept theirs, c's.
+func copyLive(c StoredCredential, cp CredentialCopy, now time.Time) bool {
+	until := cp.ValidUntil
+	if until.IsZero() {
+		until = c.ValidUntil
+	}
+	return until.IsZero() || now.Before(until)
 }
 
 // statusRef is the status list entry copy cp of c references, nil for
@@ -278,12 +329,8 @@ func statusRefs(c StoredCredential) []statuslist.StatusListRef {
 func liveStatusRefs(c StoredCredential, now time.Time) []statuslist.StatusListRef {
 	var refs []statuslist.StatusListRef
 	for _, cp := range c.AllCopies() {
-		until := cp.ValidUntil
-		if until.IsZero() {
-			until = c.ValidUntil
-		}
 		ref := statusRef(c, cp)
-		if ref == nil || (!until.IsZero() && !now.Before(until)) || slices.Contains(refs, *ref) {
+		if ref == nil || !copyLive(c, cp, now) || slices.Contains(refs, *ref) {
 			continue
 		}
 		refs = append(refs, *ref)
@@ -400,11 +447,7 @@ func signerKey(credential string) crypto.PublicKey {
 // or else under the CA that signed its document signer. Both are read
 // from the credential, verified when it was received.
 func mdocStatusChecker(checker statuslist.Checker, credential string) (statuslist.Checker, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(credential)
-	if err != nil {
-		return checker, fmt.Errorf("decode credential: %w", err)
-	}
-	issuerSigned, err := mdoc.UnmarshalIssuerSigned(raw)
+	issuerSigned, err := storedIssuerSigned(credential)
 	if err != nil {
 		return checker, err
 	}
@@ -428,4 +471,27 @@ func mdocStatusChecker(checker statuslist.Checker, credential string) (statuslis
 	checker.Options.RequireExp = true
 	checker.Options.X5ChainProtectedOnly = true
 	return checker, nil
+}
+
+// storedIssuerSigned is credential, a stored mdoc, decoded.
+func storedIssuerSigned(credential string) (mdoc.IssuerSigned, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(credential)
+	if err != nil {
+		return mdoc.IssuerSigned{}, fmt.Errorf("decode credential: %w", err)
+	}
+	return mdoc.UnmarshalIssuerSigned(raw)
+}
+
+// mdocStatus is the status its MSO gives credential, a stored mdoc: nil
+// for none.
+func mdocStatus(credential string) (*mdoc.Status, error) {
+	issuerSigned, err := storedIssuerSigned(credential)
+	if err != nil {
+		return nil, err
+	}
+	mso, err := mdoc.IssuerAuthMSO(issuerSigned)
+	if err != nil {
+		return nil, err
+	}
+	return mso.Status, nil
 }

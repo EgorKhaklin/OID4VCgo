@@ -644,6 +644,7 @@ fun StatusRow(status: CredentialStatus?) {
         CredentialStatus.Value.Revoked -> "Revoked by the issuer" to Color(0xFFC62828)
         CredentialStatus.Value.Suspended -> "Suspended by the issuer" to Color(0xFFE65100)
         is CredentialStatus.Value.Other -> "Status ${v.value}" to MaterialTheme.colorScheme.onSurfaceVariant
+        CredentialStatus.Value.Unknown -> "Status can't be checked" to MaterialTheme.colorScheme.onSurfaceVariant
     }
     Column(Modifier.padding(vertical = 6.dp).testTag("credential-status")) {
         Text(word, style = MaterialTheme.typography.titleMedium, color = color)

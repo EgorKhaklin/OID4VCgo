@@ -825,7 +825,8 @@ public enum MdocStatus: Equatable, Sendable {
     /// The MSO names no revocation list.
     case noStatus
     /// The MSO names an identifier list (ISO/IEC 18013-5 §12.3.6.3), which
-    /// isn't checked: the status isn't known.
+    /// isn't checked, and no status list saying otherwise than valid: the
+    /// status isn't known.
     case unknown
 
     init(_ text: String) {

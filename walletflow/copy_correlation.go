@@ -1,7 +1,6 @@
 package walletflow
 
 import (
-	"encoding/base64"
 	"math"
 	"strconv"
 	"time"
@@ -156,11 +155,7 @@ func dayAligned(v float64) bool {
 // boundary (mdoc.RoundedValidity's, with a lifetime of whole days), and
 // its identifier list entry.
 func mdocMarks(credential string) copyMarks {
-	raw, err := base64.RawURLEncoding.DecodeString(credential)
-	if err != nil {
-		return copyMarks{}
-	}
-	issuerSigned, err := mdoc.UnmarshalIssuerSigned(raw)
+	issuerSigned, err := storedIssuerSigned(credential)
 	if err != nil {
 		return copyMarks{}
 	}

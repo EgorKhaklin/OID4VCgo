@@ -422,6 +422,7 @@ struct StatusRow: View {
         case .revoked: "Revoked by the issuer"
         case .suspended: "Suspended by the issuer"
         case .other(let v): "Status \(v)"
+        case .unknown: "Status can't be checked"
         }
     }
 
@@ -432,12 +433,13 @@ struct StatusRow: View {
         case .revoked: "xmark.octagon.fill"
         case .suspended: "pause.circle.fill"
         case .other: "exclamationmark.circle"
+        case .unknown: "questionmark.circle"
         }
     }
 
     private var color: Color {
         switch status?.value {
-        case nil, .other: .secondary
+        case nil, .other, .unknown: .secondary
         case .valid: .green
         case .revoked: .red
         case .suspended: .orange
