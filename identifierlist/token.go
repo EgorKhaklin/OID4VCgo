@@ -325,7 +325,7 @@ func check(ctx context.Context, token []byte, roots *x509.CertPool, ref Ref, doc
 }
 
 type identifierListClaim struct {
-	Identifiers map[cbor.ByteString]cbor.RawMessage `cbor:"identifiers"`
+	Identifiers cbor.RawMessage `cbor:"identifiers"`
 }
 
 func parseClaims(raw []byte) (TokenClaims, *int64, error) {
@@ -370,19 +370,50 @@ func parseClaims(raw []byte) (TokenClaims, *int64, error) {
 	if !ok {
 		return TokenClaims{}, nil, errors.New("identifierlist: CWT is missing the required identifier_list claim")
 	}
+	// The walk above checked the whole claims set, duplicate keys at
+	// every depth included, so the list is decoded without walking it
+	// again, and its identifiers are read in place rather than built
+	// into a map: a list near maxTokenBytes holds most of a million.
 	var list identifierListClaim
-	if err := decMode.Unmarshal(v, &list); err != nil {
+	if err := decMode.DecMode.Unmarshal(v, &list); err != nil {
 		return TokenClaims{}, nil, fmt.Errorf("identifierlist: identifier_list claim: %w", err)
 	}
-	if list.Identifiers == nil {
+	if !strictcbor.IsMap(list.Identifiers) {
 		return TokenClaims{}, nil, errors.New("identifierlist: identifier_list claim has no identifiers map")
 	}
-	claims.Identifiers = make([][]byte, 0, len(list.Identifiers))
-	for id := range list.Identifiers {
-		claims.Identifiers = append(claims.Identifiers, []byte(id))
+	if claims.Identifiers, err = identifiers(list.Identifiers); err != nil {
+		return TokenClaims{}, nil, err
 	}
-	slices.SortFunc(claims.Identifiers, bytes.Compare)
 	return claims, nbf, nil
+}
+
+// identifiers reads the identifiers map of an identifier_list claim
+// (ISO/IEC 18013-5 §12.3.6.4: a non-empty Identifier, a bstr, to its
+// IdentifierInfo, a map), sorted. They share raw's memory.
+func identifiers(raw []byte) ([][]byte, error) {
+	n := 0
+	if err := strictcbor.Entries(raw, func(_, _ []byte) error { n++; return nil }); err != nil {
+		return nil, fmt.Errorf("identifierlist: identifiers: %w", err)
+	}
+	ids := make([][]byte, 0, n)
+	err := strictcbor.Entries(raw, func(key, info []byte) error {
+		id, ok := strictcbor.Bytes(key)
+		switch {
+		case !ok:
+			return errors.New("identifierlist: an identifier isn't a byte string")
+		case len(id) == 0:
+			return errors.New("identifierlist: the list holds an empty identifier")
+		case !strictcbor.IsMap(info):
+			return fmt.Errorf("identifierlist: identifier %x's IdentifierInfo isn't a map", id)
+		}
+		ids = append(ids, id)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(ids, bytes.Compare)
+	return ids, nil
 }
 
 // numericDate reads claim key as a CWT NumericDate (RFC 8392 §2: an

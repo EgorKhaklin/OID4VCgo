@@ -166,9 +166,10 @@ func (m DecMode) walk(data []byte, whole bool) error {
 	return nil
 }
 
-// walker checks one encoded data item in place. It allocates only for a
-// map's keys and for the rare key or tag it hands to the wrapped mode,
-// so its cost follows the input's length, not what decoding it would
+// walker checks one encoded data item in place. It allocates only for
+// the keys of a map whose keys aren't in deterministic order (see
+// mapWalk) and for the rare key or tag it hands to the wrapped mode, so
+// its cost follows the input's length, not what decoding it would
 // build.
 type walker struct {
 	mode      cbor.DecMode
@@ -410,9 +411,8 @@ func (w *walker) mapItems(depth int, indefinite bool, n uint64) error {
 			return err
 		}
 	}
-	base := len(w.keys)
-	defer func() { w.keys = w.keys[:base] }()
-	var other map[any]struct{}
+	m := mapWalk{base: len(w.keys), first: w.off, ascending: true}
+	defer func() { w.keys = w.keys[:m.base] }()
 	for i := 0; ; i++ {
 		more, err := w.another(indefinite, i, count, w.maxPairs, tooManyPairs)
 		if err != nil {
@@ -421,16 +421,33 @@ func (w *walker) mapItems(depth int, indefinite bool, n uint64) error {
 		if !more {
 			break
 		}
-		if err := w.pair(depth, indefinite, i, &other); err != nil {
+		if err := w.pair(depth, indefinite, i, count, &m); err != nil {
 			return err
 		}
 	}
-	return duplicateKey(w.keys[base:])
+	return duplicateKey(w.keys[m.base:])
 }
 
-// pair walks a map's entry i: its key, recorded to find a duplicate,
-// then its value.
-func (w *walker) pair(depth int, indefinite bool, i int, other *map[any]struct{}) error {
+// A mapWalk is what the walk of one map keeps to find a duplicate key.
+// While the map's keys come in strictly ascending order — compareKeys's,
+// which a deterministically encoded map's keys follow (RFC 8949
+// §4.2.1) — none can repeat one before it, so only the last is kept: a
+// large canonical map costs no memory. At the first key out of order,
+// the keys before it are read again from first and, with every key
+// after them, kept in w.keys from base for duplicateKey.
+type mapWalk struct {
+	base, first int
+	ascending   bool
+	// last is the last key while ascending, if any.
+	last    mapKey
+	hasLast bool
+	// other holds the keys only their decoded value identifies.
+	other map[any]struct{}
+}
+
+// pair walks a map's entry i, of count if definite-length: its key,
+// recorded to find a duplicate, then its value.
+func (w *walker) pair(depth int, indefinite bool, i, count int, m *mapWalk) error {
 	keyStart := w.off
 	if err := w.item(depth); err != nil {
 		return err
@@ -439,7 +456,7 @@ func (w *walker) pair(depth int, indefinite bool, i int, other *map[any]struct{}
 	if err != nil {
 		return err
 	}
-	if err := w.record(k, i, other); err != nil {
+	if err := w.record(k, i, keyStart, count, m); err != nil {
 		return err
 	}
 	if indefinite {
@@ -452,23 +469,102 @@ func (w *walker) pair(depth int, indefinite bool, i int, other *map[any]struct{}
 	return w.item(depth)
 }
 
-// record keeps key k, of entry i, for duplicateKey; a key only its
-// decoded value identifies is instead checked against, and added to,
-// other.
-func (w *walker) record(k mapKey, i int, other *map[any]struct{}) error {
-	if k.kind != kindOther {
-		k.index = i
-		w.keys = append(w.keys, k)
+// record notes key k, of entry i starting at keyStart, for
+// duplicateKey; a key only its decoded value identifies is instead
+// checked against, and added to, m.other.
+func (w *walker) record(k mapKey, i, keyStart, count int, m *mapWalk) error {
+	if k.kind == kindOther {
+		if m.other == nil {
+			m.other = make(map[any]struct{})
+		}
+		if _, dup := m.other[k.other]; dup {
+			return &cbor.DupMapKeyError{Key: k.other, Index: i}
+		}
+		m.other[k.other] = struct{}{}
 		return nil
 	}
-	if *other == nil {
-		*other = make(map[any]struct{})
+	k.index = i
+	if m.ascending {
+		if !m.hasLast || compareKeys(m.last, k) < 0 {
+			m.last, m.hasLast = k, true
+			return nil
+		}
+		m.ascending = false
+		if err := w.keysBefore(m, keyStart, max(count, i+1)); err != nil {
+			return err
+		}
 	}
-	if _, dup := (*other)[k.other]; dup {
-		return &cbor.DupMapKeyError{Key: k.other, Index: i}
-	}
-	(*other)[k.other] = struct{}{}
+	w.keys = append(w.keys, k)
 	return nil
+}
+
+// keysBefore keeps the keys of the map's entries from m.first to
+// keyStart, which the walk has checked, with room for n keys in all.
+func (w *walker) keysBefore(m *mapWalk, keyStart, n int) error {
+	w.keys = slices.Grow(w.keys, n)
+	for i, off := 0, m.first; off < keyStart; i++ {
+		end, err := skip(w.data, off)
+		if err != nil {
+			return err
+		}
+		k, err := w.key(off, end)
+		if err != nil {
+			return err
+		}
+		if k.kind != kindOther {
+			k.index = i
+			w.keys = append(w.keys, k)
+		}
+		if off, err = skip(w.data, end); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// skip returns the offset after the data item at data[off], which the
+// walk has checked, so its nesting is within bounds.
+func skip(data []byte, off int) (int, error) {
+	major, ai, arg, off, err := readHead(data, off)
+	if err != nil {
+		return 0, err
+	}
+	switch major {
+	case majorTag:
+		return skip(data, off)
+	case majorBytes, majorText, majorArray, majorMap:
+	default:
+		return off, nil
+	}
+	if ai == aiIndefinite {
+		for {
+			if off >= len(data) {
+				return 0, io.ErrUnexpectedEOF
+			}
+			if data[off] == breakCode {
+				return off + 1, nil
+			}
+			if off, err = skip(data, off); err != nil {
+				return 0, err
+			}
+		}
+	}
+	n, ok := span(data, off, arg)
+	if !ok {
+		return 0, io.ErrUnexpectedEOF
+	}
+	switch major {
+	case majorBytes, majorText:
+		return off + n, nil
+	case majorMap:
+		n *= 2
+	}
+	for range n {
+		if off, err = skip(data, off); err != nil {
+			return 0, err
+		}
+	}
+	return off, nil
 }
 
 // tag walks a chain of tags and their content. start is the first tag's
@@ -710,10 +806,15 @@ func duplicateKey(keys []mapKey) error {
 	return nil
 }
 
+// compareKeys orders keys as RFC 8949 §4.2.1 orders the deterministic
+// encodings of integers and definite-length strings: by major type,
+// then argument, then a string's bytes. Keys that decode to the same
+// value compare equal.
 func compareKeys(a, b mapKey) int {
 	return cmp.Or(
 		cmp.Compare(a.kind, b.kind),
 		cmp.Compare(a.n, b.n),
+		cmp.Compare(len(a.s), len(b.s)),
 		bytes.Compare(a.s, b.s),
 	)
 }
