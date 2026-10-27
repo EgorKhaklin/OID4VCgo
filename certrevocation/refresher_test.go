@@ -234,6 +234,8 @@ func TestRefresher_KeepsHeldList(t *testing.T) {
 			Number: big.NewInt(6), ThisUpdate: time.Now().Add(-30 * time.Minute), NextUpdate: time.Now().Add(-time.Minute),
 		}, p.inter, p.interKey).Raw, "expired at"},
 		"not yet valid": {http.StatusOK, numbered(t, p.inter, p.interKey, 6, time.Hour).Raw, "isn't valid until"},
+		"unknown critical extension": {http.StatusOK, testcert.CRLFromTemplate(t, withExtension(t, asn1.ObjectIdentifier{1, 2, 3, 4, 99}, true), p.inter, p.interKey).Raw,
+			"critical extension"},
 		"delta CRL": {http.StatusOK, testcert.CRLFromTemplate(t, withExtension(t, asn1.ObjectIdentifier{2, 5, 29, 27}, 1), p.inter, p.interKey).Raw,
 			"not a complete one"},
 	}
@@ -260,6 +262,22 @@ func TestRefresher_KeepsHeldList(t *testing.T) {
 				t.Error("the held list was replaced")
 			}
 		})
+	}
+}
+
+// A list whose thisUpdate is a little ahead, as from a CA whose clock
+// runs fast, is accepted, and checks as current.
+func TestRefresher_ThisUpdateClockSkew(t *testing.T) {
+	p := newPKI(t)
+	srv := newCRLServer(t)
+	srv.serveCRL("/ca.crl", numbered(t, p.inter, p.interKey, 1, certrevocation.CRLClockSkew-time.Minute))
+	srv.serveCRL("/root.crl", numbered(t, p.root, p.rootKey, 1, -time.Hour))
+	r := newRefresher(t, certrevocation.RefresherConfig{URLs: []string{srv.URL + "/ca.crl", srv.URL + "/root.crl"}, Issuers: []*x509.Certificate{p.inter, p.root}})
+	if err := r.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if err := r.Checker().CheckRevocation(context.Background(), certrevocation.Check{Chain: p.chain}); err != nil {
+		t.Errorf("CheckRevocation: %v", err)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -59,12 +60,17 @@ type Check struct {
 //
 // A list is used for an issuer only when its issuer name matches, its
 // signature verifies against that issuer's key, and the check's Now
-// falls in [thisUpdate, nextUpdate). A list without a nextUpdate is
-// never current: it gives no time after which a relying party must
-// look again. Only complete, direct CRLs are used: a delta CRL, or one
+// falls in [thisUpdate, nextUpdate), its thisUpdate allowed up to
+// CRLClockSkew ahead of Now. A list without a nextUpdate is never
+// current: it gives no time after which a relying party must look
+// again. Only complete, direct CRLs are used: a delta CRL, or one
 // whose issuing distribution point extension limits its scope (to some
 // reasons, to CA or end-entity certificates, or to an indirect CRL's
-// other issuers), is skipped rather than read as complete. A
+// other issuers), is skipped rather than read as complete. So is one
+// carrying a critical extension, on the list or on an entry, other
+// than the few this package processes (the authority key identifier,
+// CRL number, reason code and invalidity date), which RFC 5280 §5.2
+// and §5.3 forbid using at all. A
 // certificate is refused with ErrRevoked when a usable list names its
 // serial number, and with ErrNoCurrentCRL when its issuer has no usable
 // list at all — a missing or stale CRL fails closed rather than letting
@@ -99,9 +105,24 @@ type CRLs struct {
 	Issuers []*x509.Certificate
 }
 
+// CRLClockSkew is how far ahead of the current time a CRL's thisUpdate
+// may be and the CRL still be used, by CRLs and Refresher alike: a CA
+// whose clock runs a little fast would otherwise publish CRLs unusable
+// for their first moments.
+const CRLClockSkew = 5 * time.Minute
+
 var (
 	oidDeltaCRLIndicator        = asn1.ObjectIdentifier{2, 5, 29, 27}
 	oidIssuingDistributionPoint = asn1.ObjectIdentifier{2, 5, 29, 28}
+
+	// understoodCRLExtensions are the CRL extensions, and
+	// understoodEntryExtensions the CRL entry extensions, a critical
+	// one of which doesn't keep a list from being used: the authority
+	// key identifier and CRL number, which x509 parses, and the reason
+	// code and invalidity date, which don't change that an entry
+	// revokes its certificate.
+	understoodCRLExtensions   = []asn1.ObjectIdentifier{{2, 5, 29, 35}, {2, 5, 29, 20}}
+	understoodEntryExtensions = []asn1.ObjectIdentifier{{2, 5, 29, 21}, {2, 5, 29, 24}}
 )
 
 // Validate reports a CRLs that can't check anything: one without Lists.
@@ -183,10 +204,35 @@ func crlUsableFor(list *x509.RevocationList, issuer *x509.Certificate, now time.
 	if list == nil || !bytes.Equal(list.RawIssuer, issuer.RawSubject) {
 		return false
 	}
-	if list.NextUpdate.IsZero() || now.Before(list.ThisUpdate) || !now.Before(list.NextUpdate) {
+	if list.NextUpdate.IsZero() || notYetValid(list, now) || !now.Before(list.NextUpdate) {
 		return false
 	}
-	return completeAndDirect(list) && list.CheckSignatureFrom(issuer) == nil
+	return completeAndDirect(list) && criticalUnderstood(list) && list.CheckSignatureFrom(issuer) == nil
+}
+
+// notYetValid reports whether list's thisUpdate is more than
+// CRLClockSkew after now.
+func notYetValid(list *x509.RevocationList, now time.Time) bool {
+	return now.Add(CRLClockSkew).Before(list.ThisUpdate)
+}
+
+// criticalUnderstood reports whether every critical extension list
+// carries, on the list itself or on an entry, is one this package
+// understands.
+func criticalUnderstood(list *x509.RevocationList) bool {
+	for _, ext := range list.Extensions {
+		if ext.Critical && !slices.ContainsFunc(understoodCRLExtensions, ext.Id.Equal) {
+			return false
+		}
+	}
+	for _, entry := range list.RevokedCertificateEntries {
+		for _, ext := range entry.Extensions {
+			if ext.Critical && !slices.ContainsFunc(understoodEntryExtensions, ext.Id.Equal) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // completeAndDirect reports whether list is neither a delta CRL nor one

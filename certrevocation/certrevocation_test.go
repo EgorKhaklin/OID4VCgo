@@ -7,6 +7,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"errors"
+	"math/big"
 	"testing"
 	"time"
 
@@ -86,6 +87,19 @@ func TestCRLs(t *testing.T) {
 		// An issuing distribution point extension (here an empty one)
 		// may limit the list's scope: it isn't read as complete.
 		"IDP-scoped CRL ignored": {[]*x509.RevocationList{testcert.CRLFromTemplate(t, withExtension(t, asn1.ObjectIdentifier{2, 5, 29, 28}, asn1.RawValue{Tag: asn1.TagSequence, Class: asn1.ClassUniversal, IsCompound: true}), p.inter, p.interKey), rootCRL}, certrevocation.ErrNoCurrentCRL},
+		// RFC 5280 §5.2 and §5.3: a CRL with a critical extension, or
+		// critical entry extension, nobody processes MUST NOT be used.
+		"unknown critical extension": {[]*x509.RevocationList{testcert.CRLFromTemplate(t, withExtension(t, asn1.ObjectIdentifier{1, 2, 3, 4, 99}, true), p.inter, p.interKey), rootCRL}, certrevocation.ErrNoCurrentCRL},
+		"unknown critical entry extension": {[]*x509.RevocationList{testcert.CRLFromTemplate(t, &x509.RevocationList{
+			RevokedCertificateEntries: []x509.RevocationListEntry{{SerialNumber: big.NewInt(7), RevocationTime: now.Add(-time.Hour), ExtraExtensions: withExtension(t, asn1.ObjectIdentifier{1, 2, 3, 4, 99}, true).ExtraExtensions}},
+		}, p.inter, p.interKey), rootCRL}, certrevocation.ErrNoCurrentCRL},
+		"unknown non-critical extension": {[]*x509.RevocationList{testcert.CRLFromTemplate(t, &x509.RevocationList{
+			ExtraExtensions: []pkix.Extension{{Id: asn1.ObjectIdentifier{1, 2, 3, 4, 99}, Value: []byte{0x05, 0x00}}},
+		}, p.inter, p.interKey), rootCRL}, nil},
+		// A CA whose clock runs a little fast: its fresh list is used.
+		"thisUpdate within clock skew": {[]*x509.RevocationList{testcert.CRLFromTemplate(t, &x509.RevocationList{
+			ThisUpdate: now.Add(certrevocation.CRLClockSkew - time.Minute), NextUpdate: now.Add(time.Hour),
+		}, p.inter, p.interKey), rootCRL}, nil},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

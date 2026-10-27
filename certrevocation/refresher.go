@@ -259,8 +259,9 @@ func (r *Refresher) Checker() CRLs {
 // Type. Redirects are followed only on the same host (see
 // RefresherConfig.HTTPClient). The list replaces the one held from
 // that URL only when it is complete and direct (as CRLs requires: not
-// a delta CRL, no issuing distribution point), has a nextUpdate, is
-// current now, was issued by one of Issuers, names the same issuer as
+// a delta CRL, no issuing distribution point, no critical extension it
+// doesn't process), has a nextUpdate, is current now (within
+// CRLClockSkew), was issued by one of Issuers, names the same issuer as
 // the held list, and isn't older than it: its thisUpdate isn't before
 // the held list's, and when both carry a CRL number, its number isn't
 // lower. That last check stops a replayed old list, one still inside
@@ -307,9 +308,11 @@ func (r *Refresher) acceptable(list, held *x509.RevocationList, now time.Time) e
 	switch {
 	case !completeAndDirect(list):
 		return errors.New("a delta or scoped CRL (issuing distribution point), not a complete one")
+	case !criticalUnderstood(list):
+		return errors.New("the CRL carries a critical extension this package doesn't process")
 	case list.NextUpdate.IsZero():
 		return errors.New("the CRL has no nextUpdate")
-	case now.Before(list.ThisUpdate):
+	case notYetValid(list, now):
 		return fmt.Errorf("the CRL isn't valid until %s", list.ThisUpdate.UTC().Format(time.RFC3339))
 	case !now.Before(list.NextUpdate):
 		return fmt.Errorf("the CRL expired at %s", list.NextUpdate.UTC().Format(time.RFC3339))
