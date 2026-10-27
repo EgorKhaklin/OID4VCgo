@@ -471,7 +471,10 @@ func (r *ProximityReader) checkStatus(ctx context.Context, v proximity.Verified)
 	checker := statuslist.Checker{
 		Fetcher: statusFetcher(),
 		Roots:   roots,
-		Options: statuslist.VerifyOptions{Now: r.clock, LeafPolicy: trust.LeafPolicy, Revocation: r.statusRevocation},
+		Options: statuslist.VerifyOptions{
+			Now: r.clock, LeafPolicy: trust.LeafPolicy, Revocation: r.statusRevocation,
+			RequireExp: true, X5ChainProtectedOnly: true,
+		},
 	}
 	status, _, err := checker.Check(ctx, statuslist.StatusListRef{Idx: ref.Idx, URI: ref.URI}, true)
 	if err != nil {

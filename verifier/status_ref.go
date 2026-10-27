@@ -309,7 +309,8 @@ func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, status
 		return checker, err
 	}
 	c := checker
-	c.Options.RequireExp, c.Options.X5ChainProtectedOnly = true, true
+	c.Options.RequireExp = true
+	c.Options.X5ChainProtectedOnly = true
 	base := checker.Options.LeafPolicy
 	if (ref == nil || len(ref.Certificate) == 0) && len(path) == 0 {
 		// Nothing ties the list's signer to the document's issuer but
