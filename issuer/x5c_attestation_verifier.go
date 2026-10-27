@@ -169,7 +169,10 @@ type X5CAttestationVerifier struct {
 	// has expired, say), the error says so: the Credential Request gets
 	// a server error rather than invalid_proof, and a deferred
 	// transaction stays pending (see AttestationVerifier). nil checks
-	// no revocation; see certrevocation.
+	// no revocation, which AssuranceProduction refuses: there, pass
+	// certrevocation.CRLs (a certrevocation.Refresher's Checker), your
+	// own Checker, or certrevocation.NoCheck{} to decline. See
+	// certrevocation.
 	Revocation certrevocation.Checker
 
 	// IssuerBinding decides what ties the signing certificate to the
@@ -271,22 +274,31 @@ func (v X5CAttestationVerifier) validate() error {
 // configuration check when av is one, so New refuses a misconfigured
 // binding rather than every key attestation afterwards.
 func validateAttestationVerifier(av AttestationVerifier) error {
-	var v X5CAttestationVerifier
-	switch t := av.(type) {
-	case X5CAttestationVerifier:
-		v = t
-	case *X5CAttestationVerifier:
-		if t == nil {
-			return errors.New("attestation_verifier is a nil *X5CAttestationVerifier")
-		}
-		v = *t
-	default:
+	if t, ok := av.(*X5CAttestationVerifier); ok && t == nil {
+		return errors.New("attestation_verifier is a nil *X5CAttestationVerifier")
+	}
+	v, ok := asX5CAttestationVerifier(av)
+	if !ok {
 		return nil
 	}
 	if err := v.validate(); err != nil {
 		return fmt.Errorf("attestation_verifier: %w", err)
 	}
 	return nil
+}
+
+// asX5CAttestationVerifier is av as an X5CAttestationVerifier, by value
+// or by non-nil pointer, if it is one.
+func asX5CAttestationVerifier(av AttestationVerifier) (X5CAttestationVerifier, bool) {
+	switch t := av.(type) {
+	case X5CAttestationVerifier:
+		return t, true
+	case *X5CAttestationVerifier:
+		if t != nil {
+			return *t, true
+		}
+	}
+	return X5CAttestationVerifier{}, false
 }
 
 // ResolveAttestationKey implements AttestationVerifier.

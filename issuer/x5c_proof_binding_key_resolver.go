@@ -47,7 +47,9 @@ type X5CProofBindingKeyResolver struct {
 	// certrevocation.ErrRevoked, and one whose revocation couldn't be
 	// decided (certrevocation.ErrNoCurrentCRL, say) is answered with a
 	// server error rather than invalid_proof, as for
-	// X5CAttestationVerifier.Revocation. nil checks no revocation; see
+	// X5CAttestationVerifier.Revocation. nil checks no revocation,
+	// which AssuranceProduction refuses: there, pass certrevocation.CRLs,
+	// your own Checker, or certrevocation.NoCheck{} to decline. See
 	// certrevocation.
 	Revocation certrevocation.Checker
 }
@@ -77,17 +79,40 @@ func (r X5CProofBindingKeyResolver) ResolveProofBindingKey(ctx context.Context, 
 // value or by pointer, whose Revocation reports itself incomplete, so
 // New refuses it rather than every proof afterwards.
 func validateProofBindingKeys(r ProofBindingKeyResolver) error {
-	var revocation certrevocation.Checker
+	x5c, _ := asX5CProofBindingKeyResolver(r)
+	if err := certchain.ValidateRevocation(x5c.Revocation); err != nil {
+		return fmt.Errorf("proof_binding_keys: Revocation: %w", err)
+	}
+	return nil
+}
+
+// asX5CProofBindingKeyResolver is r as an X5CProofBindingKeyResolver,
+// by value or by non-nil pointer, if it is one.
+func asX5CProofBindingKeyResolver(r ProofBindingKeyResolver) (X5CProofBindingKeyResolver, bool) {
 	switch t := r.(type) {
 	case X5CProofBindingKeyResolver:
-		revocation = t.Revocation
+		return t, true
 	case *X5CProofBindingKeyResolver:
 		if t != nil {
-			revocation = t.Revocation
+			return *t, true
 		}
 	}
-	if err := certchain.ValidateRevocation(revocation); err != nil {
-		return fmt.Errorf("proof_binding_keys: Revocation: %w", err)
+	return X5CProofBindingKeyResolver{}, false
+}
+
+// checkProductionX5CRevocation refuses, under AssuranceProduction, an
+// X5CAttestationVerifier or X5CProofBindingKeyResolver whose Revocation
+// is nil: a certificate whose key was stolen would be accepted until it
+// expires. Declining is certrevocation.NoCheck{}, a visible choice, as
+// verifier's X5C resolvers and fapigo/server's X5CAttesterChain
+// require.
+func checkProductionX5CRevocation(deps Dependencies) error {
+	const choices = "pass certrevocation.CRLs{...} (a certrevocation.Refresher's Checker), your own certrevocation.Checker, or certrevocation.NoCheck{} to decline"
+	if v, ok := asX5CAttestationVerifier(deps.AttestationVerifier); ok && v.Revocation == nil {
+		return fmt.Errorf("dependencies.attestation_verifier: X5CAttestationVerifier.Revocation is required under AssuranceProduction: %s", choices)
+	}
+	if r, ok := asX5CProofBindingKeyResolver(deps.ProofBindingKeys); ok && r.Revocation == nil {
+		return fmt.Errorf("dependencies.proof_binding_keys: X5CProofBindingKeyResolver.Revocation is required under AssuranceProduction: %s", choices)
 	}
 	return nil
 }
