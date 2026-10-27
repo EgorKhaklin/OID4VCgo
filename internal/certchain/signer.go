@@ -2,8 +2,12 @@ package certchain
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/x509"
 	"errors"
+	"fmt"
 )
 
 // SignerChainDERs checks chain starts with signer's certificate and is
@@ -27,6 +31,24 @@ func SignerChainDERs(signer crypto.Signer, chain []*x509.Certificate) ([][]byte,
 		ders[i] = c.Raw
 	}
 	return ders, nil
+}
+
+// SignerKeyIsEdDSA reports whether a token signer's key, pub, signs
+// with EdDSA (Ed25519) rather than ES256 (ECDSA on P-256), the two algs
+// this module verifies tokens with; any other key is an error, with no
+// package prefix.
+func SignerKeyIsEdDSA(pub crypto.PublicKey) (bool, error) {
+	switch k := pub.(type) {
+	case *ecdsa.PublicKey:
+		if k.Curve != elliptic.P256() {
+			return false, fmt.Errorf("an ECDSA key on %s, but only P-256 (ES256) is supported", k.Curve.Params().Name)
+		}
+		return false, nil
+	case ed25519.PublicKey:
+		return true, nil
+	default:
+		return false, fmt.Errorf("unsupported key type %T", pub)
+	}
 }
 
 // BothPolicies is a leaf policy passing only what first and second
