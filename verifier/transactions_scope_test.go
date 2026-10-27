@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"strings"
 	"testing"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -169,5 +170,98 @@ func TestTransactions_UnscopedTransaction(t *testing.T) {
 	}
 	if _, err := f.txs.HandleResponse(ctx, f.answer(begun, nil)); err != nil {
 		t.Errorf("its own Transactions: %v", err)
+	}
+}
+
+// ownerDroppingStore is a TransactionStore that doesn't persist Owner.
+type ownerDroppingStore struct{ verifier.TransactionStore }
+
+func (s ownerDroppingStore) Create(ctx context.Context, tx verifier.Transaction) error {
+	tx.Owner = ""
+	return s.TransactionStore.Create(ctx, tx)
+}
+
+// forgetfulStore is a TransactionStore whose Get finds nothing.
+type forgetfulStore struct{ verifier.TransactionStore }
+
+func (forgetfulStore) Get(context.Context, string) (verifier.Transaction, error) {
+	return verifier.Transaction{}, verifier.ErrTransactionUnknown
+}
+
+// A store that drops Owner would make every derived scope read the
+// others' transactions: Begin and BeginDCAPI refuse it, every time,
+// naming the store.
+func TestTransactions_StoreDroppingOwner(t *testing.T) {
+	ctx := context.Background()
+	f := newTxFixture(t, nil)
+	cfg := verifier.TransactionsConfig{RequestURIBase: txBase, Verify: f.verify}
+	txs, err := verifier.NewTransactions(f.v, ownerDroppingStore{f.store}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const binding = "browser-binding-0123456789"
+	for i := range 2 {
+		if _, err := txs.Begin(ctx, f.query, binding, false); err == nil || !strings.Contains(err.Error(), "Owner") || !strings.Contains(err.Error(), "ownerDroppingStore") {
+			t.Errorf("Begin %d: %v, want the store refused for dropping Owner", i, err)
+		}
+		if _, err := txs.BeginDCAPI(ctx, f.query, binding, dcapiOrigin); err == nil || !strings.Contains(err.Error(), "Owner") {
+			t.Errorf("BeginDCAPI %d: %v, want the store refused for dropping Owner", i, err)
+		}
+	}
+
+	// A store that can't read back what it created is refused too.
+	forgetful, err := verifier.NewTransactions(f.v, forgetfulStore{f.store}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := forgetful.Begin(ctx, f.query, binding, false); !errors.Is(err, verifier.ErrTransactionUnknown) {
+		t.Errorf("Begin with a store that can't read back: %v, want its error", err)
+	}
+
+	// A store that keeps Owner is checked once, then trusted.
+	for range 2 {
+		if _, err := f.txs.Begin(ctx, f.query, binding, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.txs.BeginDCAPI(ctx, f.query, binding, dcapiOrigin); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Under AssuranceProduction, a transaction without an Owner is no
+// Transactions' at all, the derived scope's included.
+func TestTransactions_UnscopedTransactionProduction(t *testing.T) {
+	ctx := context.Background()
+	f := newTxFixture(t, nil)
+	cfg, deps := validConfig(t)
+	caIssuedClientCert(t, &cfg, &deps)
+	cfg.Assurance = verifier.AssuranceProduction
+	prod, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify := f.verify
+	verify.AnyIssuerForAnyType = true
+	txs, err := verifier.NewTransactions(prod, assuredTransactionStore{f.store}, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: verify, NoStatusCheck: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const binding = "browser-binding-0123456789"
+	begun, err := txs.Begin(ctx, f.query, binding, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := txs.Lookup(ctx, begun.ID, binding); err != nil {
+		t.Fatalf("its own transaction: %v", err)
+	}
+	if err := f.store.Update(ctx, begun.ID, func(tx *verifier.Transaction) error {
+		tx.Owner = ""
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := txs.Lookup(ctx, begun.ID, binding); !errors.Is(err, verifier.ErrTransactionUnknown) {
+		t.Errorf("an unscoped transaction under AssuranceProduction: %v, want ErrTransactionUnknown", err)
 	}
 }

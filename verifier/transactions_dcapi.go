@@ -92,8 +92,8 @@ func (t *Transactions) BeginDCAPI(ctx context.Context, query dcql.Query, browser
 	tx.ExpiresAt, tx.RetainUntil = t.expiry()
 	sum := sha256.Sum256([]byte(browserBinding))
 	tx.BrowserBindingHash = sum[:]
-	if err := t.store.Create(ctx, tx); err != nil {
-		return BegunDCAPI{}, fmt.Errorf("verifier: transactions: store: %w", err)
+	if err := t.create(ctx, tx); err != nil {
+		return BegunDCAPI{}, err
 	}
 	return BegunDCAPI{ID: id, Request: DCAPIRequest{Protocol: DCAPIProtocolSigned, Data: DCAPIRequestData{Request: built.RequestObject}}}, nil
 }
