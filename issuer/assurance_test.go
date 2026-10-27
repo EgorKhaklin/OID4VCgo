@@ -10,6 +10,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
@@ -145,8 +146,8 @@ func TestNewRejectsInadequateKeySourcesUnderProduction(t *testing.T) {
 // fake — satisfy KeySourceAssurance.
 func TestNewAcceptsAdequateKeySourcesUnderProduction(t *testing.T) {
 	cfg, deps := productionAssuredConfigAndDeps(t)
-	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool()}
-	deps.ProofBindingKeys = issuer.X5CProofBindingKeyResolver{Roots: x509.NewCertPool()}
+	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
+	deps.ProofBindingKeys = issuer.X5CProofBindingKeyResolver{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	cfg.NoAttestationStatusCheck = true
 
 	if _, err := issuer.New(cfg, deps); err != nil {
@@ -417,7 +418,7 @@ func preAuthorizedCodeProductionConfig(t *testing.T) (issuer.Config, issuer.Depe
 func productionIssuer(t *testing.T) (issuer.Config, issuer.Dependencies) {
 	t.Helper()
 	cfg, deps := productionAssuredConfigAndDeps(t)
-	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool()}
+	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	cfg.NoAttestationStatusCheck = true
 	return cfg, deps
 }
@@ -465,12 +466,54 @@ func TestNewProductionRequiresHTTPS(t *testing.T) {
 // it deliberately doesn't.
 func TestNewProductionRequiresAttestationStatus(t *testing.T) {
 	cfg, deps := productionAssuredConfigAndDeps(t)
-	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool()}
+	deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "attestation_status") {
 		t.Fatalf("New without an attestation status check = %v, want an attestation_status error", err)
 	}
 	cfg.NoAttestationStatusCheck = true
 	if _, err := issuer.New(cfg, deps); err != nil {
 		t.Errorf("New with no_attestation_status_check: %v", err)
+	}
+}
+
+// TestNewProductionRequiresX5CRevocation: a production issuer's
+// X5CAttestationVerifier and X5CProofBindingKeyResolver, by value or
+// by pointer, say how they check certificate revocation, if only by
+// declining with certrevocation.NoCheck{}.
+func TestNewProductionRequiresX5CRevocation(t *testing.T) {
+	roots := x509.NewCertPool()
+	for name, tc := range map[string]struct {
+		set  func(deps *issuer.Dependencies, revocation certrevocation.Checker)
+		want string
+	}{
+		"attestation verifier": {func(deps *issuer.Dependencies, revocation certrevocation.Checker) {
+			deps.AttestationVerifier = issuer.X5CAttestationVerifier{Roots: roots, Revocation: revocation}
+		}, "X5CAttestationVerifier.Revocation"},
+		"attestation verifier, by pointer": {func(deps *issuer.Dependencies, revocation certrevocation.Checker) {
+			deps.AttestationVerifier = &issuer.X5CAttestationVerifier{Roots: roots, Revocation: revocation}
+		}, "X5CAttestationVerifier.Revocation"},
+		"proof binding keys": {func(deps *issuer.Dependencies, revocation certrevocation.Checker) {
+			deps.ProofBindingKeys = issuer.X5CProofBindingKeyResolver{Roots: roots, Revocation: revocation}
+		}, "X5CProofBindingKeyResolver.Revocation"},
+		"proof binding keys, by pointer": {func(deps *issuer.Dependencies, revocation certrevocation.Checker) {
+			deps.ProofBindingKeys = &issuer.X5CProofBindingKeyResolver{Roots: roots, Revocation: revocation}
+		}, "X5CProofBindingKeyResolver.Revocation"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, deps := productionIssuer(t)
+			tc.set(&deps, nil)
+			if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "NoCheck") {
+				t.Fatalf("New with a nil Revocation = %v, want %s required", err, tc.want)
+			}
+			tc.set(&deps, certrevocation.NoCheck{})
+			if _, err := issuer.New(cfg, deps); err != nil {
+				t.Errorf("New with certrevocation.NoCheck{}: %v", err)
+			}
+			cfg.Assurance = issuer.AssuranceDevelopment
+			tc.set(&deps, nil)
+			if _, err := issuer.New(cfg, deps); err != nil {
+				t.Errorf("New under AssuranceDevelopment with a nil Revocation: %v", err)
+			}
+		})
 	}
 }

@@ -450,6 +450,27 @@ func TestRefresher_Redirects(t *testing.T) {
 	}
 }
 
+// A redirect may move a fetch from http up to https, never from https
+// down to http, even on the same host.
+func TestRefresher_RefusesHTTPSToHTTPRedirect(t *testing.T) {
+	p := newPKI(t)
+	hits := 0
+	var plain string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		hits++
+		http.Redirect(w, req, plain, http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	plain = "http://" + strings.TrimPrefix(srv.URL, "https://") + "/plain.crl"
+	r := newRefresher(t, certrevocation.RefresherConfig{URLs: []string{srv.URL + "/ca.crl"}, Issuers: []*x509.Certificate{p.inter}, HTTPClient: srv.Client()})
+	if err := r.Refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "from https to http") {
+		t.Errorf("Refresh = %v, want the downgrade refused", err)
+	}
+	if hits != 1 {
+		t.Errorf("the server was asked %d times, want once (the downgraded request never sent)", hits)
+	}
+}
+
 func TestRefresher_DefaultClientRefusesLoopback(t *testing.T) {
 	p := newPKI(t)
 	srv := newCRLServer(t)
@@ -513,6 +534,67 @@ func TestRefresher_ConcurrentLists(t *testing.T) {
 		}
 	})
 	wg.Wait()
+}
+
+// OnAccept calls from concurrent passes never overlap and come in the
+// order the lists were accepted: while one pass is still handing over
+// an older list, another pass that fetched a newer one waits, rather
+// than handing over the newer one first, which an embedder persisting
+// the last list received would then overwrite with the older.
+func TestRefresher_OnAcceptInAcceptanceOrder(t *testing.T) {
+	p := newPKI(t)
+	srv := newCRLServer(t)
+	older, newer := numbered(t, p.inter, p.interKey, 1, -time.Hour), numbered(t, p.inter, p.interKey, 2, -30*time.Minute)
+	srv.serveCRL("/ca.crl", older)
+
+	var mu sync.Mutex
+	var received []int64
+	active := 0
+	enteredOlder, enteredNewer, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	r := newRefresher(t, certrevocation.RefresherConfig{
+		URLs: []string{srv.URL + "/ca.crl"}, Issuers: []*x509.Certificate{p.inter},
+		OnAccept: func(_ string, list *x509.RevocationList) {
+			mu.Lock()
+			active++
+			if active > 1 {
+				t.Error("OnAccept calls overlap")
+			}
+			mu.Unlock()
+			if list.Number.Int64() == 1 {
+				close(enteredOlder)
+				<-release
+			} else {
+				close(enteredNewer)
+			}
+			mu.Lock()
+			active--
+			received = append(received, list.Number.Int64())
+			mu.Unlock()
+		},
+	})
+
+	var wg sync.WaitGroup
+	firstDone := make(chan error, 1)
+	wg.Go(func() { firstDone <- r.Refresh(context.Background()) })
+	select {
+	case <-enteredOlder:
+	case err := <-firstDone:
+		t.Fatalf("the first pass ended without handing over the older list: %v", err)
+	}
+	srv.serveCRL("/ca.crl", newer)
+	wg.Go(func() { _ = r.Refresh(context.Background()) })
+	// The second pass mustn't reach OnAccept while the first is in it;
+	// give it the time it would take to if it could.
+	select {
+	case <-enteredNewer:
+		t.Error("OnAccept was handed the newer list while the older one's call was still running")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	wg.Wait()
+	if len(received) != 2 || received[0] != 1 || received[1] != 2 {
+		t.Errorf("OnAccept received CRL numbers %v, want [1 2]", received)
+	}
 }
 
 // TestRefresher_Run checks Run's loop with its waits recorded instead

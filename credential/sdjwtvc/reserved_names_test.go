@@ -52,6 +52,9 @@ func TestIssue_RefusesReservedNamesInStatusAndCNF(t *testing.T) {
 	for name, claims := range map[string]Claims{
 		"status": {VCT: "urn:x", Status: map[string]any{"status_list": map[string]any{"_sd": []any{"x"}}}},
 		"cnf":    {VCT: "urn:x", CNF: map[string]any{"jwk": json.RawMessage(`{"...":"x"}`)}},
+		// Inside an array, at any depth.
+		"status, in an array": {VCT: "urn:x", Status: map[string]any{"lists": []any{"a", map[string]any{"_sd_alg": "sha-256"}}}},
+		"cnf, nested arrays":  {VCT: "urn:x", CNF: map[string]any{"keys": []any{[]any{map[string]any{"...": "x"}}}}},
 	} {
 		if _, _, err := Issue(testKey(t), jose.ES256, claims, IssueOptions{}); err == nil || !strings.Contains(err.Error(), "is reserved") {
 			t.Errorf("%s: Issue = %v, want it refused", name, err)

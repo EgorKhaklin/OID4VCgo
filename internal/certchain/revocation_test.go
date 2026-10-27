@@ -149,3 +149,27 @@ func TestVerifyTrustedChainsAt_PinnedLeaf(t *testing.T) {
 		})
 	}
 }
+
+// When no path passes, the error says the chain is revoked only if
+// every path was refused as revoked: with one path revoked and the
+// other undecided (no CRL from its root), it's undecided, since that
+// path may pass once its CRL is available, and doesn't wrap ErrRevoked.
+func TestNotRevokedChains_RevokedOnlyWhenEveryPathIs(t *testing.T) {
+	c := newCrossCertified(t)
+	leafCRL := testcert.CRL(t, c.interA, c.interKey)
+	revokedA := testcert.CRL(t, c.rootA, c.rootAKey, c.interA.SerialNumber)
+	revokedB := testcert.CRL(t, c.rootB, c.rootBKey, c.interB.SerialNumber)
+	ctx := context.Background()
+
+	_, _, err := VerifyTrustedChainsAt(ctx, c.ders, c.roots, nil, crls(leafCRL, revokedA), time.Time{})
+	if !errors.Is(err, ErrRevocationUndecided) || !errors.Is(err, certrevocation.ErrNoCurrentCRL) || errors.Is(err, certrevocation.ErrRevoked) {
+		t.Errorf("one path revoked, the other undecided: %v, want ErrRevocationUndecided and ErrNoCurrentCRL, not ErrRevoked", err)
+	}
+	_, _, err = VerifyTrustedChainsAt(ctx, c.ders, c.roots, nil, crls(leafCRL, revokedA, revokedB), time.Time{})
+	if !errors.Is(err, certrevocation.ErrRevoked) || errors.Is(err, ErrRevocationUndecided) {
+		t.Errorf("every path revoked: %v, want ErrRevoked alone", err)
+	}
+	if _, err := NotRevokedChains(ctx, nil, crls(), time.Time{}); err == nil || errors.Is(err, certrevocation.ErrRevoked) || errors.Is(err, ErrRevocationUndecided) {
+		t.Errorf("no paths: %v, want a plain error", err)
+	}
+}

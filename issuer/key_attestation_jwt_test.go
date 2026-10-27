@@ -19,16 +19,23 @@ import (
 // unless noExp.
 func keyAttestationForJWT(t *testing.T, signer *ecdsa.PrivateKey, nonce string, noExp bool, keys ...crypto.PublicKey) string {
 	t.Helper()
+	return keyAttestationWith(t, signer, attestation.Header{}, nonce, noExp, nil, keys...)
+}
+
+// keyAttestationWith is keyAttestationForJWT with header, and asserting
+// keyStorage.
+func keyAttestationWith(t *testing.T, signer *ecdsa.PrivateKey, header attestation.Header, nonce string, noExp bool, keyStorage []attestation.AttackPotentialResistance, keys ...crypto.PublicKey) string {
+	t.Helper()
 	raws := make([]json.RawMessage, len(keys))
 	for i, pub := range keys {
 		raws[i] = jwkJSON(t, pub)
 	}
-	claims := attestation.Claims{IssuedAt: time.Now().Unix(), AttestedKeys: raws, Nonce: nonce}
+	claims := attestation.Claims{IssuedAt: time.Now().Unix(), AttestedKeys: raws, Nonce: nonce, KeyStorage: keyStorage}
 	if !noExp {
 		exp := time.Now().Add(time.Hour).Unix()
 		claims.ExpiresAt = &exp
 	}
-	compact, err := attestation.Issue(signer, jose.ES256, attestation.Header{}, claims)
+	compact, err := attestation.Issue(signer, jose.ES256, header, claims)
 	if err != nil {
 		t.Fatal(err)
 	}

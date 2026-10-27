@@ -55,7 +55,10 @@ const (
 	// carries no equivalent "did I fetch this key over the network"
 	// question, so SDJWTSigner.Signer/MdocSigner.Signer aren't gated
 	// this way — there's nothing this package could meaningfully ask a
-	// bare crypto.Signer to self-declare).
+	// bare crypto.Signer to self-declare). An X5CAttestationVerifier or
+	// X5CProofBindingKeyResolver must also set Revocation, to
+	// certrevocation.NoCheck{} to decline checking certificate
+	// revocation.
 	//
 	// Also requires Dependencies.Audit to be configured — the same
 	// requirement FAPIgo's own server.AssuranceProduction places on
@@ -232,6 +235,9 @@ func checkProductionAssurance(cfg Config, deps Dependencies) error {
 		if err := checkKeySourceAssurance("proof_binding_keys", deps.ProofBindingKeys); err != nil {
 			return err
 		}
+	}
+	if err := checkProductionX5CRevocation(deps); err != nil {
+		return err
 	}
 	if deps.Audit == nil {
 		return fmt.Errorf("dependencies.audit is required under AssuranceProduction")

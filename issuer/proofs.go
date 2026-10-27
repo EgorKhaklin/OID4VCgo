@@ -5,13 +5,15 @@ import (
 	"context"
 	"crypto"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"slices"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
@@ -135,8 +137,8 @@ func (iss *Issuer) resolveKeyAttestationHeader(
 	if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
 		return nil, err
 	}
-	if err := iss.checkAttestationStatus(ctx, signed); err != nil {
-		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: key_attestation status", i), err)
+	if err := iss.requestAttestationStatus(ctx, signed, fmt.Sprintf("proof %d", i)); err != nil {
+		return nil, err
 	}
 	return appendAttestedKeys(nil, verified, compact, i, iss.maxBatchSize())
 }
@@ -202,6 +204,11 @@ func (iss *Issuer) verifyJWTProof(ctx context.Context, auth AuthorizedRequest, r
 		return nil, nil, "", newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d alg %q is not supported", i, algStr), nil)
 	}
 	pub, alg, jwkRaw, err := iss.resolveProofBindingKey(ctx, header)
+	if err != nil && trustUndecided(err) {
+		// As for a key attestation's signer (verifyOneAttestation): the
+		// certificate's revocation couldn't be decided, a server error.
+		return nil, nil, "", fmt.Errorf("issuer: proof %d: its key's trust can't be decided now: %w", i, err)
+	}
 	if err != nil {
 		// The resolver's own error — certificate subjects, a DID
 		// method's upstream message — stays the cause, not the Wallet's
@@ -420,8 +427,8 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 		if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
 			return nil, err
 		}
-		if err := iss.checkAttestationStatus(ctx, signed); err != nil {
-			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: status", i), err)
+		if err := iss.requestAttestationStatus(ctx, signed, fmt.Sprintf("attestation %d", i)); err != nil {
+			return nil, err
 		}
 		keys, err = appendAttestedKeys(keys, verified, raw, i, maxKeys)
 		if err != nil {
@@ -452,6 +459,11 @@ func (iss *Issuer) verifyOneAttestation(ctx context.Context, raw string, i int, 
 	}
 	pub, alg, err := iss.deps.AttestationVerifier.ResolveAttestationKey(certchain.WithTime(ctx, iss.deps.Clock.Now()), parsed)
 	if err != nil {
+		if trustUndecided(err) {
+			// Not the Wallet's fault, nor a verdict on its keys: a
+			// server error, which it retries, rather than invalid_proof.
+			return VerifiedKeyAttestation{}, fmt.Errorf("issuer: attestation %d: its signer's trust can't be decided now: %w", i, err)
+		}
 		return VerifiedKeyAttestation{}, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: resolve trust key", i), err)
 	}
 	if !slices.Contains(algs, string(alg)) {
@@ -521,6 +533,39 @@ func (iss *Issuer) checkAttestationStatus(ctx context.Context, verified Verified
 		return nil
 	}
 	return iss.deps.AttestationStatus.CheckAttestationStatus(ctx, verified)
+}
+
+// requestAttestationStatus is checkAttestationStatus for a Credential
+// Request's key attestation, what naming it in errors: invalid_proof
+// for one the checker refuses (ErrKeyAttestationRevoked), and a server
+// error for a status it couldn't determine, so the Wallet retries
+// rather than giving up keys that may well be valid — the split
+// fapigo/server makes for a Wallet Attestation's status.
+func (iss *Issuer) requestAttestationStatus(ctx context.Context, verified VerifiedKeyAttestation, what string) error {
+	err := iss.checkAttestationStatus(ctx, verified)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ErrKeyAttestationRevoked):
+		return newError(ErrorInvalidProof, 400, what+": key_attestation status", err)
+	default:
+		return fmt.Errorf("issuer: %s: key attestation status can't be checked now: %w", what, err)
+	}
+}
+
+// trustUndecided reports whether err, from Dependencies.AttestationVerifier,
+// says a key attestation's signer couldn't be judged now, rather than
+// that it isn't trusted: a revocation check that couldn't decide
+// (certrevocation.ErrNoCurrentCRL, or any error but
+// certrevocation.ErrRevoked from an X5CAttestationVerifier's
+// Revocation) or a context that ended. A revoked certificate, an
+// untrusted chain or anything else is a refusal.
+func trustUndecided(err error) bool {
+	if errors.Is(err, certrevocation.ErrRevoked) {
+		return false
+	}
+	return errors.Is(err, certchain.ErrRevocationUndecided) || errors.Is(err, certrevocation.ErrNoCurrentCRL) ||
+		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // consumeNonce consumes nonce via NonceStore and checks it hasn't

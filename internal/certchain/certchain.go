@@ -144,14 +144,24 @@ func VerifyTrustedChainsAt(ctx context.Context, ders [][]byte, roots *x509.CertP
 	return leaf, good, nil
 }
 
+// ErrRevocationUndecided is wrapped by NotRevokedChains's error when no
+// path passes and at least one was refused because its revocation
+// couldn't be decided (an error not wrapping certrevocation.ErrRevoked,
+// certrevocation.ErrNoCurrentCRL say) rather than for a revoked
+// certificate: once the revocation information is available again,
+// that path may pass.
+var ErrRevocationUndecided = errors.New("certchain: revocation couldn't be decided")
+
 // NotRevokedChains is chains narrowed to those revocation passes, each
 // checked on its own at now (the current time when zero). Through a CA
 // certified twice, one path may run through an intermediate that's
 // been revoked beside another that hasn't; the leaf is on every path,
-// so a revoked leaf leaves none. When none passes, the error wraps the
-// last path's, so errors.Is finds certrevocation.ErrRevoked or
-// certrevocation.ErrNoCurrentCRL through it. A nil revocation passes
-// every path.
+// so a revoked leaf leaves none. When none passes, the error wraps
+// certrevocation.ErrRevoked, with the last path's error, only when
+// every path was refused as revoked; otherwise it wraps
+// ErrRevocationUndecided and the last undecided path's error, so
+// errors.Is finds certrevocation.ErrNoCurrentCRL, say, through it. A
+// nil revocation passes every path.
 func NotRevokedChains(ctx context.Context, chains [][]*x509.Certificate, revocation certrevocation.Checker, now time.Time) ([][]*x509.Certificate, error) {
 	if revocation == nil {
 		return chains, nil
@@ -160,16 +170,28 @@ func NotRevokedChains(ctx context.Context, chains [][]*x509.Certificate, revocat
 		now = time.Now()
 	}
 	good := make([][]*x509.Certificate, 0, len(chains))
-	lastErr := errors.New("no verified path")
+	var revoked, undecided error
 	for _, chain := range chains {
-		if lastErr = revocation.CheckRevocation(ctx, certrevocation.Check{Chain: chain, Now: now}); lastErr == nil {
+		err := revocation.CheckRevocation(ctx, certrevocation.Check{Chain: chain, Now: now})
+		switch {
+		case err == nil:
 			good = append(good, chain)
+		case errors.Is(err, certrevocation.ErrRevoked):
+			revoked = err
+		default:
+			undecided = err
 		}
 	}
-	if len(good) == 0 {
-		return nil, fmt.Errorf("certchain: revocation: no verified path passes it: %w", lastErr)
+	switch {
+	case len(good) != 0:
+		return good, nil
+	case undecided != nil:
+		return nil, fmt.Errorf("certchain: revocation: no verified path passes it: %w: %w", ErrRevocationUndecided, undecided)
+	case revoked != nil:
+		return nil, fmt.Errorf("certchain: revocation: no verified path passes it: %w", revoked)
+	default:
+		return nil, errors.New("certchain: revocation: no verified path")
 	}
-	return good, nil
 }
 
 // ValidateRevocation reports a revocation Checker that says it can't

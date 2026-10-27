@@ -39,11 +39,16 @@ type Deferral struct {
 var ErrDeferredKeyAttestation = errors.New("issuer: a key attestation behind the deferred transaction is no longer valid")
 
 // ErrDeferredAttestationStatusUnknown is returned, wrapped with the
-// reason, by IssueDeferredCredential when Dependencies.AttestationStatus
-// couldn't tell a key attestation's status: its error didn't wrap
+// reason, by IssueDeferredCredential when a key attestation's validity
+// couldn't be decided now, and none is known to be invalid:
+// Dependencies.AttestationStatus returned an error that didn't wrap
 // ErrKeyAttestationRevoked (a Status List that couldn't be fetched,
-// say). The transaction stays pending, so it can be issued once the
-// status can be checked again, or denied with DenyDeferredCredential.
+// say), or Dependencies.AttestationVerifier one saying the signer's
+// certificate revocation couldn't be decided (see AttestationVerifier).
+// The transaction stays pending, so it can be issued once the status
+// can be checked again, or denied with DenyDeferredCredential. Until
+// then it waits at most Limits.DeferredTransactionLifetime, when it
+// expires, or the attestation's exp, after which a re-check denies it.
 var ErrDeferredAttestationStatusUnknown = errors.New("issuer: a key attestation behind the deferred transaction has a status that can't be checked now")
 
 // ErrDeferredTransactionResolved is returned by IssueDeferredCredential
@@ -116,11 +121,13 @@ type DeferredIssuance struct {
 // The key attestations the transaction's request carried
 // (DeferredTransactionRecord.KeyAttestations) are verified again first,
 // as of now: one that has expired, been revoked
-// (ErrKeyAttestationRevoked) or is no longer trusted denies the
+// (ErrKeyAttestationRevoked, or certrevocation.ErrRevoked for its
+// signer's certificate) or is no longer trusted denies the
 // transaction, and IssueDeferredCredential returns
-// ErrDeferredKeyAttestation, wrapped with the reason. One whose status
-// can't be checked now leaves it pending, with
-// ErrDeferredAttestationStatusUnknown. A key attestation's exp is when
+// ErrDeferredKeyAttestation, wrapped with the reason. Every one is
+// checked: only when none is invalid does one whose status, or whose
+// signer's revocation, can't be checked now leave the transaction
+// pending, with ErrDeferredAttestationStatusUnknown. A key attestation's exp is when
 // its keys expire too (Appendix D.1), so a Wallet Provider's must
 // outlast the time a deferred transaction waits for its decision.
 //
@@ -222,6 +229,11 @@ func (iss *Issuer) denyPending(ctx context.Context, transactionID string) (strin
 // (checkAttestationStatus). The request-time checks of freshness
 // (nonce, iat) and of the proofs themselves aren't repeated: they were
 // met when the transaction was created.
+//
+// Every attestation is checked, so one no longer valid denies the
+// transaction even after another whose status, or signer's trust,
+// can't be decided now (trustUndecided), which alone wraps
+// ErrDeferredAttestationStatusUnknown.
 func (iss *Issuer) recheckKeyAttestations(ctx context.Context, cc CredentialConfiguration, record DeferredTransactionRecord) error {
 	if len(record.KeyAttestations) == 0 {
 		return nil
@@ -234,19 +246,21 @@ func (iss *Issuer) recheckKeyAttestations(ctx context.Context, cc CredentialConf
 		algs = append(algs, ptc.ProofSigningAlgValuesSupported...)
 	}
 	now := iss.deps.Clock.Now()
+	var unknown error
 	for i, compact := range record.KeyAttestations {
 		verified, err := iss.verifyOneAttestation(ctx, compact, i, now, algs)
-		if err != nil {
+		if err == nil {
+			if err = iss.checkAttestationStatus(ctx, verified); errors.Is(err, ErrKeyAttestationRevoked) {
+				return fmt.Errorf("attestation %d: status: %w", i, err)
+			}
+		} else if !trustUndecided(err) {
 			return err
 		}
-		if err := iss.checkAttestationStatus(ctx, verified); err != nil {
-			if !errors.Is(err, ErrKeyAttestationRevoked) {
-				return fmt.Errorf("%w: attestation %d: %w", ErrDeferredAttestationStatusUnknown, i, err)
-			}
-			return fmt.Errorf("attestation %d: status: %w", i, err)
+		if err != nil && unknown == nil {
+			unknown = fmt.Errorf("%w: attestation %d: %w", ErrDeferredAttestationStatusUnknown, i, err)
 		}
 	}
-	return nil
+	return unknown
 }
 
 // abandonDeferral denies a pending transaction whose Credential

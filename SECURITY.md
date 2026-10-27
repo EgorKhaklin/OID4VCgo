@@ -82,7 +82,9 @@ CRLs for some roles and not others:
   passes it on from the `statuslist.Checker` it's given);
 - a key attestation's or jwt proof's certificate, at the issuer
   (`issuer.X5CAttestationVerifier.Revocation`,
-  `issuer.X5CProofBindingKeyResolver.Revocation`).
+  `issuer.X5CProofBindingKeyResolver.Revocation`), which
+  `issuer.AssuranceProduction` requires, as `certrevocation.NoCheck{}`
+  to decline.
 
 The mobile library exposes them as the wallet's and reader's `crls` and
 `revocation` configuration, with `SetCRLs` to replace the lists before

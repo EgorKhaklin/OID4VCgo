@@ -468,6 +468,16 @@ func (s *MdocSigner) validate(assurance AssuranceLevel) error {
 // entirely this issuer's own trust policy for which attestation
 // providers it accepts, the same "resolving trust is the caller's job"
 // split attestation.Verify itself draws.
+//
+// An error refuses the attestation as untrusted (invalid_proof, and a
+// deferred transaction's re-check denies the transaction), unless it
+// says trust couldn't be decided now: it wraps
+// certrevocation.ErrNoCurrentCRL, or context.Canceled or
+// context.DeadlineExceeded, and not certrevocation.ErrRevoked. That
+// is answered with a server error (500) instead, and leaves a deferred
+// transaction pending (ErrDeferredAttestationStatusUnknown).
+// X5CAttestationVerifier reports any error from its Revocation other
+// than certrevocation.ErrRevoked that way.
 type AttestationVerifier interface {
 	ResolveAttestationKey(ctx context.Context, a attestation.KeyAttestation) (crypto.PublicKey, oid4vci.JOSEAlg, error)
 }

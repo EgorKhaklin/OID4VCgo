@@ -5,6 +5,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/issuer/fapiresource"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/storage"
 )
 
@@ -108,4 +111,51 @@ func ExampleIssuer_CredentialHandler() {
 		panic(err)
 	}
 	http.Handle("POST /credential", handler)
+}
+
+// statusListAttestationStatus checks a key attestation's Token Status
+// List reference: lists fetches and verifies the Status List Token,
+// through its hardened statuslist.Fetcher, against the Wallet
+// Providers' trust anchors.
+type statusListAttestationStatus struct {
+	lists statuslist.Checker
+}
+
+func (s statusListAttestationStatus) CheckAttestationStatus(ctx context.Context, a issuer.VerifiedKeyAttestation) error {
+	if a.Claims.Status == nil {
+		// This issuer's policy: every key attestation carries a status.
+		return fmt.Errorf("%w: the key attestation has no status claim", issuer.ErrKeyAttestationRevoked)
+	}
+	ref, err := statuslist.ParseStatusClaim(a.Claims.Status)
+	if err != nil {
+		return fmt.Errorf("%w: %w", issuer.ErrKeyAttestationRevoked, err)
+	}
+	// Only the attestation's own signer, or a certificate naming its
+	// issuer, may sign the list that decides it.
+	lists := s.lists
+	lists.Options.IssuerKey, lists.Options.Issuer = a.SignerKey, a.Claims.Issuer
+	var notValid *statuslist.NotValidError
+	err = lists.RequireValid(ctx, ref, false)
+	if errors.As(err, &notValid) {
+		return fmt.Errorf("%w: %w", issuer.ErrKeyAttestationRevoked, err)
+	}
+	// nil, or a list that couldn't be fetched or verified now: the
+	// Credential Request is then a server error, and a deferred
+	// transaction stays pending.
+	return err
+}
+
+// An AttestationStatusChecker over Token Status Lists: an attestation
+// whose list says it isn't VALID wraps ErrKeyAttestationRevoked, and a
+// list that can't be fetched or verified now is a plain error.
+func ExampleAttestationStatusChecker() {
+	var walletProviderRoots *x509.CertPool // the Wallet Providers' CAs
+	deps := issuer.Dependencies{
+		AttestationStatus: statusListAttestationStatus{lists: statuslist.Checker{
+			Fetcher: statuslist.Fetcher{}, // public addresses only: the uri is the attestation's
+			Roots:   walletProviderRoots,
+		}},
+		// ... the rest of the issuer's dependencies, as in ExampleNew.
+	}
+	_ = deps
 }
