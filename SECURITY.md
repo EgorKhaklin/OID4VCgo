@@ -99,16 +99,24 @@ closing them is up to a party it doesn't control:
   issuer sharing the Authorization Server with another can redeem the
   token it receives at the other, for a credential about the End-User.
   `walletflow.ProfileHAIP` takes only DPoP-bound tokens.
-- **Key attestations sent as the `attestation` proof type, for mdocs.**
-  A key attestation names no audience, and the `c_nonce` it carries
-  comes from an unauthenticated Nonce Endpoint, so the issuer it's sent
-  to could redeem it at another issuer the wallet trusts. walletflow
-  sends it in a jwt proof's `key_attestation` header, where the proof's
-  `aud` names the issuer, wherever the issuer takes jwt proofs, and
-  refuses an SD-JWT VC whose `iss` isn't the offer's (unless
-  `Config.AllowForeignIss`). An mdoc names no issuer, so for an mdoc
-  issuer that takes only the `attestation` proof type, nothing but the
-  wallet's issuer trust stops the relay.
+- **Relayed key attestations.** A key attestation names no audience,
+  and the `c_nonce` it carries comes from an unauthenticated Nonce
+  Endpoint (OpenID4VCI 1.0 Appendix D, §7). An issuer can hand a wallet
+  a `c_nonce` it fetched from another issuer, and redeem the key
+  attestation the wallet returns there as the `attestation` proof type,
+  for a credential about whoever its own access token names, bound to
+  the wallet's keys. That works whether the wallet sent the key
+  attestation as that proof type or in a jwt proof's `key_attestation`
+  header, which carries the same JWT, and against any issuer that takes
+  the `attestation` proof type. Two things limit it:
+  - an `issuer` under production assurance refuses the `attestation`
+    proof type unless `Config.AllowAttestationProofType` takes it, so by
+    default only jwt proofs, whose `aud` names the issuer, are redeemed;
+  - walletflow refuses an SD-JWT VC whose `iss` isn't the offer's
+    (unless `Config.AllowForeignIss`). `issuer` names itself in `iss`
+    when `Prepare` sets none, but SD-JWT VC doesn't require `iss`, and
+    an mdoc names no issuer: for those, nothing on the wallet's side
+    stops the relay but the issuers it trusts.
 - **DCQL integers above 2^53.** A DCQL query decoded from JSON holds its
   numbers as float64, so a `values` filter on an integer larger than
   2^53 in magnitude is rounded: it can match a claim one off it, and

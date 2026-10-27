@@ -161,8 +161,24 @@ type Config struct {
 	PreAuthorizedCodeClientAuthentication PreAuthorizedCodeClientAuthentication
 
 	// Issuer is this Credential Issuer's identifier (§12.2.1) — the
-	// value Metadata's own credential_issuer member echoes.
+	// value Metadata's own credential_issuer member echoes, and an SD-JWT
+	// VC's iss where Prepare sets none.
 	Issuer fapi.URL
+
+	// AllowAttestationProofType lets a Credential Configuration take the
+	// attestation proof type (oid4vci.ProofTypeAttestation, Appendix
+	// F.3) under AssuranceProduction, which otherwise refuses it. A key
+	// attestation names no audience, and its nonce is a c_nonce anyone
+	// can fetch from this issuer's Nonce Endpoint: another issuer the
+	// same Wallets use can fetch one, hand it to a Wallet as its own,
+	// and redeem here the key attestation the Wallet returns, in a jwt
+	// proof's key_attestation header or as this proof type alike, for a
+	// Credential about whoever that issuer's access token names, bound
+	// to the Wallet's keys. A jwt proof names this issuer in its aud,
+	// so taking only jwt proofs, with a key attestation in their
+	// key_attestation header where one is required
+	// (haip.RecommendedJWTKeyAttestationProofType), rules that out.
+	AllowAttestationProofType bool
 
 	// AuthorizationServers are the OAuth 2.0 Authorization Servers
 	// (their issuer identifiers) this Credential Issuer relies on,
@@ -533,11 +549,13 @@ type Dependencies struct {
 	// its IssuerBinding, or any of them can attest in another's name.
 	//
 	// An attestation-type proof is signed by the attester, not by the
-	// keys it attests, and carries no audience: its only freshness and
-	// binding to this issuer is the c_nonce it contains. Without a Nonce
-	// Endpoint there's none, so a key attestation a Wallet sent to one
-	// issuer can be replayed to another until it expires. Under
-	// AssuranceProduction, New therefore requires Config.Endpoints.Nonce
+	// keys it attests, and carries no audience: its only freshness is
+	// the c_nonce it contains, which anyone can fetch, so it isn't bound
+	// to this issuer either (see Config.AllowAttestationProofType).
+	// Without a Nonce Endpoint there's no c_nonce, so a key attestation
+	// a Wallet sent to one issuer can be replayed to another until it
+	// expires. Under AssuranceProduction, New therefore requires
+	// Config.AllowAttestationProofType and Config.Endpoints.Nonce
 	// whenever the attestation proof type is supported.
 	AttestationVerifier AttestationVerifier
 

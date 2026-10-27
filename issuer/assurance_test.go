@@ -86,11 +86,13 @@ func (a assuredAttestationVerifier) Capabilities() issuer.KeySourceCapabilities 
 // added to the SD-JWT VC credential configuration — the fixture the
 // key-source assurance tests below build on, so a failure in any of
 // them is attributable specifically to AttestationVerifier/
-// ProofBindingKeys, not an unrelated store/audit check.
+// ProofBindingKeys, not an unrelated store/audit check. It sets
+// AllowAttestationProofType, which production requires for that entry.
 func productionAssuredConfigAndDeps(t *testing.T) (issuer.Config, issuer.Dependencies) {
 	t.Helper()
 	cfg := validConfig(t)
 	cfg.Assurance = issuer.AssuranceProduction
+	cfg.AllowAttestationProofType = true
 	sdjwtConfig := cfg.CredentialConfigurationsSupported["IdentityCredential"]
 	sdjwtConfig.ProofTypesSupported = map[string]oid4vci.ProofTypeConfiguration{
 		oid4vci.ProofTypeJWT:         {ProofSigningAlgValuesSupported: []string{"ES256"}},
@@ -256,10 +258,31 @@ func TestNewRejectsPreAuthorizedCodeStoresUnderProduction(t *testing.T) {
 	}
 }
 
+// TestNewProductionRefusesAttestationProofType: a key attestation names
+// no audience, so a production issuer takes the attestation proof type
+// only with AllowAttestationProofType.
+func TestNewProductionRefusesAttestationProofType(t *testing.T) {
+	cfg, deps := productionIssuer(t)
+	cfg.AllowAttestationProofType = false
+	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "allow_attestation_proof_type") {
+		t.Fatalf("New without AllowAttestationProofType = %v, want the attestation proof type refused", err)
+	}
+	cfg.AllowAttestationProofType = true
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New with AllowAttestationProofType: %v", err)
+	}
+	cfg.AllowAttestationProofType = false
+	sdjwtConfig := cfg.CredentialConfigurationsSupported["IdentityCredential"]
+	delete(sdjwtConfig.ProofTypesSupported, oid4vci.ProofTypeAttestation)
+	cfg.CredentialConfigurationsSupported["IdentityCredential"] = sdjwtConfig
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New with jwt proofs only: %v", err)
+	}
+}
+
 // TestNewRequiresNonceEndpointForAttestationProofsUnderProduction: an
-// attestation-type proof's only freshness and binding to this issuer is
-// its c_nonce, so a production issuer supporting it must run a Nonce
-// Endpoint.
+// attestation-type proof's only freshness is its c_nonce, so a
+// production issuer supporting it must run a Nonce Endpoint.
 func TestNewRequiresNonceEndpointForAttestationProofsUnderProduction(t *testing.T) {
 	cfg, deps := productionAssuredConfigAndDeps(t)
 	cfg.NoAttestationStatusCheck = true
