@@ -11,9 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -47,8 +49,16 @@ type VerifyParams struct {
 	// issuer chains (a verifier.MdocIssuerChainResolver, as
 	// verifier.X5ChainIssuerKeyResolver is); IssuerAuthorized or
 	// AnyIssuerForAnyType must decide which issuers may issue the
-	// doctype; and Accept or NoStatusCheck must decide revocation.
+	// doctype; Accept or NoStatusCheck must decide revocation; Origins
+	// must be set, with Pending.Origin https; and IssuerKeys' roots
+	// mustn't be the system root pool.
 	Assurance verifier.AssuranceLevel
+	// Origins are the origins of the Verifier's own pages: a response
+	// to a request built for any other (Pending.Origin) is refused, so
+	// one built from an origin taken from the request can't be
+	// answered. REQUIRED under verifier.AssuranceProduction; under
+	// verifier.AssuranceDevelopment, empty allows any.
+	Origins []string
 	// IssuerAuthorized, if set, decides whether the verified document's
 	// issuer may issue its doctype, as
 	// verifier.VerifyResponseRequest.IssuerAuthorized does; an error
@@ -133,6 +143,9 @@ func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 	if err := checkAssurance(p); err != nil {
 		return Verified{}, err
 	}
+	if err := checkPendingOrigin(p); err != nil {
+		return Verified{}, err
+	}
 	if p.MaxClockSkew < 0 || p.MaxClockSkew > verifier.MaxAllowedClockSkew {
 		return Verified{}, fmt.Errorf("mdocdcapi: MaxClockSkew %s is outside 0..%s", p.MaxClockSkew, verifier.MaxAllowedClockSkew)
 	}
@@ -186,13 +199,68 @@ func checkAssurance(p VerifyParams) error {
 		// don't run, and status can't be bound to the document's issuer.
 		return errors.New("mdocdcapi: under AssuranceProduction, IssuerKeys must verify issuer chains (verifier.MdocIssuerChainResolver, or Unwrap to one)")
 	}
+	if anchoredBySystemPool(p.IssuerKeys) {
+		return errors.New("mdocdcapi: under AssuranceProduction, IssuerKeys' Roots or RootsByDocType holds the system root pool: it anchors every public CA's certificates; trust the IACAs")
+	}
 	if p.IssuerAuthorized == nil && !p.AnyIssuerForAnyType {
 		return errors.New("mdocdcapi: under AssuranceProduction, set IssuerAuthorized (which issuers may issue which doctypes) or AnyIssuerForAnyType: without either, any trusted issuer is accepted for any doctype")
 	}
 	if p.Accept == nil && !p.NoStatusCheck {
 		return errors.New("mdocdcapi: under AssuranceProduction, set Accept (verifier.RequireValidStatus checks revocation) or NoStatusCheck: without either, a revoked document is accepted")
 	}
+	if len(p.Origins) == 0 {
+		return errors.New("mdocdcapi: under AssuranceProduction, set Origins: the origins of the pages that make Digital Credentials API requests")
+	}
 	return nil
+}
+
+// checkPendingOrigin refuses a Pending.Origin that isn't one of
+// p.Origins, when they're set, and an http one outside
+// verifier.AssuranceDevelopment: browsers offer the Digital Credentials
+// API to secure contexts only, and an http page's is no secure binding.
+func checkPendingOrigin(p VerifyParams) error {
+	origin := p.Pending.Origin
+	if err := checkOrigin(origin); err != nil {
+		return err
+	}
+	if len(p.Origins) > 0 && !slices.Contains(p.Origins, origin) {
+		return fmt.Errorf("mdocdcapi: the request's origin %q isn't one of Origins", origin)
+	}
+	if p.Assurance != verifier.AssuranceDevelopment && !strings.HasPrefix(origin, "https://") {
+		return fmt.Errorf("mdocdcapi: origin %q must be https outside AssuranceDevelopment", origin)
+	}
+	return nil
+}
+
+// anchoredBySystemPool reports whether resolver is, or wraps, a
+// verifier.X5ChainIssuerKeyResolver with a system root pool as a trust
+// anchor set (certchain.IsSystemPool).
+func anchoredBySystemPool(resolver verifier.MdocIssuerKeyResolver) bool {
+	for range 16 {
+		var r *verifier.X5ChainIssuerKeyResolver
+		switch v := resolver.(type) {
+		case verifier.X5ChainIssuerKeyResolver:
+			r = &v
+		case *verifier.X5ChainIssuerKeyResolver:
+			r = v
+		}
+		if r != nil {
+			if certchain.IsSystemPool(r.Roots) {
+				return true
+			}
+			for _, roots := range r.RootsByDocType {
+				if certchain.IsSystemPool(roots) {
+					return true
+				}
+			}
+		}
+		wrapper, ok := resolver.(verifier.MdocIssuerKeyResolverWrapper)
+		if !ok {
+			return false
+		}
+		resolver = wrapper.Unwrap()
+	}
+	return false
 }
 
 // verifiesChains reports whether resolver is a

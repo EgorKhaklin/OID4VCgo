@@ -30,6 +30,9 @@ func TestVerifiedCredential_StatusListRef(t *testing.T) {
 			want: statuslist.StatusListRef{Idx: 7, URI: uri}, wantOK: true,
 		},
 		"sd-jwt without status": {vc: verifier.VerifiedCredential{Claims: map[string]any{"vct": "x"}}},
+		// A status that can't be read isn't "no status".
+		"sd-jwt status not an object": {vc: verifier.VerifiedCredential{Claims: map[string]any{"status": uri + "#5"}}, wantErr: true},
+		"sd-jwt null status":          {vc: verifier.VerifiedCredential{Claims: map[string]any{"status": nil}}, wantErr: true},
 		"sd-jwt malformed status": {
 			vc:      verifier.VerifiedCredential{Claims: map[string]any{"status": map[string]any{"status_list": "nope"}}},
 			wantErr: true,
@@ -83,9 +86,15 @@ func TestRequireValidStatus(t *testing.T) {
 	accept := verifier.RequireValidStatus(statuslist.Checker{
 		Fetcher: statuslist.Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots,
 	})
+	// Issued with the status list signer's key, which binds the list to it.
 	withStatus := func(idx float64, u string) verifier.VerifiedCredential {
-		return verifier.VerifiedCredential{Claims: map[string]any{"status": map[string]any{"status_list": map[string]any{"idx": idx, "uri": u}}}}
+		return verifier.VerifiedCredential{
+			Claims:      map[string]any{"status": map[string]any{"status_list": map[string]any{"idx": idx, "uri": u}}},
+			IssuerChain: [][]byte{leaf.Raw},
+		}
 	}
+	unbound := withStatus(0, uri)
+	unbound.IssuerChain = nil
 	ctx := context.Background()
 	cases := map[string]struct {
 		creds   []verifier.VerifiedCredential
@@ -98,6 +107,9 @@ func TestRequireValidStatus(t *testing.T) {
 		"unreadable":           {creds: []verifier.VerifiedCredential{withStatus(0, srv.URL+"/statuslists/2")}, refused: true},
 		"malformed reference":  {creds: []verifier.VerifiedCredential{{Claims: map[string]any{"status": map[string]any{"status_list": "nope"}}}}, refused: true},
 		"mdoc identifier list": {creds: []verifier.VerifiedCredential{{MdocStatus: &mdoc.Status{IdentifierList: &mdoc.IdentifierListRef{URI: uri}}}}, refused: true},
+		"status not an object": {creds: []verifier.VerifiedCredential{{Claims: map[string]any{"status": uri + "#0"}}}, refused: true},
+		// Nothing ties its list's signer to its issuer.
+		"no issuer to bind to": {creds: []verifier.VerifiedCredential{unbound}, refused: true},
 	}
 	for name, tc := range cases {
 		err := accept(ctx, "id", verifier.VerifyResponseResult{Credentials: tc.creds})
@@ -108,6 +120,13 @@ func TestRequireValidStatus(t *testing.T) {
 	var notValid *statuslist.NotValidError
 	if err := accept(ctx, "id", verifier.VerifyResponseResult{Credentials: []verifier.VerifiedCredential{withStatus(1, uri)}}); !errors.As(err, &notValid) || notValid.Status != statuslist.StatusInvalid {
 		t.Errorf("revoked: %v, want a NotValidError", err)
+	}
+	// Unless a StatusIssuerPolicy decides who may sign it.
+	anySigner := verifier.RequireValidStatusFrom(statuslist.Checker{
+		Fetcher: statuslist.Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots,
+	}, verifier.AnyStatusListSigner)
+	if err := anySigner(ctx, "id", verifier.VerifyResponseResult{Credentials: []verifier.VerifiedCredential{unbound}}); err != nil {
+		t.Errorf("no issuer to bind to, with AnyStatusListSigner: %v", err)
 	}
 }
 

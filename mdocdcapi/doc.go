@@ -36,7 +36,10 @@
 //
 // The origin is the Verifier's own, from its configuration: never one
 // the page reports, since the session transcript must be the one the
-// browser gave the mdoc.
+// browser gave the mdoc. VerifyParams.Origins lists the Verifier's
+// pages, and a response to a request built for any other is refused;
+// under verifier.AssuranceProduction they're required, and the origin
+// must be https.
 //
 // # Wallet
 //

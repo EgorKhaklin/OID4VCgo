@@ -56,6 +56,7 @@ func ExampleBuildRequest() {
 	// response; send req.Data to the page as the request's data.
 	req := must(mdocdcapi.BuildRequest(mdocdcapi.RequestParams{
 		Origin:   origin,
+		Origins:  []string{origin}, // the Verifier's own pages
 		DocType:  docType,
 		Elements: map[string]map[string]bool{ns: {"age_over_18": false}}, // false: not retained
 		Readers:  []mdocdcapi.ReaderKey{{Signer: readerKey, Chain: []*x509.Certificate{readerCert, readerCA}}},
@@ -90,6 +91,7 @@ func ExampleBuildRequest() {
 		// Every issuer under the IACA may issue the doctype, and the
 		// example document carries no status reference.
 		Assurance: verifier.AssuranceProduction, AnyIssuerForAnyType: true, NoStatusCheck: true,
+		Origins: []string{origin},
 	}))
 	fmt.Println("docType:", verified.DocType)
 	fmt.Println("age_over_18:", verified.NameSpaces[ns]["age_over_18"])
