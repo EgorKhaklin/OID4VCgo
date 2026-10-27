@@ -44,7 +44,10 @@ type X5CProofBindingKeyResolver struct {
 	// revocation: only a verified path LeafPolicy approves and
 	// Revocation passes is accepted, and a proof under a revoked
 	// certificate is refused with an error wrapping
-	// certrevocation.ErrRevoked. nil checks no revocation; see
+	// certrevocation.ErrRevoked, and one whose revocation couldn't be
+	// decided (certrevocation.ErrNoCurrentCRL, say) is answered with a
+	// server error rather than invalid_proof, as for
+	// X5CAttestationVerifier.Revocation. nil checks no revocation; see
 	// certrevocation.
 	Revocation certrevocation.Checker
 }

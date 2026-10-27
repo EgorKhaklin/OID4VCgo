@@ -34,18 +34,38 @@ import (
 // certificate names that issuer is too — as verifier.RequireValidStatus
 // does for a credential's status list.
 //
-// An error refuses the key attestation. Wrap ErrKeyAttestationRevoked
-// in one that says the attestation is no longer valid (a status other
-// than VALID): a deferred transaction's re-check
-// (IssueDeferredCredential) denies the transaction only for that, and
-// otherwise, a Status List that couldn't be fetched say, leaves it
-// pending to try again.
+// The status list's uri is the Wallet Provider's to choose, and this
+// runs before anything about it is trusted beyond the attestation's
+// signature: fetch it with statuslist.Fetcher (as statuslist.Checker
+// does), which connects only to public addresses, never with a plain
+// http.Client that would let an attestation point the issuer at its
+// own network.
+//
+// An error refuses the key attestation, in one of two ways:
+//   - one wrapping ErrKeyAttestationRevoked says the attestation isn't
+//     valid: a status other than VALID (a *statuslist.NotValidError),
+//     or a status claim the issuer can't accept, such as none where
+//     one is required. A Credential Request is refused with
+//     invalid_proof, and a deferred transaction's re-check
+//     (IssueDeferredCredential) denies the transaction.
+//   - any other says the status couldn't be determined now: a Status
+//     List that couldn't be fetched or verified, say. A Credential
+//     Request is answered with a server error (500), which the Wallet
+//     retries, rather than told its keys are invalid; a deferred
+//     transaction stays pending, until the status can be checked, the
+//     transaction expires (Limits.DeferredTransactionLifetime) or the
+//     attestation's exp passes.
+//
+// A checker that would rather accept an attestation whose status it
+// can't determine (soft-fail) returns nil itself.
 type AttestationStatusChecker interface {
 	CheckAttestationStatus(ctx context.Context, a VerifiedKeyAttestation) error
 }
 
 // ErrKeyAttestationRevoked is what an AttestationStatusChecker wraps
-// for a key attestation whose status says it's no longer valid.
+// for a key attestation whose status says it's no longer valid, or that
+// it refuses for its status claim, as opposed to one whose status it
+// couldn't determine (see AttestationStatusChecker).
 var ErrKeyAttestationRevoked = errors.New("issuer: the key attestation is revoked or suspended")
 
 // VerifiedKeyAttestation is a key attestation whose signature verified,
@@ -143,8 +163,13 @@ type X5CAttestationVerifier struct {
 	// AttestationIssuerBoundToAnchor, can end at the bound anchor), and
 	// an attestation signed under a revoked certificate — a Wallet
 	// Provider's, say, or the CA that certified it — is refused with an
-	// error wrapping certrevocation.ErrRevoked. nil checks no
-	// revocation; see certrevocation.
+	// error wrapping certrevocation.ErrRevoked. When no path passes and
+	// one was refused for revocation that couldn't be decided (any
+	// other error, certrevocation.ErrNoCurrentCRL from a CRL list that
+	// has expired, say), the error says so: the Credential Request gets
+	// a server error rather than invalid_proof, and a deferred
+	// transaction stays pending (see AttestationVerifier). nil checks
+	// no revocation; see certrevocation.
 	Revocation certrevocation.Checker
 
 	// IssuerBinding decides what ties the signing certificate to the

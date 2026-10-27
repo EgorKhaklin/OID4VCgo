@@ -11,7 +11,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
@@ -1573,18 +1576,21 @@ func (f attestationStatusFunc) CheckAttestationStatus(ctx context.Context, c iss
 }
 
 // TestRequestCredential_AttestationStatus: Dependencies.AttestationStatus
-// sees each verified key attestation, and a revoked one fails the proof.
+// sees each verified key attestation; a revoked one fails the proof
+// (invalid_proof), and one whose status couldn't be determined is a
+// server error, not a verdict on the Wallet's keys.
 func TestRequestCredential_AttestationStatus(t *testing.T) {
-	for name, revoked := range map[string]bool{"valid": false, "revoked": true} {
+	for name, statusErr := range map[string]error{
+		"valid":   nil,
+		"revoked": fmt.Errorf("status INVALID: %w", issuer.ErrKeyAttestationRevoked),
+		"unknown": errors.New("status list unreachable"),
+	} {
 		t.Run(name, func(t *testing.T) {
 			var checked []issuer.VerifiedKeyAttestation
 			f := newCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
 				deps.AttestationStatus = attestationStatusFunc(func(_ context.Context, c issuer.VerifiedKeyAttestation) error {
 					checked = append(checked, c)
-					if revoked {
-						return errors.New("revoked")
-					}
-					return nil
+					return statusErr
 				})
 			})
 			key1, key2 := testP256Key(t), testP256Key(t)
@@ -1601,14 +1607,36 @@ func TestRequestCredential_AttestationStatus(t *testing.T) {
 			if !f.attestationSigner.PublicKey.Equal(checked[0].SignerKey) || checked[0].SignerCertificates != nil {
 				t.Errorf("status checker saw signer %v and certificates %v, want the attestation's key and no x5c", checked[0].SignerKey, checked[0].SignerCertificates)
 			}
-			var ierr *issuer.Error
-			switch {
-			case revoked && (!errors.As(err, &ierr) || ierr.Code() != issuer.ErrorInvalidProof):
-				t.Errorf("revoked attestation: err = %v, want invalid_proof", err)
-			case !revoked && err != nil:
-				t.Errorf("valid attestation: %v", err)
-			}
+			assertAttestationStatusOutcome(t, name, err)
 		})
+	}
+}
+
+// assertAttestationStatusOutcome checks a Credential Request's err for
+// a key attestation whose status check had outcome name: "valid" is
+// accepted, "revoked" is invalid_proof, and "unknown" is a server
+// error (not an *issuer.Error, so WriteError answers 500 server_error).
+func assertAttestationStatusOutcome(t *testing.T, name string, err error) {
+	t.Helper()
+	var ierr *issuer.Error
+	switch name {
+	case "valid":
+		if err != nil {
+			t.Errorf("valid attestation: %v", err)
+		}
+	case "revoked":
+		if !errors.As(err, &ierr) || ierr.Code() != issuer.ErrorInvalidProof {
+			t.Errorf("revoked attestation: err = %v, want invalid_proof", err)
+		}
+	default:
+		if err == nil || errors.As(err, &ierr) {
+			t.Fatalf("status unknown: err = %v, want a server error", err)
+		}
+		rec := httptest.NewRecorder()
+		issuer.WriteError(rec, err)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("status unknown: WriteError answered %d, want 500", rec.Code)
+		}
 	}
 }
 
