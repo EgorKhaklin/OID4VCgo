@@ -93,6 +93,22 @@ func (keyOnlyResolver) Capabilities() verifier.KeySourceCapabilities {
 	return verifier.KeySourceCapabilities{LiveFetchHardened: true}
 }
 
+// wrappingResolver is keyOnlyResolver unwrapping to the resolver it
+// delegates to, as a caching or logging layer would.
+type wrappingResolver struct{ keyOnlyResolver }
+
+func (w wrappingResolver) Unwrap() verifier.MdocIssuerKeyResolver { return w.inner }
+
+// systemPool is a copy of the system root pool, skipping without one.
+func systemPool(t *testing.T) *x509.CertPool {
+	t.Helper()
+	system, err := x509.SystemCertPool()
+	if err != nil {
+		t.Skipf("no system root pool: %v", err)
+	}
+	return system
+}
+
 // VerifyResponse needs an Assurance, and under AssuranceProduction the
 // decisions verifier.VerifyResponse needs there: an issuer key source
 // that verifies chains, which issuers may issue the doctype, and
@@ -120,12 +136,27 @@ func TestVerifyResponse_ProductionDecisions(t *testing.T) {
 		}, ""},
 		"the system root pool": {func(p *mdocdcapi.VerifyParams) {
 			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
-			system, err := x509.SystemCertPool()
-			if err != nil {
-				t.Skipf("no system root pool: %v", err)
-			}
-			p.IssuerKeys = verifier.X5ChainIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}
+			p.IssuerKeys = verifier.X5ChainIssuerKeyResolver{Roots: systemPool(t), Revocation: certrevocation.NoCheck{}}
 		}, "system root pool"},
+		"the system root pool, by pointer": {func(p *mdocdcapi.VerifyParams) {
+			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
+			p.IssuerKeys = &verifier.X5ChainIssuerKeyResolver{Roots: systemPool(t), Revocation: certrevocation.NoCheck{}}
+		}, "system root pool"},
+		"the system root pool, for a doctype": {func(p *mdocdcapi.VerifyParams) {
+			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
+			roots := p.IssuerKeys.(verifier.X5ChainIssuerKeyResolver).Roots
+			p.IssuerKeys = verifier.X5ChainIssuerKeyResolver{
+				Roots: roots, RootsByDocType: map[string]*x509.CertPool{"org.iso.18013.5.1.mDL": systemPool(t)}, Revocation: certrevocation.NoCheck{},
+			}
+		}, "system root pool"},
+		"the system root pool, wrapped": {func(p *mdocdcapi.VerifyParams) {
+			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
+			p.IssuerKeys = wrappingResolver{keyOnlyResolver{inner: verifier.X5ChainIssuerKeyResolver{Roots: systemPool(t), Revocation: certrevocation.NoCheck{}}}}
+		}, "system root pool"},
+		"a wrapped resolver": {func(p *mdocdcapi.VerifyParams) {
+			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
+			p.IssuerKeys = wrappingResolver{keyOnlyResolver{inner: p.IssuerKeys.(verifier.X5ChainIssuerKeyResolver)}}
+		}, ""},
 		"no origins": {func(p *mdocdcapi.VerifyParams) {
 			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck, p.Origins = verifier.AssuranceProduction, true, true, nil
 		}, "set Origins"},

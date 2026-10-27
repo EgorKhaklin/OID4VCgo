@@ -51,7 +51,9 @@ type VerifyParams struct {
 	// AnyIssuerForAnyType must decide which issuers may issue the
 	// doctype; Accept or NoStatusCheck must decide revocation; Origins
 	// must be set, with Pending.Origin https; and IssuerKeys' roots
-	// mustn't be the system root pool.
+	// mustn't be the system root pool (one built from it by adding
+	// certificates is detected on Linux and the other Unix systems,
+	// not on macOS or Windows: see verifier.AssuranceProduction).
 	Assurance verifier.AssuranceLevel
 	// Origins are the origins of the Verifier's own pages, each
 	// normalized as RequestParams.Origin is: a response to a request

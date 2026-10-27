@@ -41,7 +41,11 @@ const (
 	//   - there too, an X5CIssuerKeyResolver or X5ChainIssuerKeyResolver
 	//     whose Roots (or a RootsByDocType entry) is the system root pool
 	//     (x509.SystemCertPool), which would accept any public CA's
-	//     certificate as an issuer's.
+	//     certificate as an issuer's. On Linux and the other Unix
+	//     systems a pool built from it by adding certificates is refused
+	//     too; on macOS and Windows, where the system pool defers to the
+	//     platform verifier, only an unmodified copy is detected, so
+	//     build issuer roots from the issuers' own CAs, not from it.
 	//
 	// Declaring capabilities is not optional under this level: a
 	// resolver that doesn't implement KeySourceAssurance at all is

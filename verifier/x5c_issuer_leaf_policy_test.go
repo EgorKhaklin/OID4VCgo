@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -122,6 +123,17 @@ func TestX5CIssuerKeyResolver_DefaultLeafPolicyIntermediates(t *testing.T) {
 
 // Under AssuranceProduction, issuer roots that are the system root
 // pool, which anchors every public CA's certificates, are refused.
+// systemPoolHoldsCertificates reports whether the system root pool is a
+// set of certificates (Linux and the other Unix systems), not deferred
+// to the platform verifier (macOS, Windows).
+func systemPoolHoldsCertificates() bool {
+	switch runtime.GOOS {
+	case "darwin", "ios", "windows":
+		return false
+	}
+	return true
+}
+
 func TestNewTransactions_RefusesSystemPoolIssuerRoots(t *testing.T) {
 	system, err := x509.SystemCertPool()
 	if err != nil {
@@ -135,12 +147,26 @@ func TestNewTransactions_RefusesSystemPoolIssuerRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := assuredTransactionStore{nil}
-	for name, verify := range map[string]verifier.VerifyResponseRequest{
-		"issuer_keys":                     {IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}},
-		"issuer_keys (pointer)":           {IssuerKeys: &verifier.X5CIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}},
-		"mdoc_issuer_keys":                {MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}},
-		"mdoc_issuer_keys RootsByDocType": {MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{RootsByDocType: map[string]*x509.CertPool{"org.iso.18013.5.1.mDL": system}, Revocation: certrevocation.NoCheck{}}},
-	} {
+	cases := map[string]verifier.VerifyResponseRequest{
+		"issuer_keys":                      {IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}},
+		"issuer_keys (pointer)":            {IssuerKeys: &verifier.X5CIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}},
+		"mdoc_issuer_keys":                 {MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}},
+		"mdoc_issuer_keys (pointer)":       {MdocIssuerKeys: &verifier.X5ChainIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}},
+		"mdoc_issuer_keys (wrapped)":       {MdocIssuerKeys: wrappingResolver{verifier.X5ChainIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}}},
+		"mdoc_issuer_keys RootsByDocType":  {MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{RootsByDocType: map[string]*x509.CertPool{"org.iso.18013.5.1.mDL": system}, Revocation: certrevocation.NoCheck{}}},
+		"mdoc_issuer_keys (twice wrapped)": {MdocIssuerKeys: wrappingResolver{wrappingResolver{&verifier.X5ChainIssuerKeyResolver{RootsByDocType: map[string]*x509.CertPool{"org.iso.18013.5.1.mDL": system}, Revocation: certrevocation.NoCheck{}}}}},
+	}
+	if systemPoolHoldsCertificates() {
+		// The system pool with a private CA added: the usual way to
+		// trust one on top of the Web PKI, which it still anchors.
+		// Detected only where the system pool is a set of certificates.
+		extended := system.Clone()
+		extraCA, _ := testcert.CA(t, "private CA")
+		extended.AddCert(extraCA)
+		cases["issuer_keys (system plus a CA)"] = verifier.VerifyResponseRequest{IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: extended, Revocation: certrevocation.NoCheck{}}}
+		cases["mdoc_issuer_keys (system plus a CA)"] = verifier.VerifyResponseRequest{MdocIssuerKeys: &verifier.X5ChainIssuerKeyResolver{Roots: extended, Revocation: certrevocation.NoCheck{}}}
+	}
+	for name, verify := range cases {
 		verify.AnyIssuerForAnyType = true
 		_, err := verifier.NewTransactions(prod, store, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: verify, NoStatusCheck: true})
 		if err == nil || !strings.Contains(err.Error(), "system root pool") {

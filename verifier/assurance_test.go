@@ -3,6 +3,7 @@ package verifier_test
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/x509"
 	"strings"
 	"testing"
@@ -113,6 +114,30 @@ func (r declaringSDJWTVCIssuerKeyResolver) Capabilities() verifier.KeySourceCapa
 	return verifier.KeySourceCapabilities{LiveFetchHardened: r.hardened}
 }
 
+// hardenedKeyOnlyResolver is a keyOnlyResolver, verifying no chain,
+// that declares LiveFetchHardened.
+type hardenedKeyOnlyResolver struct{ keyOnlyResolver }
+
+func (hardenedKeyOnlyResolver) Capabilities() verifier.KeySourceCapabilities {
+	return verifier.KeySourceCapabilities{LiveFetchHardened: true}
+}
+
+// wrappingResolver wraps another MdocIssuerKeyResolver, as a caching or
+// logging layer would: it declares LiveFetchHardened and Unwraps to it.
+type wrappingResolver struct {
+	inner verifier.MdocIssuerKeyResolver
+}
+
+func (w wrappingResolver) ResolveMdocIssuerKey(ctx context.Context, x5chain [][]byte, docType string) (crypto.PublicKey, oid4vci.COSEAlg, error) {
+	return w.inner.ResolveMdocIssuerKey(ctx, x5chain, docType)
+}
+
+func (wrappingResolver) Capabilities() verifier.KeySourceCapabilities {
+	return verifier.KeySourceCapabilities{LiveFetchHardened: true}
+}
+
+func (w wrappingResolver) Unwrap() verifier.MdocIssuerKeyResolver { return w.inner }
+
 func TestVerifyResponseKeySourceAssurance(t *testing.T) {
 	roots := x509.NewCertPool()
 	cases := []struct {
@@ -142,6 +167,20 @@ func TestVerifyResponseKeySourceAssurance(t *testing.T) {
 		{
 			name: "production, X5ChainIssuerKeyResolver", assurance: verifier.AssuranceProduction,
 			req: verifier.VerifyResponseRequest{MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}},
+		},
+		{
+			name: "production, undeclared mdoc_issuer_keys", assurance: verifier.AssuranceProduction,
+			req:        verifier.VerifyResponseRequest{MdocIssuerKeys: keyOnlyResolver{verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}}},
+			wantReject: "mdoc_issuer_keys must implement verifier.KeySourceAssurance",
+		},
+		{
+			name: "production, mdoc_issuer_keys verifying no chain", assurance: verifier.AssuranceProduction,
+			req:        verifier.VerifyResponseRequest{MdocIssuerKeys: hardenedKeyOnlyResolver{keyOnlyResolver{verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}}}},
+			wantReject: "mdoc_issuer_keys must verify issuer chains",
+		},
+		{
+			name: "production, a wrapped X5ChainIssuerKeyResolver", assurance: verifier.AssuranceProduction,
+			req: verifier.VerifyResponseRequest{MdocIssuerKeys: wrappingResolver{verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}}},
 		},
 		{
 			name: "development, undeclared issuer_keys", assurance: verifier.AssuranceDevelopment,
