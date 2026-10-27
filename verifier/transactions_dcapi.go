@@ -81,7 +81,7 @@ func (t *Transactions) BeginDCAPI(ctx context.Context, query dcql.Query, browser
 	// endpoint.
 	tx := Transaction{
 		ID: id, Nonce: built.Nonce, Query: query, ResponseDecryptionKey: built.ResponseDecryptionKey,
-		Origin: origin, Status: TransactionPending,
+		Origin: origin, Status: TransactionPending, Owner: t.owner,
 	}
 	tx.ExpiresAt, tx.RetainUntil = t.expiry()
 	sum := sha256.Sum256([]byte(browserBinding))
@@ -128,7 +128,7 @@ func checkPageOrigin(origin string, assurance AssuranceLevel) error {
 // binding is refused with ErrWrongBrowser and leaves the request as it
 // was.
 func (t *Transactions) HandleDCAPIResponse(ctx context.Context, id, browserBinding string, data []byte) (TransactionView, error) {
-	tx, err := t.store.Get(ctx, id)
+	tx, err := t.get(ctx, id)
 	if err != nil {
 		return TransactionView{}, storeFault(err)
 	}
@@ -147,7 +147,7 @@ func (t *Transactions) HandleDCAPIResponse(ctx context.Context, id, browserBindi
 		return TransactionView{}, err
 	}
 	var view TransactionView
-	err = t.store.Update(ctx, id, func(cur *Transaction) error {
+	err = t.update(ctx, id, func(cur *Transaction) error {
 		if err := t.checkPending(*cur); err != nil {
 			return err
 		}

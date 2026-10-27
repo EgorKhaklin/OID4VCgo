@@ -37,6 +37,11 @@ type txFixture struct {
 	query dcql.Query
 	held  wallet.HeldCredential
 	now   time.Time
+
+	// vcfg and vdeps built v; verify is the Transactions' Verify.
+	vcfg   verifier.Config
+	vdeps  verifier.Dependencies
+	verify verifier.VerifyResponseRequest
 }
 
 func newTxFixture(t *testing.T, tweak func(*verifier.TransactionsConfig)) *txFixture {
@@ -62,8 +67,9 @@ func newTxFixture(t *testing.T, tweak func(*verifier.TransactionsConfig)) *txFix
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
 
+	vcfg, vdeps, v := newTestVerifierWithConfig(t)
 	f := &txFixture{
-		t: t, v: newTestVerifier(t), now: time.Now(),
+		t: t, v: v, vcfg: vcfg, vdeps: vdeps, now: time.Now(),
 		query: dcql.Query{Credentials: []dcql.CredentialQuery{{
 			ID: "cred", Format: sdjwtvc.CredentialFormat, Meta: meta,
 			Claims: []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("given_name")}}},
@@ -80,6 +86,7 @@ func newTxFixture(t *testing.T, tweak func(*verifier.TransactionsConfig)) *txFix
 	if tweak != nil {
 		tweak(&cfg)
 	}
+	f.verify = cfg.Verify
 	f.store = storage.NewVerifierTransactionStore()
 	if f.txs, err = verifier.NewTransactions(f.v, f.store, cfg); err != nil {
 		t.Fatalf("NewTransactions: %v", err)

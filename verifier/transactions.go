@@ -66,6 +66,11 @@ type Transaction struct {
 	// expected_origins entry. "" for a redirect-flow request.
 	Origin string
 
+	// Owner identifies the Transactions that created the transaction
+	// (TransactionsConfig.Scope): only a Transactions with the same
+	// owner reads it. "" for one saved before it was set.
+	Owner string
+
 	// BrowserBindingHash is SHA-256 of the browser binding Begin was
 	// given; nil for an unbound request.
 	BrowserBindingHash []byte
@@ -113,6 +118,12 @@ type Transaction struct {
 // transaction complete at most once, and a response_code be redeemed
 // at most once. Lookups by KeyID and ResponseCodeHash must reflect the
 // latest saved Transaction.
+//
+// One store may be shared by several Transactions — instances of one
+// deployment, or the use cases of one relying party: each reads only
+// the transactions it created (TransactionsConfig.Scope), so none can
+// complete another's request under its own verification and policy. A
+// store must persist each Transaction's Owner for that to hold.
 //
 // A completed transaction's Result holds the claims the holder
 // disclosed. Transactions never reports it past ExpiresAt plus
@@ -229,6 +240,24 @@ type TransactionsConfig struct {
 	// (RequireValidStatus, or one of the Verifier's own) or this: a
 	// Verifier that simply forgot Accept would take revoked credentials.
 	NoStatusCheck bool
+
+	// Scope names this Transactions among those sharing its
+	// TransactionStore: each transaction records the scope that
+	// created it, and a Transactions reads only its own — an answer
+	// routed to, a result looked up for, a request closed in another
+	// scope is ErrTransactionUnknown — so one never completes another's
+	// request under its own Verify and Accept.
+	//
+	// "" derives the scope from the Verifier's client_id, its
+	// response_uri and RequestURIBase, which tells apart instances that
+	// differ in any of them. Set it, unique to each policy, where
+	// instances sharing a store have all three in common but verify or
+	// accept differently; instances of one deployment, alike, share it.
+	//
+	// A transaction saved before scopes were recorded has none: a
+	// Transactions with the derived scope reads it, as before, and one
+	// with an explicit Scope doesn't.
+	Scope string
 }
 
 // Transactions tracks presentation requests from creation to a verified
@@ -254,6 +283,12 @@ type Transactions struct {
 	v     *Verifier
 	store TransactionStore
 	cfg   TransactionsConfig
+
+	// owner is what this Transactions' transactions record as their
+	// Owner; derived is whether it's the derived scope, which also
+	// reads a transaction with none.
+	owner   string
+	derived bool
 }
 
 // NewTransactions builds Transactions for v, keeping state in store.
@@ -288,7 +323,55 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 			return nil, err
 		}
 	}
-	return &Transactions{v: v, store: store, cfg: cfg}, nil
+	t := &Transactions{v: v, store: store, cfg: cfg}
+	t.owner, t.derived = ownerScope(v, cfg)
+	return t, nil
+}
+
+// ownerScope is the Owner the transactions Transactions for v and cfg
+// create record, and whether it's derived (TransactionsConfig.Scope).
+func ownerScope(v *Verifier, cfg TransactionsConfig) (owner string, derived bool) {
+	if cfg.Scope != "" {
+		return "scope:" + cfg.Scope, false
+	}
+	h := sha256.New()
+	for _, part := range []string{v.ClientID(), v.cfg.ResponseURI.String(), cfg.RequestURIBase} {
+		// Length-prefixed, so no two triples hash alike.
+		_, _ = fmt.Fprintf(h, "%d:%s", len(part), part) // a hash.Hash never fails to write
+	}
+	return "derived:" + base64.RawURLEncoding.EncodeToString(h.Sum(nil)), true
+}
+
+// owns reports whether tx is this Transactions' to read.
+func (t *Transactions) owns(tx Transaction) bool {
+	if tx.Owner == "" {
+		return t.derived
+	}
+	return subtle.ConstantTimeCompare([]byte(tx.Owner), []byte(t.owner)) == 1
+}
+
+// get is the store's transaction id, ErrTransactionUnknown when it's
+// another scope's: whether it exists there isn't this one's to tell.
+func (t *Transactions) get(ctx context.Context, id string) (Transaction, error) {
+	tx, err := t.store.Get(ctx, id)
+	if err != nil {
+		return Transaction{}, err
+	}
+	if !t.owns(tx) {
+		return Transaction{}, ErrTransactionUnknown
+	}
+	return tx, nil
+}
+
+// update is the store's Update of the transaction id, refused with
+// ErrTransactionUnknown when it's another scope's.
+func (t *Transactions) update(ctx context.Context, id string, fn func(*Transaction) error) error {
+	return t.store.Update(ctx, id, func(cur *Transaction) error {
+		if !t.owns(*cur) {
+			return ErrTransactionUnknown
+		}
+		return fn(cur)
+	})
 }
 
 // checkTransactionsVerify refuses, in TransactionsConfig.Verify, the
@@ -406,7 +489,7 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 	tx := Transaction{
 		ID: id, KeyID: built.ResponseEncryptionKeyID, State: state, Nonce: built.Nonce, Query: query,
 		ResponseDecryptionKey: built.ResponseDecryptionKey, RequestObject: built.RequestObject,
-		SameDevice: sameDevice, Status: TransactionPending,
+		SameDevice: sameDevice, Status: TransactionPending, Owner: t.owner,
 	}
 	tx.ExpiresAt, tx.RetainUntil = t.expiry()
 	sum := sha256.Sum256([]byte(browserBinding))
@@ -427,7 +510,7 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 // stopped answering would tell them the holder had presented. An answer
 // a Wallet sends to a request that's no longer pending is refused.
 func (t *Transactions) RequestObject(ctx context.Context, id string) (string, error) {
-	tx, err := t.store.Get(ctx, id)
+	tx, err := t.get(ctx, id)
 	if err != nil {
 		return "", err
 	}
@@ -488,7 +571,7 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 	if err != nil {
 		return Answered{}, storeFault(err)
 	}
-	tx, err := t.store.Get(ctx, id)
+	tx, err := t.get(ctx, id)
 	if err != nil {
 		return Answered{}, storeFault(err)
 	}
@@ -519,7 +602,7 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 			return Answered{}, &serverFault{err}
 		}
 	}
-	err = t.store.Update(ctx, id, func(cur *Transaction) error {
+	err = t.update(ctx, id, func(cur *Transaction) error {
 		if err := t.checkPending(*cur); err != nil {
 			return err
 		}
@@ -632,7 +715,7 @@ func (t *Transactions) HandleUnencryptedError(ctx context.Context, code, state s
 	if !ok || id == "" {
 		return Answered{}
 	}
-	tx, err := t.store.Get(ctx, id)
+	tx, err := t.get(ctx, id)
 	if err != nil || tx.Origin != "" || subtle.ConstantTimeCompare([]byte(state), []byte(tx.State)) != 1 {
 		return Answered{}
 	}
@@ -650,7 +733,7 @@ func (t *Transactions) recordFailure(ctx context.Context, id string, cause error
 	if t.cfg.OnRefused != nil {
 		t.cfg.OnRefused(ctx, id, cause)
 	}
-	_ = t.store.Update(ctx, id, func(cur *Transaction) error {
+	_ = t.update(ctx, id, func(cur *Transaction) error {
 		if cur.Status != TransactionPending {
 			return ErrTransactionAnswered
 		}
@@ -742,7 +825,7 @@ func (t *Transactions) Redeem(ctx context.Context, responseCode, browserBinding 
 	}
 	var view TransactionView
 	var wrongBrowser bool
-	err = t.store.Update(ctx, id, func(cur *Transaction) error {
+	err = t.update(ctx, id, func(cur *Transaction) error {
 		switch {
 		case cur.Status != TransactionAwaitingRedirect || cur.ResponseCodeHash == "" ||
 			subtle.ConstantTimeCompare([]byte(cur.ResponseCodeHash), []byte(codeHash)) != 1:
@@ -799,7 +882,7 @@ func (t *Transactions) expiry() (expiresAt, retainUntil time.Time) {
 // before it — and after that as TransactionExpired, without it. Call
 // Forget once the result has been used to drop it sooner.
 func (t *Transactions) Lookup(ctx context.Context, id, browserBinding string) (TransactionView, error) {
-	tx, err := t.store.Get(ctx, id)
+	tx, err := t.get(ctx, id)
 	if err != nil {
 		return TransactionView{}, err
 	}
@@ -823,7 +906,7 @@ func (t *Transactions) Lookup(ctx context.Context, id, browserBinding string) (T
 // the request_uri), so call it only from the Verifier's own logic,
 // never for an id a caller supplies.
 func (t *Transactions) Close(ctx context.Context, id string) error {
-	return t.store.Update(ctx, id, func(cur *Transaction) error {
+	return t.update(ctx, id, func(cur *Transaction) error {
 		if cur.Status == TransactionPending || cur.Status == TransactionAwaitingRedirect {
 			cur.Status, cur.ResponseCodeHash, cur.Result = TransactionClosed, "", nil
 		}
@@ -842,7 +925,7 @@ func (t *Transactions) Close(ctx context.Context, id string) error {
 // one to a closed request. Like Close, it takes no browser binding:
 // call it only from the Verifier's own logic.
 func (t *Transactions) Forget(ctx context.Context, id string) error {
-	return t.store.Update(ctx, id, func(cur *Transaction) error {
+	return t.update(ctx, id, func(cur *Transaction) error {
 		cur.Status, cur.ResponseCodeHash, cur.Result, cur.LastError = TransactionClosed, "", nil, ""
 		return nil
 	})
