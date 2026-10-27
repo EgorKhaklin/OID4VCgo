@@ -78,12 +78,13 @@ type Config struct {
 	// certificates with, so one issued under the same roots for another
 	// role, such as a Verifier's, can't vouch for an issuer.
 	IssuerMetadataLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
-	// IssuerMetadataRevocation, if set, checks the metadata signer's
-	// certificate chain for revocation: signed metadata is used only
-	// through a path that passes it, and one signed by a revoked
-	// certificate is refused with an error wrapping
-	// certrevocation.ErrRevoked. nil checks no revocation; see
-	// certrevocation.
+	// IssuerMetadataRevocation checks the metadata signer's certificate
+	// chain for revocation: signed metadata is used only through a path
+	// that passes it, and one signed by a revoked certificate is refused
+	// with an error wrapping certrevocation.ErrRevoked. Under
+	// AssuranceProduction, New requires it with IssuerMetadataRoots:
+	// certrevocation.NoCheck{} declines. Under AssuranceDevelopment, nil
+	// checks no revocation; see certrevocation.
 	IssuerMetadataRevocation certrevocation.Checker
 
 	// RequireSignedIssuerMetadata refuses Credential Issuer Metadata
@@ -201,7 +202,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err := checkIssuerMetadataConfig(cfg); err != nil {
 		return nil, err
 	}
-	if err := validateVerifierTrust(cfg.VerifierTrust); err != nil {
+	if err := validateVerifierTrust(cfg.Assurance, cfg.VerifierTrust); err != nil {
 		return nil, err
 	}
 
@@ -247,6 +248,9 @@ func checkIssuerMetadataConfig(cfg Config) error {
 	}
 	if cfg.MaxIssuerMetadataAge < 0 {
 		return fmt.Errorf("wallet: config: max_issuer_metadata_age must not be negative")
+	}
+	if cfg.Assurance == AssuranceProduction && cfg.IssuerMetadataRoots != nil && cfg.IssuerMetadataRevocation == nil {
+		return fmt.Errorf("wallet: config: issuer_metadata_revocation is required with issuer_metadata_roots under AssuranceProduction: %s", certchain.RevocationChoices)
 	}
 	if err := certchain.ValidateRevocation(cfg.IssuerMetadataRevocation); err != nil {
 		return fmt.Errorf("wallet: config: issuer_metadata_revocation: %w", err)

@@ -42,7 +42,7 @@ func (attestingProvider) KeyAttestation(context.Context, []*ecdsa.PublicKey, str
 // productionWallet is a production wallet over deps' stores.
 func productionWallet(t *testing.T, deps Dependencies) *Wallet {
 	t.Helper()
-	w, err := New(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool()}, deps)
+	w, err := New(declined(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool()}), deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestProductionAssurance(t *testing.T) {
 		deps := durable
 		change(&deps)
 		// Refused by New, not first when a holder tries to receive one.
-		if _, err := New(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool()}, deps); err == nil || !strings.Contains(err.Error(), name) {
+		if _, err := New(declined(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool()}), deps); err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("without %s: New = %v", name, err)
 		}
 	}
@@ -98,10 +98,10 @@ func TestProductionAssurance(t *testing.T) {
 	// receives only pre-authorized codes.
 	deps := durable
 	deps.Authorizations = NewMemoryAuthorizationStore()
-	if _, err := New(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool()}, deps); err == nil || !strings.Contains(err.Error(), "Durable") {
+	if _, err := New(declined(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool()}), deps); err == nil || !strings.Contains(err.Error(), "Durable") {
 		t.Errorf("an authorization code wallet without a Durable Authorizations: New = %v", err)
 	}
-	w, err = New(Config{ClientID: "wallet", IssuerRoots: x509.NewCertPool()}, deps)
+	w, err = New(declined(Config{ClientID: "wallet", IssuerRoots: x509.NewCertPool()}), deps)
 	if err != nil {
 		t.Fatalf("a pre-authorized code wallet without a Durable Authorizations: New = %v", err)
 	}
@@ -125,7 +125,7 @@ func TestProductionAssurance_RefreshNeedsDurableGrants(t *testing.T) {
 		Keys: durableKeyStore{NewMemoryKeyStore()}, Credentials: NewMemoryCredentialStore(),
 		Provider: attestingProvider{}, Authorizations: durableAuthorizations{NewMemoryAuthorizationStore()},
 	}
-	cfg := Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool(), RequestRefresh: true}
+	cfg := declined(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool(), RequestRefresh: true})
 	if _, err := New(cfg, deps); err == nil || !strings.Contains(err.Error(), "Durable Dependencies.Grants") {
 		t.Errorf("with a memory GrantStore: New = %v", err)
 	}
@@ -200,7 +200,7 @@ func TestNew_RoleSeparation(t *testing.T) {
 		"one pool for mdoc issuers, both narrowed": {Config{MdocIssuerRoots: shared, MdocIssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, true},
 		"a document type's pool and readers":       {Config{IssuerRoots: verifiers, MdocIssuerRootsByDocType: map[string]*x509.CertPool{"a": issuers}, MdocReaderRoots: shared, MdocReaderLeafPolicy: policy}, false},
 	} {
-		_, err := New(tc.cfg, deps)
+		_, err := New(declined(tc.cfg), deps)
 		refused := err != nil && strings.Contains(err.Error(), "may share a trust anchor")
 		if refused == tc.ok {
 			t.Errorf("%s: %v", name, err)
@@ -220,10 +220,10 @@ func TestNew_RoleSeparationSystemPool(t *testing.T) {
 	verifiers := x509.NewCertPool()
 	verifiers.AddCert(verifierCA)
 	policy := func(*x509.Certificate, [][]*x509.Certificate) error { return nil }
-	if _, err := New(Config{IssuerRoots: system, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifiers}}, deps); err == nil || !strings.Contains(err.Error(), "may share a trust anchor") {
+	if _, err := New(declined(Config{IssuerRoots: system, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifiers}}), deps); err == nil || !strings.Contains(err.Error(), "may share a trust anchor") {
 		t.Errorf("system IssuerRoots beside VerifierTrust: %v", err)
 	}
-	if _, err := New(Config{IssuerRoots: system, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifiers, LeafPolicy: policy}}, deps); err != nil {
+	if _, err := New(declined(Config{IssuerRoots: system, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifiers, LeafPolicy: policy}}), deps); err != nil {
 		t.Errorf("system IssuerRoots, both narrowed: %v", err)
 	}
 }
@@ -242,7 +242,7 @@ func TestProductionRedirectURI(t *testing.T) {
 		"http://localhost/cb":       false,
 		"/cb":                       false,
 	} {
-		w, err := New(Config{ClientID: "wallet", RedirectURI: uri, IssuerRoots: x509.NewCertPool()}, deps)
+		w, err := New(declined(Config{ClientID: "wallet", RedirectURI: uri, IssuerRoots: x509.NewCertPool()}), deps)
 		switch {
 		case ok && err != nil:
 			t.Errorf("New(RedirectURI %q) = %v, want it taken", uri, err)

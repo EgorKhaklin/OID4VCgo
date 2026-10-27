@@ -58,18 +58,19 @@
 // verified path from a credential's issuer certificate to a trust
 // anchor: a credential is accepted only through a path no revoked
 // certificate is on. So do issuer.X5CAttestationVerifier and
-// issuer.X5CProofBindingKeyResolver under issuer.AssuranceProduction.
+// issuer.X5CProofBindingKeyResolver under issuer.AssuranceProduction,
+// a wallet.X5CVerifierRoots and wallet.Config.IssuerMetadataRevocation
+// under wallet.AssuranceProduction, and walletflow.Config outside
+// Development: it has one field per role, since CRLs fails closed for a
+// CA it has no list from, and requires each role in use to have one.
 //
 // Every other X.509 trust decision takes an optional Checker beside the
 // roots it applies to, nil checking nothing: a wallet's issuer trust
-// (wallet.VerifyIssuedCredentialParams.IssuerRevocation), a Verifier's
-// certificate (wallet.X5CVerifierRoots.Revocation), signed issuer
-// metadata (wallet.Config.IssuerMetadataRevocation), registrars
+// (wallet.VerifyIssuedCredentialParams.IssuerRevocation), registrars
 // (registration.Registrars), mdoc readers (proximity.ReaderTrust,
 // mdocdcapi.ReaderTrust), a proximity reader's document signers
 // (proximity.WithIssuerRevocation), status list signers
-// (statuslist.VerifyOptions.Revocation), and, outside
-// issuer.AssuranceProduction, key attestations and jwt proofs at the
-// issuer. walletflow.Config has one field
-// per role, since CRLs fails closed for a CA it has no list from.
+// (statuslist.VerifyOptions.Revocation), the same wallet and walletflow
+// settings in development, and, outside issuer.AssuranceProduction, key
+// attestations and jwt proofs at the issuer.
 package certrevocation

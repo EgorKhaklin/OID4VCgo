@@ -30,7 +30,10 @@ const (
 	// It also rejects Config.VerifierTrust set to NoVerifierTrust{},
 	// which skips OID4VP §5.9.3's Verifier trust chain validation, and
 	// a Dependencies.Random other than crypto/rand.Reader (nil means
-	// it).
+	// it). An X5CVerifierRoots VerifierTrust must set Revocation, and
+	// Config.IssuerMetadataRoots needs IssuerMetadataRevocation, each
+	// certrevocation.NoCheck{} to decline checking certificate
+	// revocation.
 	//
 	// Config.Fetch.AllowedPrivateHosts is deliberately not rejected: it
 	// is an explicit, named allow-list for a fixed deployment topology

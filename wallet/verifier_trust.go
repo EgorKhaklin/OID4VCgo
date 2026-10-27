@@ -55,13 +55,15 @@ type X5CVerifierRoots struct {
 	// policy) where Roots also anchor other roles.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
-	// Revocation, if set, checks the Verifier's certificate chain for
+	// Revocation checks the Verifier's certificate chain for
 	// revocation: only a verified path that passes LeafPolicy and
 	// Revocation is accepted, and a revoked certificate is refused with
 	// an error wrapping certrevocation.ErrRevoked. VerifierTrust's
 	// method takes no context, so a certrevocation.CRLs's Lists gets
-	// context.Background(): keep the lists in memory, as CRLs asks. nil
-	// checks no revocation; see certrevocation.
+	// context.Background(): keep the lists in memory, as CRLs asks. As
+	// a Config.VerifierTrust under AssuranceProduction (and walletflow
+	// outside Development), New requires it: certrevocation.NoCheck{}
+	// declines. Otherwise nil checks no revocation; see certrevocation.
 	Revocation certrevocation.Checker
 }
 
@@ -94,16 +96,21 @@ func (v X5CVerifierRoots) VerifyVerifierChain(chain [][]byte) (*x509.Certificate
 // validateVerifierTrust refuses an X5CVerifierRoots, by value or by
 // pointer, whose Revocation reports itself incomplete
 // (certrevocation.CRLs.Validate), so New refuses it rather than every
-// request afterwards.
-func validateVerifierTrust(t VerifierTrust) error {
+// request afterwards, and under AssuranceProduction one with no
+// Revocation, which must be an explicit choice there.
+func validateVerifierTrust(assurance AssuranceLevel, t VerifierTrust) error {
 	var revocation certrevocation.Checker
+	isX5C := false
 	switch v := t.(type) {
 	case X5CVerifierRoots:
-		revocation = v.Revocation
+		revocation, isX5C = v.Revocation, true
 	case *X5CVerifierRoots:
 		if v != nil {
-			revocation = v.Revocation
+			revocation, isX5C = v.Revocation, true
 		}
+	}
+	if isX5C && revocation == nil && assurance == AssuranceProduction {
+		return fmt.Errorf("wallet: config: verifier_trust: X5CVerifierRoots.Revocation is required under AssuranceProduction: %s", certchain.RevocationChoices)
 	}
 	if err := certchain.ValidateRevocation(revocation); err != nil {
 		return fmt.Errorf("wallet: config: verifier_trust: Revocation: %w", err)
