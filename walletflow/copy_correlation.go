@@ -3,6 +3,7 @@ package walletflow
 import (
 	"encoding/base64"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
@@ -14,15 +15,21 @@ import (
 // copyMarks are what a copy shows every Verifier it's presented to,
 // whatever the holder discloses, that should differ between copies:
 // its disclosure digests (an SD-JWT VC's _sd and array element digests,
-// an mdoc's valueDigests), and those of its validity timestamps the
-// issuer didn't round to the day (an SD-JWT VC's iat, nbf and exp, an
-// mdoc's validityInfo signed, validFrom and validUntil), by name. Two
-// copies sharing a digest are the same to a Verifier, and so are two
-// sharing a timestamp to the second: rounded to the day, every
-// credential the issuer issued that day shares it, so it says little.
+// an mdoc's valueDigests), those of its validity timestamps the issuer
+// didn't round to the day (an SD-JWT VC's iat, nbf and exp, an mdoc's
+// validityInfo signed, validFrom, validUntil and expectedUpdate), by
+// name, and an mdoc's identifier list entry (its id at its uri). Two
+// copies sharing a digest or a revocation entry are the same to a
+// Verifier, and so are two sharing a timestamp to the second: rounded
+// to the day, every credential the issuer issued that day shares it,
+// so it says little. A status list entry is compared on the copies'
+// own references (pairCorrelated), not here.
 type copyMarks struct {
 	digests []string
 	times   map[string]int64
+	// entries are the revocation entries the copy names, each as one
+	// string.
+	entries []string
 }
 
 // marksOf is credential's copyMarks, in format: none for a credential
@@ -38,21 +45,19 @@ func marksOf(format, credential string) copyMarks {
 }
 
 // marksShared reports whether two of marks, each a copy's, share a
-// digest or a timestamp: one pass over them all, keyed by what's
-// shared.
+// digest, a revocation entry or a timestamp: one pass over them all,
+// keyed by what's shared.
 func marksShared(marks []copyMarks) bool {
 	type timestamp struct {
 		name string
 		at   int64
 	}
 	digestOf := map[string]int{}
+	entryOf := map[string]int{}
 	timeOf := map[timestamp]int{}
 	for i, m := range marks {
-		for _, d := range m.digests {
-			if j, seen := digestOf[d]; seen && j != i {
-				return true
-			}
-			digestOf[d] = i
+		if sharedWith(digestOf, m.digests, i) || sharedWith(entryOf, m.entries, i) {
+			return true
 		}
 		for name, at := range m.times {
 			if _, seen := timeOf[timestamp{name, at}]; seen {
@@ -60,6 +65,18 @@ func marksShared(marks []copyMarks) bool {
 			}
 			timeOf[timestamp{name, at}] = i
 		}
+	}
+	return false
+}
+
+// sharedWith reports whether one of values, copy i's, is already in
+// seen as another copy's, adding them to seen as copy i's.
+func sharedWith(seen map[string]int, values []string, i int) bool {
+	for _, v := range values {
+		if j, ok := seen[v]; ok && j != i {
+			return true
+		}
+		seen[v] = i
 	}
 	return false
 }
@@ -134,9 +151,10 @@ func dayAligned(v float64) bool {
 	return v == math.Trunc(v) && math.Mod(v, 86400) == 0
 }
 
-// mdocMarks are an mdoc's copyMarks: its MSO's valueDigests, and its
+// mdocMarks are an mdoc's copyMarks: its MSO's valueDigests, its
 // validityInfo timestamps, expectedUpdate among them, not on a UTC day
-// boundary (mdoc.RoundedValidity's, with a lifetime of whole days).
+// boundary (mdoc.RoundedValidity's, with a lifetime of whole days), and
+// its identifier list entry.
 func mdocMarks(credential string) copyMarks {
 	raw, err := base64.RawURLEncoding.DecodeString(credential)
 	if err != nil {
@@ -151,6 +169,12 @@ func mdocMarks(credential string) copyMarks {
 		return copyMarks{}
 	}
 	m := copyMarks{times: map[string]int64{}}
+	if mso.Status != nil && mso.Status.IdentifierList != nil {
+		// The id is binary: length-prefixed, so no id and uri pair reads
+		// as another.
+		list := mso.Status.IdentifierList
+		m.entries = append(m.entries, strconv.Itoa(len(list.ID))+":"+string(list.ID)+list.URI)
+	}
 	for _, ids := range mso.ValueDigests {
 		for _, d := range ids {
 			m.digests = append(m.digests, string(d))

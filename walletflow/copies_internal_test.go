@@ -68,8 +68,9 @@ func TestCopiesCorrelated_Detection(t *testing.T) {
 	}
 }
 
-// Copies sharing a disclosure digest, or a validity timestamp to the
-// second, are correlated: every Verifier receives those. A timestamp
+// Copies sharing a disclosure digest, an mdoc identifier list entry, or
+// a validity timestamp to the second, are correlated: every Verifier
+// receives those. A timestamp
 // rounded to the day isn't counted, nor are copies differing in both.
 func TestCopiesCorrelated_DigestsAndTimestamps(t *testing.T) {
 	ca, caKey := testcert.CA(t, "correlation test CA")
@@ -114,6 +115,19 @@ func TestCopiesCorrelated_DigestsAndTimestamps(t *testing.T) {
 		}
 		return base64.RawURLEncoding.EncodeToString(raw)
 	}
+	listed := func(id string) string {
+		t.Helper()
+		start := now.UTC().Truncate(24 * time.Hour)
+		f := testmdoc.IssueWith(t, func(c *mdoc.Claims) {
+			c.Signed, c.ValidFrom, c.ValidUntil = start, start, start.Add(24*time.Hour)
+			c.IdentifierList = &mdoc.IdentifierListRef{ID: []byte(id), URI: "https://status.example/ids"}
+		})
+		raw, err := f.IssuerSigned.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return base64.RawURLEncoding.EncodeToString(raw)
+	}
 	at := now.Truncate(time.Second)
 	sharedMdoc := mdocCopy(at.Add(time.Second))
 	nextDay := now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
@@ -131,6 +145,8 @@ func TestCopiesCorrelated_DigestsAndTimestamps(t *testing.T) {
 		"mdoc, reused value digests": {"mso_mdoc", sharedMdoc, sharedMdoc, true},
 		"mdoc, one precise update":   {"mso_mdoc", updated(at), updated(at), true},
 		"mdoc, update to the day":    {"mso_mdoc", updated(nextDay), updated(nextDay), false},
+		"mdoc, one identifier entry": {"mso_mdoc", listed("id-1"), listed("id-1"), true},
+		"mdoc, distinct identifiers": {"mso_mdoc", listed("id-1"), listed("id-2"), false},
 		"unreadable copies":          {"dc+sd-jwt", "x", "x", false},
 	} {
 		copies := []CredentialCopy{{Credential: tc.a}, {Credential: tc.b}}

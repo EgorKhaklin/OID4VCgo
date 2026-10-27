@@ -150,7 +150,7 @@ A record is JSON the app needn't read: `id`, `credential_issuer`,
 `status_list`, `status_list_cwt`, `status`, `grant_id` and
 `credential_identifier` (the dataset a refresh asks for again),
 `copies_correlated` (the issuer gave two copies the same `jti`, `sub`,
-status list entry, disclosure digest, or validity timestamp not rounded
+status list or identifier list entry, disclosure digest, or validity timestamp not rounded
 to the day; absent when not), and `copies` (each copy's `credential`, `holder_key_id`, `presented`,
 `shown_to`, and its own `status_list` and `valid_until`). A record
 written before a field was kept lacks it.
