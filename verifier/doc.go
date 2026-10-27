@@ -28,6 +28,23 @@
 // §8.2 and §13.3 require, which the lower-level functions below leave
 // to the caller.
 //
+// Several Transactions may share one TransactionStore, each reading
+// only its own transactions (TransactionsConfig.Scope). The scope a
+// Transactions derives when Scope is unset tells apart only Verifiers
+// that differ in client_id, response_uri or RequestURIBase: one Verifier
+// serving several Digital Credentials API Transactions with different
+// Verify or Accept policies — RequestURIBase unset in each — derives
+// the same scope for all of them, so give each its own explicit Scope.
+//
+// Transactions checks a Digital Credentials API request's origin
+// against TransactionsConfig.Origins, its allow-list, normalized as the
+// browser serializes an origin. The lower-level VerifyResponse has no
+// allow-list: VerifyResponseRequest.Origin must be one of
+// ExpectedOrigins, the request's own expected_origins, each spelled
+// exactly as the browser gives it, and both come from the caller — so
+// take them from the Verifier's configuration, never from the
+// response's HTTP request, as Transactions does.
+//
 // # Status
 //
 // BuildAuthorizationRequest constructs a signed redirect-flow

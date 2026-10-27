@@ -2,9 +2,11 @@ package mdocdcapi
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/internal/weborigin"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -46,6 +48,41 @@ func FuzzParseRequest(f *testing.F) {
 				}
 			}
 			_, _ = in.Respond(i, h.f.IssuerSigned, h.f.DeviceKey, elements)
+		}
+	})
+}
+
+// FuzzOriginChecks feeds the Verifier's origin checks an arbitrary
+// request origin and allow-list entry: an origin they accept is one a
+// browser gives (weborigin.Check), https or loopback http, and the
+// entry normalizes to it.
+func FuzzOriginChecks(f *testing.F) {
+	for _, s := range [][2]string{
+		{testOrigin, testOrigin}, {testOrigin, "HTTPS://Verifier.Example:443/"}, {"http://localhost:8080", "http://LOCALHOST:8080"},
+		{"https://verifier.example/", testOrigin}, {"http://verifier.example", ""}, {"https://[::1]:443", "https://[::1]"},
+	} {
+		f.Add(s[0], s[1], true)
+	}
+	f.Fuzz(func(t *testing.T, origin, allowed string, development bool) {
+		assurance := verifier.AssuranceProduction
+		if development {
+			assurance = verifier.AssuranceDevelopment
+		}
+		var origins []string
+		if allowed != "" {
+			origins = []string{allowed}
+		}
+		if checkPendingOrigin(VerifyParams{Pending: Pending{Origin: origin}, Origins: origins, Assurance: assurance}) != nil {
+			return
+		}
+		if err := weborigin.CheckPage(origin, development); err != nil {
+			t.Fatalf("accepted %q, which isn't a page's origin: %v", origin, err)
+		}
+		if allowed != "" && weborigin.Normalize(allowed) != origin {
+			t.Fatalf("accepted %q under Origins %q", origin, allowed)
+		}
+		if !development && !strings.HasPrefix(origin, "https://") {
+			t.Fatalf("accepted %q under production", origin)
 		}
 	})
 }

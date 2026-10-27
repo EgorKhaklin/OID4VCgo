@@ -11,12 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/weborigin"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -51,13 +51,18 @@ type VerifyParams struct {
 	// AnyIssuerForAnyType must decide which issuers may issue the
 	// doctype; Accept or NoStatusCheck must decide revocation; Origins
 	// must be set, with Pending.Origin https; and IssuerKeys' roots
-	// mustn't be the system root pool.
+	// mustn't be the system root pool (one built from it by adding
+	// certificates is detected on Linux and the other Unix systems,
+	// not on macOS or Windows: see verifier.AssuranceProduction).
 	Assurance verifier.AssuranceLevel
-	// Origins are the origins of the Verifier's own pages: a response
-	// to a request built for any other (Pending.Origin) is refused, so
-	// one built from an origin taken from the request can't be
-	// answered. REQUIRED under verifier.AssuranceProduction; under
-	// verifier.AssuranceDevelopment, empty allows any.
+	// Origins are the origins of the Verifier's own pages, each
+	// normalized as RequestParams.Origin is: a response to a request
+	// built for any other (Pending.Origin) is refused, so one built from
+	// an origin taken from the request can't be answered. Each must be
+	// https, or under verifier.AssuranceDevelopment loopback http.
+	// REQUIRED under verifier.AssuranceProduction; under
+	// verifier.AssuranceDevelopment, empty allows any https or loopback
+	// http origin.
 	Origins []string
 	// IssuerAuthorized, if set, decides whether the verified document's
 	// issuer may issue its doctype, as
@@ -214,20 +219,33 @@ func checkAssurance(p VerifyParams) error {
 	return nil
 }
 
-// checkPendingOrigin refuses a Pending.Origin that isn't one of
-// p.Origins, when they're set, and an http one outside
+// checkPendingOrigin refuses a Pending.Origin that isn't a serialized
+// origin as the browser gives it, that isn't one of p.Origins when
+// they're set, or that is http, except loopback http under
 // verifier.AssuranceDevelopment: browsers offer the Digital Credentials
 // API to secure contexts only, and an http page's is no secure binding.
 func checkPendingOrigin(p VerifyParams) error {
-	origin := p.Pending.Origin
-	if err := checkOrigin(origin); err != nil {
-		return err
+	development := p.Assurance == verifier.AssuranceDevelopment
+	if err := weborigin.CheckPage(p.Pending.Origin, development); err != nil {
+		return fmt.Errorf("mdocdcapi: the request's %w", err)
 	}
-	if len(p.Origins) > 0 && !slices.Contains(p.Origins, origin) {
-		return fmt.Errorf("mdocdcapi: the request's origin %q isn't one of Origins", origin)
+	return checkAllowed(p.Pending.Origin, p.Origins, development)
+}
+
+// checkAllowed refuses origin, a checked serialized origin, when
+// allowed is set and doesn't hold it once normalized; an entry of
+// allowed that isn't an origin a page can use the Digital Credentials
+// API from is refused too.
+func checkAllowed(origin string, allowed []string, allowLoopbackHTTP bool) error {
+	if len(allowed) == 0 {
+		return nil
 	}
-	if p.Assurance != verifier.AssuranceDevelopment && !strings.HasPrefix(origin, "https://") {
-		return fmt.Errorf("mdocdcapi: origin %q must be https outside AssuranceDevelopment", origin)
+	normalized, err := weborigin.NormalizeAll(allowed, allowLoopbackHTTP)
+	if err != nil {
+		return fmt.Errorf("mdocdcapi: Origins: %w", err)
+	}
+	if !slices.Contains(normalized, origin) {
+		return fmt.Errorf("mdocdcapi: origin %q isn't one of Origins %q", origin, normalized)
 	}
 	return nil
 }

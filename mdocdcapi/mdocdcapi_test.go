@@ -351,7 +351,10 @@ func TestBuildRequestRefuses(t *testing.T) {
 	cert, key := testcert.SelfSignedLeaf(t, "reader")
 	_, otherKey := testcert.SelfSignedLeaf(t, "other")
 	for name, p := range map[string]RequestParams{
-		"origin with a path":      {Origin: testOrigin + "/", DocType: testmdoc.DocType, Elements: bothNames()},
+		"origin with a path":      {Origin: testOrigin + "/app", DocType: testmdoc.DocType, Elements: bothNames()},
+		"a non-loopback http":     {Origin: "http://verifier.example", DocType: testmdoc.DocType, Elements: bothNames()},
+		"an unencodable origin":   {Origin: "https://bücher.example", DocType: testmdoc.DocType, Elements: bothNames()},
+		"a malformed Origins":     {Origin: testOrigin, Origins: []string{"verifier.example"}, DocType: testmdoc.DocType, Elements: bothNames()},
 		"origin without scheme":   {Origin: "verifier.example", DocType: testmdoc.DocType, Elements: bothNames()},
 		"no doc type":             {Origin: testOrigin, Elements: bothNames()},
 		"no elements":             {Origin: testOrigin, DocType: testmdoc.DocType},

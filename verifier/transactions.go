@@ -9,15 +9,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/weborigin"
 )
 
 // TransactionStatus is where a presentation request is in its life.
@@ -68,7 +69,8 @@ type Transaction struct {
 
 	// Owner identifies the Transactions that created the transaction
 	// (TransactionsConfig.Scope): only a Transactions with the same
-	// owner reads it. "" for one saved before it was set.
+	// owner reads it. "" for one saved before it was set, which only a
+	// derived scope under AssuranceDevelopment reads.
 	Owner string
 
 	// BrowserBindingHash is SHA-256 of the browser binding Begin was
@@ -123,7 +125,9 @@ type Transaction struct {
 // deployment, or the use cases of one relying party: each reads only
 // the transactions it created (TransactionsConfig.Scope), so none can
 // complete another's request under its own verification and policy. A
-// store must persist each Transaction's Owner for that to hold.
+// store must persist each Transaction's Owner for that to hold: Begin
+// and BeginDCAPI read the first transaction a Transactions creates back,
+// and refuse a store that dropped it.
 //
 // A completed transaction's Result holds the claims the holder
 // disclosed. Transactions never reports it past ExpiresAt plus
@@ -237,10 +241,15 @@ type TransactionsConfig struct {
 	// Origins are the serialized origins of the pages that may make a
 	// Digital Credentials API request (BeginDCAPI): each https, or
 	// loopback http under AssuranceDevelopment, with no path, query or
-	// fragment. BeginDCAPI refuses any other origin, so one taken from
-	// the request (its Origin header, say) can't bind a presentation to
-	// a page the Verifier doesn't serve. REQUIRED for BeginDCAPI under
-	// AssuranceProduction; under AssuranceDevelopment, empty allows any.
+	// fragment; each is normalized as a browser serializes an origin
+	// (scheme and host lowercased, no trailing "/" or default port).
+	// BeginDCAPI refuses any other origin, so one taken from the request
+	// (its Origin header, say) can't bind a presentation to a page the
+	// Verifier doesn't serve. REQUIRED for BeginDCAPI under
+	// AssuranceProduction: NewTransactions refuses a production
+	// Transactions without them only when it has no RequestURIBase
+	// either, and so can serve nothing else; otherwise BeginDCAPI
+	// refuses each request. Under AssuranceDevelopment, empty allows any.
 	Origins []string
 
 	// NoStatusCheck declares that this Verifier deliberately checks no
@@ -262,10 +271,15 @@ type TransactionsConfig struct {
 	// differ in any of them. Set it, unique to each policy, where
 	// instances sharing a store have all three in common but verify or
 	// accept differently; instances of one deployment, alike, share it.
+	// Transactions for the Digital Credentials API alone have no
+	// RequestURIBase, so those of one Verifier always derive the same
+	// scope: give each policy among them its own.
 	//
 	// A transaction saved before scopes were recorded has none: a
-	// Transactions with the derived scope reads it, as before, and one
-	// with an explicit Scope doesn't.
+	// Transactions with the derived scope reads it, as before, under
+	// AssuranceDevelopment; under AssuranceProduction, and with an
+	// explicit Scope, none does. Begin and BeginDCAPI refuse a store
+	// that doesn't keep a transaction's Owner.
 	Scope string
 }
 
@@ -295,9 +309,13 @@ type Transactions struct {
 
 	// owner is what this Transactions' transactions record as their
 	// Owner; derived is whether it's the derived scope, which also
-	// reads a transaction with none.
+	// reads a transaction with none outside AssuranceProduction.
 	owner   string
 	derived bool
+
+	// ownerKept is set once the store has been seen to keep a created
+	// transaction's Owner (create).
+	ownerKept atomic.Bool
 }
 
 // NewTransactions builds Transactions for v, keeping state in store.
@@ -318,9 +336,9 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 			return nil, err
 		}
 	}
-	origins, err := pageOrigins(cfg.Origins, v.cfg.Assurance)
+	origins, err := weborigin.NormalizeAll(cfg.Origins, v.cfg.Assurance == AssuranceDevelopment)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("verifier: transactions: origins: %w", err)
 	}
 	cfg.Origins = origins
 	if cfg.Lifetime < 0 {
@@ -356,12 +374,41 @@ func ownerScope(v *Verifier, cfg TransactionsConfig) (owner string, derived bool
 	return "derived:" + base64.RawURLEncoding.EncodeToString(h.Sum(nil)), true
 }
 
-// owns reports whether tx is this Transactions' to read.
+// owns reports whether tx is this Transactions' to read. One without
+// an Owner, saved before scopes were recorded, is the derived scope's,
+// except under AssuranceProduction: there, a store that lost the Owner
+// mustn't make every derived scope's transactions each other's.
 func (t *Transactions) owns(tx Transaction) bool {
 	if tx.Owner == "" {
-		return t.derived
+		return t.derived && t.v.cfg.Assurance != AssuranceProduction
 	}
 	return subtle.ConstantTimeCompare([]byte(tx.Owner), []byte(t.owner)) == 1
+}
+
+// create saves the new transaction tx. Until the store has once given
+// back a created transaction with its Owner, it reads tx back and
+// refuses a store that dropped it: scopes (TransactionsConfig.Scope)
+// keep Transactions sharing a store apart only if the store persists
+// Owner, and one that doesn't would silently let any derived scope
+// read the others' transactions. The check repeats until it passes,
+// so a store that drops Owner is refused on every Begin, not just the
+// first.
+func (t *Transactions) create(ctx context.Context, tx Transaction) error {
+	if err := t.store.Create(ctx, tx); err != nil {
+		return fmt.Errorf("verifier: transactions: store: %w", err)
+	}
+	if t.ownerKept.Load() {
+		return nil
+	}
+	saved, err := t.store.Get(ctx, tx.ID)
+	if err != nil {
+		return fmt.Errorf("verifier: transactions: store: reading back a created transaction: %w", err)
+	}
+	if saved.Owner != tx.Owner {
+		return fmt.Errorf("verifier: transactions: the store (%T) didn't keep the transaction's Owner: a TransactionStore must persist every Transaction field, or TransactionsConfig.Scope can't keep the Transactions sharing it apart", t.store)
+	}
+	t.ownerKept.Store(true)
+	return nil
 }
 
 // get is the store's transaction id, ErrTransactionUnknown when it's
@@ -421,6 +468,11 @@ func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig)
 	}
 	if cfg.Verify.IssuerAuthorized == nil && !cfg.Verify.AnyIssuerForAnyType {
 		return errors.New("verifier: transactions: under AssuranceProduction, set verify.issuer_authorized (which issuers may issue which types) or verify.any_issuer_for_any_type: without either, any trusted issuer is accepted for any type")
+	}
+	if cfg.RequestURIBase == "" && len(cfg.Origins) == 0 {
+		// Without RequestURIBase only BeginDCAPI can begin a request,
+		// and without Origins it refuses every one.
+		return errors.New("verifier: transactions: under AssuranceProduction, a Transactions without request_uri_base serves the Digital Credentials API alone: set origins, the origins of the pages that make its requests")
 	}
 	return nil
 }
@@ -508,8 +560,8 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 	tx.ExpiresAt, tx.RetainUntil = t.expiry()
 	sum := sha256.Sum256([]byte(browserBinding))
 	tx.BrowserBindingHash = sum[:]
-	if err := t.store.Create(ctx, tx); err != nil {
-		return Begun{}, fmt.Errorf("verifier: transactions: store: %w", err)
+	if err := t.create(ctx, tx); err != nil {
+		return Begun{}, err
 	}
 	link := "openid4vp://?" + url.Values{
 		"client_id": {t.v.ClientID()}, "request_uri": {t.cfg.RequestURIBase + "/" + id},
@@ -1006,13 +1058,7 @@ func withQuery(raw, key, value string) string {
 	return u.String()
 }
 
-func isLoopback(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
+func isLoopback(host string) bool { return weborigin.IsLoopback(host) }
 
 // checkVerifies refuses a query the Verify configuration can't verify
 // an answer to, so the mistake shows when the request is made, not as

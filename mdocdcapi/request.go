@@ -9,12 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 
 	"github.com/fxamacker/cbor/v2"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/readerauth"
+	"github.com/idfoundry/oid4vcgo/internal/weborigin"
 )
 
 // Protocol is the Digital Credentials API protocol identifier for this
@@ -40,13 +40,21 @@ type ReaderKey struct {
 type RequestParams struct {
 	// Origin is the serialized origin of the page that calls the
 	// Digital Credentials API, from the Verifier's configuration — for
-	// example "https://verifier.example". REQUIRED.
+	// example "https://verifier.example". REQUIRED. It is normalized as
+	// a browser serializes an origin (scheme and host lowercased, no
+	// trailing "/" or default port), and must then be https or, as
+	// browsers offer the Digital Credentials API to secure contexts
+	// only, loopback http; Pending.Origin is the normalized form.
 	Origin string
-	// Origins, if set, are the origins of the Verifier's own pages:
-	// BuildRequest refuses an Origin that isn't one of them, so one
-	// taken from the request (its Origin header, say) can't bind the
-	// response to a page the Verifier doesn't serve. VerifyParams.Origins
-	// checks the response's.
+	// Origins, if set, are the origins of the Verifier's own pages,
+	// normalized as Origin is: BuildRequest refuses an Origin that isn't
+	// one of them, so one taken from the request (its Origin header,
+	// say) can't bind the response to a page the Verifier doesn't
+	// serve. Set them in production: BuildRequest takes no
+	// AssuranceLevel and so can't require them, but VerifyParams.Origins,
+	// required under verifier.AssuranceProduction, refuses the response
+	// to a request built for any other origin — after the wallet has
+	// answered it.
 	Origins []string
 	// DocType is the requested document type, for example
 	// "org.iso.18013.5.1.mDL". REQUIRED.
@@ -124,6 +132,7 @@ type encryptionParameters struct {
 // BuildRequest builds an org-iso-mdoc request for one document, with a
 // fresh nonce and response encryption key.
 func BuildRequest(p RequestParams) (Request, error) {
+	p.Origin = weborigin.Normalize(p.Origin)
 	if err := checkRequestParams(p); err != nil {
 		return Request{}, err
 	}
@@ -158,11 +167,11 @@ func BuildRequest(p RequestParams) (Request, error) {
 }
 
 func checkRequestParams(p RequestParams) error {
-	if err := checkOrigin(p.Origin); err != nil {
-		return err
+	if err := weborigin.CheckPage(p.Origin, true); err != nil {
+		return fmt.Errorf("mdocdcapi: %w", err)
 	}
-	if len(p.Origins) > 0 && !slices.Contains(p.Origins, p.Origin) {
-		return fmt.Errorf("mdocdcapi: origin %q isn't one of Origins", p.Origin)
+	if err := checkAllowed(p.Origin, p.Origins, true); err != nil {
+		return err
 	}
 	if p.DocType == "" {
 		return errors.New("mdocdcapi: DocType is required")

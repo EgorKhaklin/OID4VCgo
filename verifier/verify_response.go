@@ -10,12 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
@@ -26,6 +23,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
+	"github.com/idfoundry/oid4vcgo/internal/weborigin"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 )
 
@@ -374,7 +372,7 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: expected_nonce is required")
 	}
 	if req.Origin != "" {
-		if err := checkSerializedOrigin(req.Origin); err != nil {
+		if err := weborigin.Check(req.Origin); err != nil {
 			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
 		}
 	}
@@ -937,52 +935,3 @@ var errNotThisRequest = errors.New("a presentation isn't bound to this request")
 // MaxPresentationsPerQuery bounds how many presentations a response may
 // carry for one credential query, under multiple.
 const MaxPresentationsPerQuery = 32
-
-// checkSerializedOrigin checks origin is a serialized web origin
-// (scheme, host and optional port, no trailing slash), as the browser
-// gives it and as the Wallet binds a DC API response to (OpenID4VP 1.0
-// Appendix A.2, A.4): anything else would never match it.
-func checkSerializedOrigin(origin string) error {
-	u, err := url.Parse(origin)
-	switch {
-	case err != nil:
-		return fmt.Errorf("origin %q isn't a URL: %w", origin, err)
-	case u.Scheme == "" || u.Host == "":
-		return fmt.Errorf("origin %q needs a scheme and a host", origin)
-	case u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || u.Opaque != "" || u.ForceQuery:
-		return fmt.Errorf("origin %q must be a scheme, host and optional port only (no trailing slash)", origin)
-	case !isCanonicalOrigin(origin, u):
-		return fmt.Errorf("origin %q isn't serialized as a browser gives it: a lowercase scheme and ASCII host, and a port only when it isn't the scheme's default", origin)
-	}
-	return nil
-}
-
-// isCanonicalOrigin reports whether origin, parsed as u, is spelled as
-// the browser serializes an origin: url.Parse accepts an uppercase
-// scheme or host, an empty or zero-padded port, or the scheme's default
-// one, none of which the browser ever gives, so such an origin can never
-// match.
-func isCanonicalOrigin(origin string, u *url.URL) bool {
-	// url.Parse lowercases the scheme it returns.
-	if !strings.HasPrefix(origin, u.Scheme+"://") {
-		return false
-	}
-	for i := 0; i < len(u.Host); i++ {
-		if c := u.Host[i]; c >= utf8.RuneSelf || ('A' <= c && c <= 'Z') {
-			return false
-		}
-	}
-	if strings.HasSuffix(u.Host, ":") {
-		return false
-	}
-	port := u.Port()
-	if port == "" {
-		return true
-	}
-	n, err := strconv.Atoi(port)
-	if err != nil || strconv.Itoa(n) != port {
-		return false
-	}
-	defaultPort := map[string]string{"http": "80", "https": "443"}[u.Scheme]
-	return port != defaultPort
-}

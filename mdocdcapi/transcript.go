@@ -77,7 +77,10 @@ func sessionTranscriptBytes(transcript []byte) ([]byte, error) {
 // checkOrigin requires origin to be a serialized web origin
 // (https://html.spec.whatwg.org/multipage/browsers.html#ascii-serialisation-of-an-origin):
 // a scheme, a host and an optional port, with no path, query, fragment
-// or user info — the form the browser gives the mdoc.
+// or user info — the form the browser gives the mdoc. It's the wallet's
+// check of the origin its platform reports, which the session
+// transcript binds as given; a Verifier's origins are checked to be
+// spelled as the browser gives them (weborigin.Check) too.
 func checkOrigin(origin string) error {
 	u, err := url.Parse(origin)
 	switch {
