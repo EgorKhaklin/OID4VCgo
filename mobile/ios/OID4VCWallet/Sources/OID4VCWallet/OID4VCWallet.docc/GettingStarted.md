@@ -148,3 +148,4 @@ so it can refuse to run on the test build.
 - <doc:PresentingInPerson>
 - <doc:HandlingErrors>
 - <doc:GoingToProduction>
+- <doc:IntegrationChecklist>

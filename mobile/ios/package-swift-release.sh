@@ -136,6 +136,8 @@ Errors are `WalletError`s. Each has:
 
 - [The OID4VCWallet documentation](@DOCS@): getting started, an article
   for each task, and the API reference.
+- [The integration checklist](@DOCS@integrationchecklist): every step
+  and rule in order, each with how to check it.
 - What's new: each [release](https://github.com/IDFoundry/OID4VCgo-wallet-swift/releases)'s notes.
 - [OID4VCgo's `mobile/`](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile):
   what each platform supports, in-person presentation, the Go side and
@@ -147,9 +149,10 @@ Errors are `WalletError`s. Each has:
 
 ## For coding assistants
 
-Integrating this package for someone? Read the documentation's Getting
-started article, then the article for each feature, before writing
-code. Use only the public API those name: never the `Mobile` framework's
+Integrating this package for someone? Follow
+[the integration checklist](@DOCS@integrationchecklist), and read the
+documentation's Getting started article, then the article for each
+feature, before writing code. Use only the public API those name: never the `Mobile` framework's
 generated types directly, and don't reimplement the protocols or the
 Bluetooth transport the package carries. In person, this package
 engages by QR code only: don't add NFC around it. Match the version of

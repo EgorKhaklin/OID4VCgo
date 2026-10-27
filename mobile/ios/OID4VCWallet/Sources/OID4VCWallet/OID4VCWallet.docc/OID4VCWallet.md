@@ -31,7 +31,8 @@ OID4VCgo is OpenID Certified for the OpenID4VCI and OpenID4VP wallet
 roles under HAIP, over links. The Digital Credentials API and in-person
 presentation aren't covered by that certification.
 
-Start with <doc:GettingStarted>, then the article for each task.
+Start with <doc:GettingStarted>, then the article for each task;
+<doc:IntegrationChecklist> lists every step in order.
 
 ## Topics
 
@@ -40,6 +41,7 @@ Start with <doc:GettingStarted>, then the article for each task.
 - <doc:GettingStarted>
 - <doc:HandlingErrors>
 - <doc:GoingToProduction>
+- <doc:IntegrationChecklist>
 - ``Wallet``
 - ``WalletConfiguration``
 - ``WalletProvider``
