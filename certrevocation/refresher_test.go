@@ -455,11 +455,13 @@ func TestRefresher_Redirects(t *testing.T) {
 func TestRefresher_RefusesHTTPSToHTTPRedirect(t *testing.T) {
 	p := newPKI(t)
 	hits := 0
+	var plain string
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		hits++
-		http.Redirect(w, req, "http://"+req.Host+"/plain.crl", http.StatusFound)
+		http.Redirect(w, req, plain, http.StatusFound)
 	}))
 	t.Cleanup(srv.Close)
+	plain = "http://" + strings.TrimPrefix(srv.URL, "https://") + "/plain.crl"
 	r := newRefresher(t, certrevocation.RefresherConfig{URLs: []string{srv.URL + "/ca.crl"}, Issuers: []*x509.Certificate{p.inter}, HTTPClient: srv.Client()})
 	if err := r.Refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "from https to http") {
 		t.Errorf("Refresh = %v, want the downgrade refused", err)
