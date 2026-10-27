@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/identifierlist"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
@@ -17,9 +18,10 @@ import (
 // mdoc's MSO status. cwt reports which Status List Token form to fetch
 // for it — CWT for an mdoc, JWT for an SD-JWT VC — as
 // statuslist.Checker.Check takes it. ok is false when vc has no status
-// list reference; err is set when it has a malformed one, or a status
-// mechanism this package can't check (an mdoc identifier list) — so a
-// caller that checks status when ok doesn't skip it.
+// list reference; err is set when it has a malformed one, or when it's
+// an mdoc whose only status is an identifier list, which isn't a Token
+// Status List (identifierlist.Checker checks it) — so a caller that
+// checks status when ok doesn't skip it.
 //
 //	ref, cwt, ok, err := vc.StatusListRef()
 //	if err == nil && ok {
@@ -38,7 +40,7 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 			if vc.MdocStatus.IdentifierList != nil {
 				// A status this package can't check isn't "no status":
 				// read as one, a revoked mdoc would pass.
-				return statuslist.StatusListRef{}, false, false, fmt.Errorf("verifier: the mdoc's status is an identifier list, which isn't supported")
+				return statuslist.StatusListRef{}, false, false, fmt.Errorf("verifier: the mdoc's status is an identifier list, not a status list: check it with identifierlist.Checker")
 			}
 			return statuslist.StatusListRef{}, false, false, nil
 		}
@@ -60,11 +62,13 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 }
 
 // RequireValidStatus is a TransactionsConfig.Accept that checks the
-// status of every credential in an answer that carries a status list
+// status of every credential in an answer that carries a status
 // reference, with checker: an answer is refused when any of them isn't
-// VALID (statuslist.NotValidError), when a status can't be read, or
-// when a reference is malformed or uses a mechanism this package can't
-// check. A credential with no status reference passes: it has no
+// VALID (statuslist.NotValidError), when an mdoc is on its identifier
+// list (identifierlist.ErrRevoked), when a status can't be read, or
+// when a reference is malformed. An mdoc's identifier list is checked
+// with an identifierlist.Checker that has checker's Fetcher, Roots and
+// Options. A credential with no status reference passes: it has no
 // status to check, and nothing here can revoke it. Where every
 // credential accepted must be revocable, wrap it in
 // RequireStatusReference.
@@ -107,9 +111,8 @@ func RequireValidStatus(checker statuslist.Checker) func(ctx context.Context, id
 // issuer can't revoke afterwards: a stolen document signer's or issuer's
 // key, say, could mint them until its certificate is revoked — and,
 // with an issuer key resolver whose Revocation is
-// certrevocation.NoCheck{}, until it expires. A reference this package
-// can't check (an mdoc identifier list) is still a reference: accept
-// decides on it, and RequireValidStatus refuses it.
+// certrevocation.NoCheck{}, until it expires. An mdoc identifier list
+// is a reference too.
 func RequireStatusReference(accept func(ctx context.Context, id string, result VerifyResponseResult) error) func(ctx context.Context, id string, result VerifyResponseResult) error {
 	return func(ctx context.Context, id string, result VerifyResponseResult) error {
 		for _, vc := range result.Credentials {
@@ -140,29 +143,90 @@ type StatusIssuerPolicy func(issuer string, leaf *x509.Certificate, chains [][]*
 // credential's issuer, as RequireValidStatus requires, or a Status
 // Issuer statusIssuers accepts for that issuer. Anyone else under the
 // roots is refused. checker.Options.LeafPolicy, if set, still applies
-// to every signer. A nil statusIssuers is RequireValidStatus.
+// to every signer. For an mdoc's identifier list, statusIssuers decides
+// the signer only when the mdoc carries no issuer chain and its MSO
+// names no Certificate. A nil statusIssuers is RequireValidStatus.
 func RequireValidStatusFrom(checker statuslist.Checker, statusIssuers StatusIssuerPolicy) func(ctx context.Context, id string, result VerifyResponseResult) error {
 	return func(ctx context.Context, _ string, result VerifyResponseResult) error {
 		for _, vc := range result.Credentials {
-			ref, cwt, ok, err := vc.StatusListRef()
-			if err == nil && ok {
-				// Its status list is its issuer's, or its Status Issuer's,
-				// to sign.
-				c := checker
-				if cwt {
-					c, err = mdocStatusChecker(checker, vc, statusIssuers)
-				} else {
-					c.Options, err = statusOptionsFor(checker.Options, vc.issuerName(), vc.issuerKey(), statusIssuers)
-				}
-				if err == nil {
-					err = c.RequireValid(ctx, ref, cwt)
-				}
-			}
-			if err != nil {
+			if err := requireValid(ctx, checker, statusIssuers, vc); err != nil {
 				return fmt.Errorf("verifier: credential status: %w", err)
 			}
 		}
 		return nil
+	}
+}
+
+// requireValid checks every status reference vc carries.
+func requireValid(ctx context.Context, checker statuslist.Checker, statusIssuers StatusIssuerPolicy, vc VerifiedCredential) error {
+	if vc.MdocStatus != nil && vc.MdocStatus.IdentifierList != nil {
+		if err := requireNotOnIdentifierList(ctx, checker, statusIssuers, vc); err != nil {
+			return err
+		}
+		if vc.MdocStatus.StatusList == nil {
+			return nil
+		}
+	}
+	ref, cwt, ok, err := vc.StatusListRef()
+	if err != nil || !ok {
+		return err
+	}
+	// Its status list is its issuer's, or its Status Issuer's, to sign.
+	c := checker
+	if cwt {
+		c, err = mdocStatusChecker(checker, vc, statusIssuers)
+	} else {
+		c.Options, err = statusOptionsFor(c.Options, vc.issuerName(), vc.issuerKey(), statusIssuers)
+	}
+	if err != nil {
+		return err
+	}
+	return c.RequireValid(ctx, ref, cwt)
+}
+
+// requireNotOnIdentifierList checks the identifier list vc's MSO names,
+// with checker's Fetcher, Roots and Options. Its signer is bound to the
+// mdoc's issuer by §12.3.6.2's rule alone: statusIssuers decides it only
+// when the mdoc has no issuer chain and its MSO names no Certificate.
+func requireNotOnIdentifierList(ctx context.Context, checker statuslist.Checker, statusIssuers StatusIssuerPolicy, vc VerifiedCredential) error {
+	ref := identifierlist.Ref(*vc.MdocStatus.IdentifierList)
+	path, err := vc.issuerPath()
+	if err != nil {
+		return err
+	}
+	o := checker.Options
+	c := identifierlist.Checker{Fetcher: checker.Fetcher, Roots: checker.Roots, Options: identifierlist.VerifyOptions{
+		Now: o.Now, MaxAge: o.MaxAge, MaxClockSkew: o.MaxClockSkew, LeafPolicy: o.LeafPolicy, Revocation: o.Revocation,
+	}}
+	if len(path) == 0 && len(ref.Certificate) == 0 {
+		// Nothing ties the list's signer to the document's issuer but
+		// statusIssuers.
+		if statusIssuers == nil {
+			return errUnboundStatusSigner
+		}
+		c.Options.LeafPolicy = bothPolicies(o.LeafPolicy, unnamedStatusIssuer(statusIssuers))
+	}
+	return c.RequireNotRevoked(ctx, ref, path)
+}
+
+// bothPolicies is a LeafPolicy requiring base, if set, and then p.
+func bothPolicies(base, p func(*x509.Certificate, [][]*x509.Certificate) error) func(*x509.Certificate, [][]*x509.Certificate) error {
+	if base == nil {
+		return p
+	}
+	return func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+		if err := base(leaf, chains); err != nil {
+			return err
+		}
+		return p(leaf, chains)
+	}
+}
+
+// unnamedStatusIssuer is statusIssuers as a LeafPolicy, for a credential
+// with no issuer name.
+func unnamedStatusIssuer(statusIssuers StatusIssuerPolicy) func(*x509.Certificate, [][]*x509.Certificate) error {
+	return func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+		return statusIssuers("", leaf, chains)
 	}
 }
 
@@ -252,13 +316,9 @@ func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, status
 	if vc.MdocStatus != nil {
 		ref = vc.MdocStatus.StatusList
 	}
-	path := make([]*x509.Certificate, 0, len(vc.IssuerChain))
-	for _, der := range vc.IssuerChain {
-		cert, err := x509.ParseCertificate(der)
-		if err != nil {
-			return checker, fmt.Errorf("issuer chain: %w", err)
-		}
-		path = append(path, cert)
+	path, err := vc.issuerPath()
+	if err != nil {
+		return checker, err
 	}
 	c := checker
 	base := checker.Options.LeafPolicy
@@ -268,14 +328,7 @@ func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, status
 		if statusIssuers == nil {
 			return checker, errUnboundStatusSigner
 		}
-		c.Options.LeafPolicy = func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
-			if base != nil {
-				if err := base(leaf, chains); err != nil {
-					return err
-				}
-			}
-			return statusIssuers("", leaf, chains)
-		}
+		c.Options.LeafPolicy = bothPolicies(base, unnamedStatusIssuer(statusIssuers))
 		return c, nil
 	}
 	trust, err := mdoc.StatusTrust(ref, path)
@@ -299,4 +352,18 @@ func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, status
 		return err
 	}
 	return c, nil
+}
+
+// issuerPath is vc.IssuerChain parsed: an mdoc's document signer path
+// as verified, leaf first, without its anchor.
+func (vc VerifiedCredential) issuerPath() ([]*x509.Certificate, error) {
+	path := make([]*x509.Certificate, 0, len(vc.IssuerChain))
+	for _, der := range vc.IssuerChain {
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			return nil, fmt.Errorf("issuer chain: %w", err)
+		}
+		path = append(path, cert)
+	}
+	return path, nil
 }

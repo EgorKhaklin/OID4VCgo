@@ -1,6 +1,7 @@
 package mdoc
 
 import (
+	"crypto/x509"
 	"fmt"
 	"time"
 )
@@ -38,8 +39,8 @@ type MobileSecurityObject struct {
 // pointer to an externally-hosted MSO revocation list, via either of
 // §12.3.6's two mechanisms — status_list (draft-ietf-oauth-status-list,
 // via StatusListRef, the same scope credential/sdjwtvc.Claims.Status
-// already takes) or identifier_list (§12.3.6.4's ISO-specific
-// alternative, via IdentifierListRef). §12.3.6 itself presents these as
+// already takes) or identifier_list (§12.3.6.4's ISO-defined status
+// mechanism, via IdentifierListRef). §12.3.6 itself presents these as
 // two alternative ways an issuer implements MSO revocation, not as a
 // pair whose simultaneous use it explicitly forbids — the CDDL marks
 // both members independently optional, with no stated exclusivity.
@@ -55,8 +56,8 @@ type Status struct {
 
 // IdentifierListRef is the MSO's own "identifier_list" element
 // (§12.3.6.2, §12.3.6.4): a pointer to an externally-hosted identifier
-// list, the ISO-specific alternative to StatusListRef — an mdoc reader
-// treats this MSO as revoked if ID appears in the referenced list's own
+// list, the ISO-defined status mechanism beside StatusListRef — an mdoc
+// reader treats this MSO as revoked if ID appears in the referenced list's own
 // "identifiers" map, rather than by indexing into a bit-packed list.
 // §12.3.6.4 recommends ID be unique (and ideally random) per MSO, to
 // prevent it being used as a correlation handle across presentations.
@@ -66,14 +67,33 @@ type Status struct {
 // MSO's own IssuerAuth x5chain certificate (the IACA certificate, for
 // an mDL).
 //
-// This package models only the MSO-level pointer — resolving it
-// (fetching the identifier list and checking ID's membership) is
-// entirely the caller's own job, the same split StatusListRef already
-// draws for the status_list mechanism.
+// This package models only the MSO-level pointer. Resolving it —
+// fetching the identifier list and checking ID's membership — is the
+// caller's, with package identifierlist (identifierlist.Ref converts
+// from this type, and IdentifierListTrust binds the list's signer), or
+// verifier.RequireValidStatus for a presented mdoc.
+//
+// Issue refuses a reference with no URI, or whose Certificate isn't an
+// X.509 certificate (see validate).
 type IdentifierListRef struct {
 	ID          []byte `cbor:"id"`
 	URI         string `cbor:"uri"`
 	Certificate []byte `cbor:"certificate,omitempty"`
+}
+
+// validate checks r's uri is set, as Claims.Status.URI must be, and
+// that its certificate, only when present, is one (§12.3.6.2: "it
+// shall contain a certificate").
+func (r *IdentifierListRef) validate() error {
+	if r.URI == "" {
+		return fmt.Errorf("mdoc: Claims.IdentifierList.URI is required")
+	}
+	if len(r.Certificate) > 0 {
+		if _, err := x509.ParseCertificate(r.Certificate); err != nil {
+			return fmt.Errorf("mdoc: Claims.IdentifierList.Certificate isn't a DER X.509 certificate: %w", err)
+		}
+	}
+	return nil
 }
 
 // StatusListRef is the MSO's own "status_list" element (§12.3.6.2,

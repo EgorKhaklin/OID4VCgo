@@ -238,7 +238,8 @@ type VerifiedCredential struct {
 	// "dc+sd-jwt", whose reference is Claims["status"], and for an mdoc
 	// without one. VerifyResponse doesn't check revocation itself:
 	// StatusListRef reads this (or Claims["status"]) as one reference,
-	// and statuslist.Checker fetches and checks it.
+	// and statuslist.Checker fetches and checks it; an identifier list
+	// is identifierlist.Checker's (RequireValidStatus does both).
 	MdocStatus *mdoc.Status
 
 	// IssuerChain is the credential's issuer certificate chain (DER,

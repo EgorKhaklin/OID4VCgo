@@ -336,9 +336,7 @@ changes whether *every* bullet below is `(done)`.
     the caller's own job, the same split `credential/sdjwtvc.Claims.Status`
     already draws; for status_list, `statuslist` has the CWT/COSE
     encoding that needs (`StatusListRef.CWTStatusClaim`/
-    `ParseCWTStatusClaim`), while identifier_list has no equivalent
-    library support here, since it's an ISO-specific extension to Token
-    Status List rather than part of the base spec.
+    `ParseCWTStatusClaim`), and for identifier_list, `identifierlist`.
 - **`statuslist`** (done) — Token Status List (`draft-ietf-oauth-status-list-14`, as HAIP 1.0 §9.4 pins),
   both encodings: bit-packing and ZLIB compression (`Pack`/`Unpack`,
   `New`/`Decode`, shared by both), Status List Token issuance/verification
@@ -378,6 +376,32 @@ changes whether *every* bullet below is `(done)`.
   untagged §5.2 example, decoded and checked field-by-field — not just
   round-trip checks. The passport-vdc demo issues and checks real
   revocation with it (`examples/passport-vdc`'s README, "Revocation").
+- **`identifierlist`** (done) — ISO/IEC 18013-5 §12.3.6.4's identifier
+  list, a profile of the Token Status List CWT (§12.3.6.3's Status List
+  Token rules apply): a COSE_Sign1_Tagged with typ
+  `application/identifierlist+cwt`, the signer's x5chain protected, and
+  an identifier set at claim 65530, `{"identifiers": {bstr => {}}}`
+  (Annex D.6's shape), in place of `status_list`. `IssueToken` signs one with no cache and no I/O, so
+  an issuer can pre-sign it on a schedule and serve the bytes statically
+  (as `application/identifierlist+cwt`, exactly); it refuses what a
+  reader would (no exp, an empty identifier, an oversized list).
+  `Publisher` is optional sugar over it (`Token`, and a cached
+  `ServeHTTP` that keeps serving an unexpired token when re-signing
+  fails and reports failures to `OnError`). `VerifyToken` verifies the
+  x5chain to roots, the signature, typ, the claims (no `status_list`)
+  and `statuslist`'s time rules; `Check` adds §12.3.6.2's binding — the
+  MSO reference's `certificate` as sole anchor when it names one, else a
+  path through the CA that signed the document signer
+  (`mdoc.IdentifierListTrust`, `StatusTrust`'s sibling), given the MSO's
+  verified document signer path — then sub, and reports revocation
+  fail-closed. `Checker` adds fetching through `statuslist.Fetcher`, and
+  serves any number of credentials. Its CBOR claims are its own, on
+  `internal/cose` for the envelope, like `statuslist`'s. Verification
+  accepts the typ without its `application/` prefix too, and
+  `IssueOptions.Typ` issues that non-conformant form for Relying Parties
+  that require it. `verifier.RequireValidStatus` checks a presented
+  mdoc's identifier list with an `identifierlist.Checker` built from
+  its `statuslist.Checker`.
 - **`attestation`** (done) — OID4VCI Appendix D, Key Attestation: fully
   self-contained `Issue`/`Parse`/`Verify`, plus `VerifiedClaims.KeyAttested`
   implementing Appendix D.1's own MUST ("the Credential Issuer MUST
