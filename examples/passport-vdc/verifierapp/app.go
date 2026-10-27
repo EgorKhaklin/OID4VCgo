@@ -301,8 +301,11 @@ func (a *App) newTransactions(sc Scenario, sg signer, registrar signer) (*verifi
 	txs, err := verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
 		RequestURIBase: base + "/request-objects",
 		RedirectURI:    base + "/continue",
-		Lifetime:       a.cfg.RequestLifetime,
-		Verify:         verify,
+		// The request page's own origin: the only one its Digital
+		// Credentials API requests are bound to.
+		Origins:  []string{a.origin},
+		Lifetime: a.cfg.RequestLifetime,
+		Verify:   verify,
 		Accept: func(ctx context.Context, id string, result verifier.VerifyResponseResult) error {
 			return a.accept(ctx, sc, id, result)
 		},

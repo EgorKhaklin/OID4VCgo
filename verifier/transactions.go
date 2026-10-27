@@ -234,6 +234,15 @@ type TransactionsConfig struct {
 	// REQUIRED for Begin with sameDevice.
 	RedirectURI string
 
+	// Origins are the serialized origins of the pages that may make a
+	// Digital Credentials API request (BeginDCAPI): each https, or
+	// loopback http under AssuranceDevelopment, with no path, query or
+	// fragment. BeginDCAPI refuses any other origin, so one taken from
+	// the request (its Origin header, say) can't bind a presentation to
+	// a page the Verifier doesn't serve. REQUIRED for BeginDCAPI under
+	// AssuranceProduction; under AssuranceDevelopment, empty allows any.
+	Origins []string
+
 	// NoStatusCheck declares that this Verifier deliberately checks no
 	// credential's revocation status — its credentials carry none, say.
 	// Under AssuranceProduction, NewTransactions needs either an Accept
@@ -309,6 +318,11 @@ func NewTransactions(v *Verifier, store TransactionStore, cfg TransactionsConfig
 			return nil, err
 		}
 	}
+	origins, err := pageOrigins(cfg.Origins, v.cfg.Assurance)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Origins = origins
 	if cfg.Lifetime < 0 {
 		return nil, errors.New("verifier: transactions: lifetime must not be negative")
 	}
