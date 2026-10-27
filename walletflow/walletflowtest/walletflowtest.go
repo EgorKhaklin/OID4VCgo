@@ -275,10 +275,12 @@ func New(opts Options) (env *Env, err error) {
 		Grants: memstore.NewGrantStore(), Replay: memstore.NewReplayStore(), ClientKeys: clientKeys, Keys: accessKeys,
 		AccessTokens: e.accessTokens, Revocation: memstore.NewRevocationStore(), Clock: server.SystemClock{}, Random: rand.Reader,
 		ClientCertificateTrust: server.NoPKIClientAuthentication{},
-		// The Wallet Provider CA may vouch for the Wallet Provider alone.
+		// The Wallet Provider CA may vouch for the Wallet Provider alone,
+		// and publishes no CRL.
 		AttesterTrust: server.X5CAttesterChain{
 			Anchors:       server.StaticAttesterAnchors{{Certificate: e.Provider.CA, Issuers: []string{ProviderIssuer}}},
 			IssuerBinding: server.AttesterIssuerBoundToAnchor,
+			Revocation:    server.NoClientCertificateRevocationCheck{},
 		},
 	}
 	e.srv, err = server.New(asCfg, deps)

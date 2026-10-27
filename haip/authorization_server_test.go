@@ -70,6 +70,7 @@ func haipServerDependencies(t *testing.T) server.Dependencies {
 		AttesterTrust: server.X5CAttesterChain{
 			TrustAnchors:  server.StaticAttesterTrustAnchors{Roots: x509.NewCertPool()},
 			IssuerBinding: server.AttesterIssuerInCertificate,
+			Revocation:    server.NoClientCertificateRevocationCheck{},
 		},
 	}
 }
