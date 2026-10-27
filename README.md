@@ -200,6 +200,8 @@ Internet-Drafts.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the conformance-first
 development philosophy and pre-PR checklist, and
 [SECURITY.md](SECURITY.md) to report a vulnerability.
+[UPGRADING.md](UPGRADING.md) says what to change for each release's
+breaking changes.
 
 ## License
 
