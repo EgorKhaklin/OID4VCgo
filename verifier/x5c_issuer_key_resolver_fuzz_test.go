@@ -3,11 +3,14 @@ package verifier_test
 import (
 	"context"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -43,5 +46,32 @@ func FuzzResolveIssuerKey(f *testing.F) {
 			return
 		}
 		_, _, _ = resolver.ResolveIssuerKey(context.Background(), header, nil)
+	})
+}
+
+// FuzzDefaultSDJWTIssuerLeafPolicy runs DefaultSDJWTIssuerLeafPolicy on
+// whatever certificate DER parses, as the leaf and as the intermediate
+// of a path: it reads a presented certificate's extensions, so it must
+// decide on any of them without panicking.
+func FuzzDefaultSDJWTIssuerLeafPolicy(f *testing.F) {
+	ca, caKey := testcert.CA(f, "fuzz CA")
+	f.Add(ca.Raw)
+	for _, tmpl := range []x509.Certificate{
+		{KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: []asn1.ObjectIdentifier{readerAuthEKU}},
+		{ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageAny}},
+		{IsCA: true, BasicConstraintsValid: true, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}},
+	} {
+		tmpl.Subject = pkix.Name{CommonName: "seed"}
+		cert, _ := testcert.Issue(f, &tmpl, ca, caKey)
+		f.Add(cert.Raw)
+	}
+	f.Fuzz(func(t *testing.T, der []byte) {
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			return
+		}
+		_ = verifier.DefaultSDJWTIssuerLeafPolicy(cert, nil)
+		_ = verifier.DefaultSDJWTIssuerLeafPolicy(cert, [][]*x509.Certificate{{cert, cert, ca}, {cert}, {}})
+		_ = verifier.DefaultSDJWTIssuerLeafPolicy(ca, [][]*x509.Certificate{{ca, cert, ca}})
 	})
 }

@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
+	"encoding/asn1"
 	"errors"
 	"slices"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
+	"github.com/idfoundry/oid4vcgo/internal/readerauth"
 )
 
 // X5CIssuerKeyResolver implements SDJWTVCIssuerKeyResolver by
@@ -55,8 +57,11 @@ type X5CIssuerKeyResolver struct {
 	// distinguishes them (an extended key usage, a certificate policy)
 	// where the anchors are shared. nil means
 	// DefaultSDJWTIssuerLeafPolicy, which refuses the certificates
-	// whose key usage clearly denotes another role (a TLS server's,
-	// say); a LeafPolicy that's set replaces it.
+	// whose key usage clearly denotes another role (a TLS server's, an
+	// mdoc reader's, say). A LeafPolicy that's set replaces it: one
+	// adding a requirement calls DefaultSDJWTIssuerLeafPolicy first, so
+	// as not to drop those refusals, and AnyIssuerLeaf opts out of them
+	// explicitly.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 	// Revocation decides whether a certificate on a verified path — the
 	// issuer's own, or an intermediate CA's — has been revoked. A chain
@@ -110,35 +115,83 @@ var otherRoleEKUs = []x509.ExtKeyUsage{
 	x509.ExtKeyUsageMicrosoftCommercialCodeSigning, x509.ExtKeyUsageMicrosoftKernelCodeSigning,
 }
 
+// otherRoleISOEKUs are the ISO/IEC 18013-5 extended key usages
+// (Annex B) that denote a role other than signing credentials: an mdoc
+// reader's authentication. The mDL document signer's
+// (mdoc.MDLDocumentSignerEKU) isn't among them: an issuer may sign its
+// SD-JWT VCs with its document signer's certificate.
+var otherRoleISOEKUs = []asn1.ObjectIdentifier{readerauth.EKU}
+
 // DefaultSDJWTIssuerLeafPolicy is the issuer certificate check
 // X5CIssuerKeyResolver makes where no LeafPolicy is set. Chain
 // validation alone accepts any certificate under Roots, so a TLS
 // server's certificate from an ecosystem CA that also issues those
 // would sign accepted credentials. It refuses a certificate whose key
 // usage extension doesn't allow digital signatures, that is an OCSP
-// signer, or whose extended key usage lists only purposes that denote
-// another role — TLS server or client authentication, code signing,
-// email protection, time stamping, IPsec. It accepts a certificate
-// without those extensions, or whose extended key usage lists any
-// other purpose (anyExtendedKeyUsage, or a private one): SD-JWT VC
-// defines no issuer purpose to require. A deployment whose issuer
-// certificates carry one sets LeafPolicy to require it.
-func DefaultSDJWTIssuerLeafPolicy(leaf *x509.Certificate, _ [][]*x509.Certificate) error {
+// signer, whose extended key usage includes ISO/IEC 18013-5's mdoc
+// reader authentication (Annex B), or whose extended key usage lists
+// only purposes that denote another role — TLS server or client
+// authentication, code signing, email protection, time stamping,
+// IPsec, mdoc reader authentication. It refuses the leaf, too, when
+// every verified path in chains (leaf first, as a LeafPolicy receives
+// them) has an intermediate CA whose extended key usage lists only such
+// purposes: a CA restricted to issuing TLS certificates, say. It accepts
+// a certificate without those extensions, or whose extended key usage
+// lists any other purpose (anyExtendedKeyUsage, the mDL document
+// signer's, or a private one): SD-JWT VC defines no issuer purpose to
+// require. A deployment whose issuer certificates carry one sets
+// LeafPolicy to require it, after calling this.
+func DefaultSDJWTIssuerLeafPolicy(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
 	if leaf.KeyUsage != 0 && leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
 		return errors.New("the issuer certificate's key usage doesn't allow digital signatures")
 	}
 	if slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageOCSPSigning) {
 		return errors.New("the issuer certificate is an OCSP signer's")
 	}
-	if len(leaf.ExtKeyUsage) == 0 || len(leaf.UnknownExtKeyUsage) > 0 {
-		return nil
+	if slices.ContainsFunc(leaf.UnknownExtKeyUsage, isOtherRoleISOEKU) {
+		return errors.New("the issuer certificate is an mdoc reader authentication certificate (ISO/IEC 18013-5 Annex B)")
 	}
-	for _, eku := range leaf.ExtKeyUsage {
+	if onlyOtherRoles(leaf) {
+		return errors.New("the issuer certificate's extended key usage lists only other roles' purposes (TLS, code signing, email, time stamping, IPsec)")
+	}
+	if len(chains) > 0 && !slices.ContainsFunc(chains, intermediatesAllowIssuer) {
+		return errors.New("an intermediate CA on every verified path restricts its extended key usage to other roles' purposes")
+	}
+	return nil
+}
+
+// AnyIssuerLeaf is a LeafPolicy that accepts every chain-verified
+// leaf: the explicit opt-out of DefaultSDJWTIssuerLeafPolicy (or of
+// mdoc.DefaultDocumentSignerPolicy, for X5ChainIssuerKeyResolver), for
+// Roots that anchor only issuers' certificates.
+func AnyIssuerLeaf(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+
+func isOtherRoleISOEKU(oid asn1.ObjectIdentifier) bool {
+	return slices.ContainsFunc(otherRoleISOEKUs, oid.Equal)
+}
+
+// onlyOtherRoles reports whether cert's extended key usage lists
+// purposes, each one denoting a role other than signing credentials.
+func onlyOtherRoles(cert *x509.Certificate) bool {
+	if cert == nil || len(cert.ExtKeyUsage)+len(cert.UnknownExtKeyUsage) == 0 {
+		return false
+	}
+	for _, eku := range cert.ExtKeyUsage {
 		if !slices.Contains(otherRoleEKUs, eku) {
-			return nil
+			return false
 		}
 	}
-	return errors.New("the issuer certificate's extended key usage lists only other roles' purposes (TLS, code signing, email, time stamping, IPsec)")
+	return !slices.ContainsFunc(cert.UnknownExtKeyUsage, func(oid asn1.ObjectIdentifier) bool { return !isOtherRoleISOEKU(oid) })
+}
+
+// intermediatesAllowIssuer reports whether no intermediate of chain
+// (the certificates between its leaf and its trust anchor) restricts
+// its extended key usage to other roles' purposes.
+func intermediatesAllowIssuer(chain []*x509.Certificate) bool {
+	if len(chain) < 3 {
+		return true
+	}
+	return !slices.ContainsFunc(chain[1:len(chain)-1], onlyOtherRoles)
 }
 
 // ResolveIssuerChains implements SDJWTVCIssuerChainResolver: the paths

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -48,6 +49,11 @@ func TestX5CIssuerKeyResolver_DefaultLeafPolicy(t *testing.T) {
 		"any purpose":               {issue(x509.Certificate{ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}), false},
 		"a private purpose":         {issue(x509.Certificate{UnknownExtKeyUsage: []asn1.ObjectIdentifier{private}}), false},
 		"TLS and a private purpose": {issue(x509.Certificate{ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, UnknownExtKeyUsage: []asn1.ObjectIdentifier{private}}), false},
+		"an mdoc reader's": {issue(x509.Certificate{
+			KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: []asn1.ObjectIdentifier{readerAuthEKU},
+		}), true},
+		"an mdoc reader's and a private purpose": {issue(x509.Certificate{UnknownExtKeyUsage: []asn1.ObjectIdentifier{readerAuthEKU, private}}), true},
+		"an mDL document signer's":               {issue(x509.Certificate{UnknownExtKeyUsage: []asn1.ObjectIdentifier{mdoc.MDLDocumentSignerEKU}}), false},
 	} {
 		_, _, err := resolver.ResolveIssuerKey(context.Background(), x5cHeader(tc.cert), nil)
 		if tc.refuse != (err != nil) {
@@ -58,11 +64,59 @@ func TestX5CIssuerKeyResolver_DefaultLeafPolicy(t *testing.T) {
 		}
 	}
 
-	// A LeafPolicy that's set replaces it.
+	// A LeafPolicy that's set replaces it; AnyIssuerLeaf opts out.
 	tls := issue(x509.Certificate{ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}})
-	resolver.LeafPolicy = func(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+	resolver.LeafPolicy = verifier.AnyIssuerLeaf
 	if _, _, err := resolver.ResolveIssuerKey(context.Background(), x5cHeader(tls), nil); err != nil {
-		t.Errorf("a LeafPolicy accepting it: %v", err)
+		t.Errorf("AnyIssuerLeaf: %v", err)
+	}
+}
+
+// readerAuthEKU is ISO/IEC 18013-5's mdoc reader authentication
+// extended key usage (Annex B).
+var readerAuthEKU = asn1.ObjectIdentifier{1, 0, 18013, 5, 1, 6}
+
+// DefaultSDJWTIssuerLeafPolicy refuses a leaf whose every verified path
+// runs through an intermediate CA restricted to other roles' purposes,
+// and accepts one with a path through an unrestricted one.
+func TestX5CIssuerKeyResolver_DefaultLeafPolicyIntermediates(t *testing.T) {
+	ca, caKey := testcert.CA(t, "ecosystem CA")
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	resolver := verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
+	private := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 1}
+	for name, tc := range map[string]struct {
+		eku     []x509.ExtKeyUsage
+		unknown []asn1.ObjectIdentifier
+		refuse  bool
+	}{
+		"TLS server only":         {eku: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, refuse: true},
+		"TLS client and server":   {eku: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, refuse: true},
+		"mdoc reader auth only":   {unknown: []asn1.ObjectIdentifier{readerAuthEKU}, refuse: true},
+		"unrestricted":            {},
+		"any purpose":             {eku: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}},
+		"a private purpose":       {unknown: []asn1.ObjectIdentifier{private}},
+		"TLS and an mDL signer's": {eku: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, unknown: []asn1.ObjectIdentifier{mdoc.MDLDocumentSignerEKU}},
+	} {
+		intermediate, intermediateKey := testcert.Issue(t, &x509.Certificate{
+			Subject: pkix.Name{CommonName: "issuing CA"}, IsCA: true, BasicConstraintsValid: true,
+			KeyUsage:    x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+			ExtKeyUsage: tc.eku, UnknownExtKeyUsage: tc.unknown,
+		}, ca, caKey)
+		leaf, _ := testcert.Issue(t, &x509.Certificate{
+			Subject: pkix.Name{CommonName: "issuer"}, KeyUsage: x509.KeyUsageDigitalSignature,
+		}, intermediate, intermediateKey)
+		_, _, err := resolver.ResolveIssuerKey(context.Background(), x5cHeader(leaf, intermediate), nil)
+		if tc.refuse != (err != nil) {
+			t.Errorf("under an intermediate with %s: %v, want refused %v", name, err, tc.refuse)
+		}
+		if tc.refuse && !strings.Contains(err.Error(), "intermediate") {
+			t.Errorf("under an intermediate with %s: %v, want the intermediate named", name, err)
+		}
+		// With no paths, only the leaf is checked.
+		if err := verifier.DefaultSDJWTIssuerLeafPolicy(leaf, nil); err != nil {
+			t.Errorf("%s: the leaf alone: %v", name, err)
+		}
 	}
 }
 
