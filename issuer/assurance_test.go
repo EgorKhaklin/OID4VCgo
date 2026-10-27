@@ -280,6 +280,20 @@ func TestNewProductionRefusesAttestationProofType(t *testing.T) {
 	}
 }
 
+// TestNewProductionBoundsNonceLifetime: a c_nonce is a proof's only
+// freshness, so a production issuer keeps one at most an hour.
+func TestNewProductionBoundsNonceLifetime(t *testing.T) {
+	cfg, deps := productionIssuer(t)
+	cfg.Limits.NonceLifetime = time.Hour
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Fatalf("New with an hour's nonce lifetime: %v", err)
+	}
+	cfg.Limits.NonceLifetime = 365 * 24 * time.Hour
+	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "nonce_lifetime") {
+		t.Fatalf("New with a year's nonce lifetime = %v, want it refused", err)
+	}
+}
+
 // TestNewRequiresNonceEndpointForAttestationProofsUnderProduction: an
 // attestation-type proof's only freshness is its c_nonce, so a
 // production issuer supporting it must run a Nonce Endpoint.

@@ -184,6 +184,9 @@ func checkProductionAssurance(cfg Config, deps Dependencies) error {
 	if err := checkProductionAttestationProofType(cfg); err != nil {
 		return err
 	}
+	if !cfg.Endpoints.Nonce.IsZero() && cfg.Limits.NonceLifetime > maxProductionNonceLifetime {
+		return fmt.Errorf("config: limits.nonce_lifetime is %s; under AssuranceProduction it must be at most %s", cfg.Limits.NonceLifetime, maxProductionNonceLifetime)
+	}
 	if deps.PreAuthorizedCodes != nil && cfg.PreAuthorizedCodeClientAuthentication == nil {
 		return fmt.Errorf("config.pre_authorized_code_client_authentication is required under AssuranceProduction when dependencies.pre_authorized_codes is set (issuer.AnonymousPreAuthorizedCode{} accepts the redemption without client authentication, which HAIP 1.0 §4.4.1 doesn't allow)")
 	}
@@ -244,6 +247,12 @@ const (
 	minProductionDPoPClockSkew = 10 * time.Second
 	maxProductionDPoPClockSkew = 60 * time.Second
 )
+
+// maxProductionNonceLifetime is the longest Limits.NonceLifetime
+// AssuranceProduction takes: a c_nonce is a proof's only freshness, so
+// one valid much longer lets a Wallet's proofs be made well before
+// they're sent.
+const maxProductionNonceLifetime = time.Hour
 
 // checkProductionDPoPClockSkew holds Limits.MaxDPoPClockSkew to FAPI
 // 2.0's bounds where this issuer verifies the token request's DPoP
