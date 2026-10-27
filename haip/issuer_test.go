@@ -162,6 +162,16 @@ func TestValidateIssuerConfig_ScopeSharesKeyAttestations(t *testing.T) {
 	if err := validate(jwtHW, map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: {KeyAttestationsRequired: &oid4vci.KeyAttestationRequirement{}}}); err == nil {
 		t.Error("a scope shared with a configuration requiring a weaker key attestation was accepted")
 	}
+	repeated := &oid4vci.KeyAttestationRequirement{KeyStorage: []string{"iso_18045_high", "iso_18045_high"}}
+	if err := validate(jwtHW, map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeAttestation: {KeyAttestationsRequired: repeated}}); err != nil {
+		t.Errorf("the same key attestations with a level repeated: %v", err)
+	}
+	if err := validate(nil, map[string]oid4vci.ProofTypeConfiguration{oid4vci.ProofTypeJWT: {}}); err != nil {
+		t.Errorf("no proof types beside a proof type requiring no key attestation: %v", err)
+	}
+	if err := validate(nil, jwtHW); err == nil {
+		t.Error("a scope shared by a configuration taking no proofs and one requiring a key attestation was accepted")
+	}
 }
 
 // HAIP 1.0 §4.5.1's "jwt proof type using key_attestation": the

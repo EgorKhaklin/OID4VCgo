@@ -158,8 +158,10 @@ func ValidateIssuerConfig(cfg issuer.Config) error {
 
 // keyAttestationsRequired is what c's proof types require of a key
 // attestation, each one's key_attestations_required (none for a proof
-// type that takes a proof without one), as a string comparable across
-// configurations whichever proof types they take.
+// type that takes a proof without one, and for a configuration that
+// takes no proofs), as a string comparable across configurations
+// whichever proof types they take, and however their levels are
+// ordered or repeated.
 func keyAttestationsRequired(c issuer.CredentialConfiguration) string {
 	seen := map[string]bool{}
 	for _, ptc := range c.ProofTypesSupported {
@@ -168,7 +170,15 @@ func keyAttestationsRequired(c issuer.CredentialConfiguration) string {
 			seen["none"] = true
 			continue
 		}
-		seen[fmt.Sprintf("%q/%q", slices.Sorted(slices.Values(r.KeyStorage)), slices.Sorted(slices.Values(r.UserAuthentication)))] = true
+		seen[fmt.Sprintf("%q/%q", levelSet(r.KeyStorage), levelSet(r.UserAuthentication))] = true
+	}
+	if len(seen) == 0 {
+		return "none"
 	}
 	return strings.Join(slices.Sorted(maps.Keys(seen)), ";")
+}
+
+// levelSet is levels sorted, without repeats.
+func levelSet(levels []string) []string {
+	return slices.Compact(slices.Sorted(slices.Values(levels)))
 }
