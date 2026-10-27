@@ -67,12 +67,15 @@ type proximityReaderConfig struct {
 	// has no current CRL from.
 	CRLs       string   `json:"crls,omitempty"`
 	Revocation []string `json:"revocation,omitempty"`
+	// CRLIssuers are PEM certificates of the CAs that issued
+	// certificates pinned in the roots, as a Wallet's crl_issuers.
+	CRLIssuers string `json:"crl_issuers,omitempty"`
 }
 
 // NewProximityReader configures a reader from configJSON:
 // {"issuer_roots", "issuer_roots_by_doctype", "reader_key_id",
 // "reader_chain", "max_clock_skew_seconds", "require_mdl_signer_eku",
-// "crls", "revocation"},
+// "crls", "crl_issuers", "revocation"},
 // refusing any other key, so a misspelled option isn't silently left
 // at its default. keys holds the reader's key, reader_key_id; it may be
 // nil for a reader that doesn't sign.
@@ -144,7 +147,7 @@ func (r *ProximityReader) configureRevocation(cfg proximityReaderConfig) error {
 	if err != nil {
 		return err
 	}
-	if r.crls, err = newCRLSet("crls", cfg.CRLs); err != nil {
+	if r.crls, err = newCRLSet(cfg.CRLs, cfg.CRLIssuers); err != nil {
 		return err
 	}
 	if named[revocationIssuer] {
@@ -425,8 +428,9 @@ func verifiedOf(v proximity.Verified) *verifiedJSON {
 // status is "valid", "invalid" (revoked), "suspended", another status
 // the list defines as "0x" and its value, "none" (the MSO names no
 // revocation list) or "unknown" (it names an identifier list,
-// §12.3.6.3, which this reader can't check): rely on the document only
-// on "valid" or "none". The list covers many documents, so fetching it
+// §12.3.6.3, which this reader can't check, and either no status list
+// or one on which it's valid): rely on the document only on "valid" or
+// "none". The list covers many documents, so fetching it
 // doesn't tell its publisher which one is checked. It's fetched over
 // https from public addresses only. A failed fetch is network, a list
 // that doesn't verify protocol, and before a verified mdoc it's
@@ -479,6 +483,11 @@ func (r *ProximityReader) checkStatus(ctx context.Context, v proximity.Verified)
 	status, _, err := checker.Check(ctx, statuslist.StatusListRef{Idx: ref.Idx, URI: ref.URI}, true)
 	if err != nil {
 		return "", err
+	}
+	if status == statuslist.StatusValid && v.Status.IdentifierList != nil {
+		// Valid on the status list, but the identifier list the MSO
+		// names too, which this reader can't check, may still revoke it.
+		return walletflow.StatusUnknown, nil
 	}
 	return statusValue(status), nil
 }

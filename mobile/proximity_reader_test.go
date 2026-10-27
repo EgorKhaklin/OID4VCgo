@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/teststatuslist"
 	"github.com/idfoundry/oid4vcgo/proximity"
 )
 
@@ -206,6 +207,43 @@ func TestProximityReader_CheckStatusWithoutList(t *testing.T) {
 	ref := &mdoc.Status{StatusList: &mdoc.StatusListRef{URI: "https://status.example/list", Idx: 1}}
 	if _, err := r.checkStatus(context.Background(), proximity.Verified{Status: ref}); err == nil {
 		t.Error("checkStatus without an issuer chain succeeded")
+	}
+}
+
+// A status list is read as ISO/IEC 18013-5 §12.3.6.3 has it: a token
+// without exp, or with its x5chain outside the protected header, is
+// refused. One on which the document is valid, beside an identifier
+// list the reader can't check, leaves it unknown.
+func TestProximityReader_CheckStatusListForm(t *testing.T) {
+	signer := teststatuslist.NewSigner(t)
+	saved := testHTTP.Load()
+	defer testHTTP.Store(saved)
+	r := &ProximityReader{clock: time.Now}
+	ids := &mdoc.IdentifierListRef{ID: []byte{1}, URI: "https://status.example/ids"}
+	for name, tc := range map[string]struct {
+		variant teststatuslist.Variant
+		ids     *mdoc.IdentifierListRef
+		want    string // "" for refused
+	}{
+		"well-formed":          {teststatuslist.WellFormed, nil, "valid"},
+		"no exp":               {teststatuslist.NoExp, nil, ""},
+		"unprotected x5chain":  {teststatuslist.UnprotectedX5Chain, nil, ""},
+		"with identifier list": {teststatuslist.WellFormed, ids, "unknown"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			uri, client := signer.Serve(t, tc.variant)
+			testHTTP.Store(client)
+			got, err := r.checkStatus(context.Background(), proximity.Verified{
+				Status:      &mdoc.Status{StatusList: &mdoc.StatusListRef{Idx: 3, URI: uri, Certificate: signer.CA.Raw}, IdentifierList: tc.ids},
+				IssuerChain: signer.Chain,
+			})
+			switch {
+			case tc.want == "" && err == nil:
+				t.Errorf("checkStatus = %q, want it refused", got)
+			case tc.want != "" && (err != nil || got != tc.want):
+				t.Errorf("checkStatus = %q, %v; want %q", got, err, tc.want)
+			}
+		})
 	}
 }
 

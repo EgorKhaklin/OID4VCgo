@@ -16,8 +16,13 @@
 // (Wallet.Deferred, Wallet.ResumeIssuance, Wallet.RefreshCredential).
 // At production assurance, receiving credentials needs a KeyStore
 // declaring durable custody, and the authorization code grant a Durable
-// AuthorizationStore. walletflow owns the protocols: every network
-// request, every protocol message, and every check on what comes back.
+// AuthorizationStore. Config.RedirectURI is a private-use URI scheme in
+// reverse.domain:/path form, such as com.example.wallet:/callback (RFC
+// 8252 §7.1), or loopback http (§7.3) — or, in Development only, https —
+// with no fragment or credentials; New refuses anything else, since no
+// issuance could authenticate with it. walletflow owns the protocols:
+// every network request, every protocol message, and every check on
+// what comes back.
 //
 // # Following the issuer's metadata
 //
@@ -37,14 +42,19 @@
 //   - the proof: a jwt proof (Appendix F.1), carrying a key attestation
 //     in its key_attestation header (Appendix D.1) where the issuer
 //     requires one (key_attestations_required), or under ProfileHAIP
-//     takes one. A key attestation is sent as the attestation proof
-//     type (Appendix F.3) only to an issuer that takes no jwt proof: it
-//     names no audience, so another issuer could redeem it. Receiving
-//     refuses an SD-JWT VC naming an issuer other than the offer's, but
-//     an mdoc names none: an mdoc issuer that takes only the
-//     attestation proof type could relay the proof to another issuer
-//     the wallet trusts, and nothing but that trust stops it. A credential
-//     bound to no key isn't received (ErrProofUnsupported);
+//     takes one, and as the attestation proof type (Appendix F.3) only
+//     to an issuer that takes no jwt proof. A key attestation names no
+//     audience, and its c_nonce comes from an unauthenticated Nonce
+//     Endpoint, so any issuer it's sent to — in a jwt proof's
+//     key_attestation header too, which carries the same JWT — could
+//     redeem it as the attestation proof type at another issuer that
+//     takes that proof type, for a credential bound to the holder's
+//     keys; only that other issuer can rule it out, by not taking it.
+//     Receiving refuses an SD-JWT VC naming an issuer other than the
+//     offer's (Config.AllowForeignIss), but an SD-JWT VC needn't name
+//     one and an mdoc names none: for those, nothing on the wallet's
+//     side stops the relay but the issuers it trusts (see SECURITY.md).
+//     A credential bound to no key isn't received (ErrProofUnsupported);
 //   - a c_nonce where the issuer has a nonce endpoint (§7), and none
 //     where it hasn't;
 //   - a DPoP-bound access token, or a Bearer one where the server issues

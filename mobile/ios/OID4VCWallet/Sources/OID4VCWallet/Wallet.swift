@@ -7,7 +7,8 @@ public struct WalletConfiguration: Codable, Sendable {
     /// wallet with no `WalletProvider`.
     public var clientID: String
     /// Where the issuer's pages send the holder back to: a private-use URI the
-    /// app opens, registered with the issuers' Authorization Servers. Empty
+    /// app opens, registered with the issuers' Authorization Servers, in
+    /// `reverse.domain:/path` form (`com.example.wallet:/callback`). Empty
     /// for a wallet that receives only pre-authorized codes.
     public var redirectURI: String
     /// PEM certificates: the trust anchors for issuers' credentials. A
@@ -145,6 +146,13 @@ public struct WalletConfiguration: Codable, Sendable {
     /// current CRL from, until `Wallet.setCRLs(_:)` supplies one; a role
     /// not listed checks no revocation.
     public var revocation: [RevocationRole]
+    /// PEM certificates of the CAs that issued certificates pinned in the
+    /// roots (a leaf in `verifierRoots`, say), for a role in
+    /// `revocation`: a pinned certificate is checked against its CA's CRL,
+    /// verified with the CA's certificate from here. They aren't trust
+    /// anchors. Without its CA here, a pinned certificate that isn't
+    /// self-signed is refused.
+    public var crlIssuers: String
 
     /// A trust role whose certificates can be checked for revocation.
     public enum RevocationRole: String, Codable, Sendable, CaseIterable {
@@ -216,7 +224,7 @@ public struct WalletConfiguration: Codable, Sendable {
                 issuerMetadataRoots: String = "", requireSignedIssuerMetadata: Bool = false,
                 requireIssuerMetadataName: Bool = false, maxIssuerMetadataAgeSeconds: Int = 0, allowForeignIss: Bool = false,
                 mdocIssuerRoots: String = "", mdocIssuerRootsByDocType: [String: String] = [:], mdocIssuerRequireEKU: String = "",
-                crls: String = "", revocation: [RevocationRole] = []) {
+                crls: String = "", revocation: [RevocationRole] = [], crlIssuers: String = "") {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -249,6 +257,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.mdocIssuerRequireEKU = mdocIssuerRequireEKU
         self.crls = crls
         self.revocation = revocation
+        self.crlIssuers = crlIssuers
     }
 
     enum CodingKeys: String, CodingKey {
@@ -266,7 +275,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case allowForeignIss = "allow_foreign_iss"
         case mdocIssuerRoots = "mdoc_issuer_roots", mdocIssuerRootsByDocType = "mdoc_issuer_roots_by_doctype"
         case mdocIssuerRequireEKU = "mdoc_issuer_require_eku"
-        case crls, revocation
+        case crls, revocation, crlIssuers = "crl_issuers"
     }
 
     /// Decodes a configuration, refusing a key it doesn't know: a
@@ -309,7 +318,8 @@ public struct WalletConfiguration: Codable, Sendable {
                   mdocIssuerRootsByDocType: try c.decodeIfPresent([String: String].self, forKey: .mdocIssuerRootsByDocType) ?? [:],
                   mdocIssuerRequireEKU: try c.decodeIfPresent(String.self, forKey: .mdocIssuerRequireEKU) ?? "",
                   crls: try c.decodeIfPresent(String.self, forKey: .crls) ?? "",
-                  revocation: try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? [])
+                  revocation: try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? [],
+                  crlIssuers: try c.decodeIfPresent(String.self, forKey: .crlIssuers) ?? "")
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
@@ -364,6 +374,10 @@ public struct CredentialStatus: Decodable, Equatable, Sendable {
         case valid, revoked, suspended
         /// A status the issuer's list defines itself, as "0x" and its value.
         case other(String)
+        /// An mdoc naming an identifier list (ISO/IEC 18013-5 §12.3.6.4),
+        /// which isn't checked, and no status list saying otherwise than
+        /// valid: the status isn't known.
+        case unknown
     }
     /// The status found.
     public let value: Value
@@ -376,6 +390,7 @@ public struct CredentialStatus: Decodable, Equatable, Sendable {
         case "valid": value = .valid
         case "invalid": value = .revoked
         case "suspended": value = .suspended
+        case "unknown": value = .unknown
         case let v: value = .other(v)
         }
         checkedAt = try c.decode(Date.self, forKey: .checkedAt)

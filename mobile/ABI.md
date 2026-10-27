@@ -18,9 +18,19 @@ OID4VCWallet 0.7.0 (Swift); `StartDCAPIPresentation`, proximity
 `tls_pin` code, later the KeyAgreement (`SetKeyAgreement`,
 `CheckKeyAgreement`, `proximity_device_auth`), and then certificate
 revocation (`crls`, `revocation`, `SetCRLs` on a Wallet and a
-ProximityReader). An older wrapper shows a
+ProximityReader, later `crl_issuers`). An older wrapper shows a
 code it doesn't know as it is. Check a library's release notes for the
 calls it has.
+
+Some error classifications changed within version 12 too. A call the
+configuration lacks what it needs for — `issuer_roots` or
+`redirect_uri` to receive credentials, `verifier_roots` to present, a
+provider and `client_id` under `"issuance_profile": "haip"` — was
+`protocol` and is now `invalid_input` with the detail
+`not_configured` (`DetailNotConfigured`), its message naming the
+configuration key. A `redirect_uri` in a form no issuance can
+authenticate with is `invalid_input` at `NewWallet` rather than
+`protocol` at each issuance (see Wallet).
 
 The version changes whenever a function, object, JSON result, record
 format or error code below changes incompatibly.
@@ -34,10 +44,11 @@ format or error code below changes incompatibly.
 - **Errors:** a failing call's error text is `[code] message`, or
   `[code:detail] message` when the issuer, Authorization Server or
   Verifier answered with an OAuth error code of its own (`detail`: for
-  example `invalid_grant`, which a wrong PIN gets). The code and detail
-  are stable; the message is for logs. A callback's error comes back to
-  the app as `platform`, carrying its message. (Version 1 had no
-  detail.)
+  example `invalid_grant`, which a wrong PIN gets), or with one of the
+  wallet's own (`request_refused`'s, and `invalid_input`'s
+  `not_configured`). The code and detail are stable; the message is for
+  logs. A callback's error comes back to the app as `platform`,
+  carrying its message. (Version 1 had no detail.)
 - **Threads:** every call blocks. Call from a background thread, never
   the main thread; callbacks run on the calling thread.
 - **Cancellation:** a call that waits on the network takes an
@@ -49,7 +60,7 @@ format or error code below changes incompatibly.
 
 | Code | Meaning |
 |---|---|
-| `invalid_input` | an argument or the configuration is malformed, or the configuration lacks what the call needs (`verifier_roots` to present, say) |
+| `invalid_input` | an argument or the configuration is malformed, or, with the detail `not_configured`, the configuration lacks what the call needs (`verifier_roots` to present, say): the message names the key |
 | `platform` | a callback into the app failed (its message follows) |
 | `network` | a request couldn't be made, got no answer, or timed out; retryable |
 | `unavailable` | the service answered with HTTP 5xx or 429; retryable later |
@@ -139,7 +150,7 @@ A record is JSON the app needn't read: `id`, `credential_issuer`,
 `status_list`, `status_list_cwt`, `status`, `grant_id` and
 `credential_identifier` (the dataset a refresh asks for again),
 `copies_correlated` (the issuer gave two copies the same `jti`, `sub`,
-status list entry, disclosure digest, or validity timestamp not rounded
+status list or identifier list entry, disclosure digest, or validity timestamp not rounded
 to the day; absent when not), and `copies` (each copy's `credential`, `holder_key_id`, `presented`,
 `shown_to`, and its own `status_list` and `valid_until`). A record
 written before a field was kept lacks it.
@@ -210,7 +221,7 @@ library's an `IOException`.
  "status_issuers": {"https://issuer.example": ["https://status.example"]},
  "require_issuer_name": false, "issuer_metadata_roots": "<PEM>", "require_signed_issuer_metadata": false,
  "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0, "allow_foreign_iss": false,
- "crls": "<PEM X509 CRLs>", "revocation": ["issuer", "verifier"]}
+ "crls": "<PEM X509 CRLs>", "revocation": ["issuer", "verifier"], "crl_issuers": "<PEM>"}
 ```
 
 `issuer_roots` is needed to receive credentials, and `verifier_roots` to
@@ -231,7 +242,14 @@ authentication needs none of them. Outside `development`, a
 `redirect_uri` must be the app's own URI scheme
 (`com.example.wallet:/callback`) or loopback http to 127.0.0.1 or
 [::1], or `NewWallet` is `invalid_input`: `ResumeIssuance` can't
-complete an https one.
+complete an https one. In `development` too, a private-use scheme must
+be a domain name in reverse order followed by a single slash,
+`reverse.domain:/path` (RFC 8252 §7.1), and no `redirect_uri` may carry
+a fragment or credentials: `myapp:/callback`,
+`com.example.wallet://callback` and `com.example.wallet:callback` are
+`invalid_input` at `NewWallet`. (Earlier within ABI 12 `NewWallet`
+took them, and every issuance that authenticated then failed as
+`protocol`.)
 `registrar_roots`, if set, are the registrars whose registrations of
 Verifiers the wallet checks (OpenID4VP `verifier_info`, OID4VCgo's
 `registration` format); without them, registrations are ignored.
@@ -391,10 +409,19 @@ certificate, under `verifier_roots`) and `status` (a status list's
 signer, in `CheckStatus`). A role not named checks no revocation. A
 role named accepts a certificate only through a verified path on which
 each certificate below the trust anchor has a current CRL (its
-nextUpdate not passed) from its issuer that doesn't list it: a
-certificate a list names is refused, and so, failing closed, is one
-whose issuer has no current list — with lists for issuers but not for
-Verifiers, name `issuer` alone. A refused credential is `protocol`, a
+nextUpdate not passed) from its issuer that doesn't list it; the trust
+anchor itself isn't checked, unless it's a certificate pinned in the
+roots that isn't self-signed (a Verifier's leaf in `verifier_roots`,
+say), which is checked against a CRL from the CA that issued it. That
+CA isn't on the path, so its certificate, to verify the CRL with, comes
+from `crl_issuers` (PEM CA certificates, used for nothing else: they
+aren't trust anchors). A certificate a list names is refused, and so,
+failing closed, is one whose issuer has no current list, or a pinned
+one whose CA isn't in `crl_issuers` — with lists for issuers but not
+for Verifiers, name `issuer` alone. `crl_issuers` holding anything but
+CA certificates is `invalid_input`; it was added within ABI 12, and
+before it a pinned certificate that isn't self-signed was always
+refused under its role. A refused credential is `protocol`, a
 refused Verifier `untrusted_verifier`, a refused registrar's
 registration unverified and a refused reader unrecognized, as for a
 certificate outside their roots. A role may be named with no `crls`
@@ -457,7 +484,11 @@ presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
   (`request_refresh`), so `RefreshCredential` can replace its copies.
   The Authorization Server may still refuse it (`reissue_required`).
 - `status` is its revocation status as last checked: `{"value": "valid"
-  | "invalid" | "suspended" | "0x…", "checked_at"}`.
+  | "invalid" | "suspended" | "0x…" | "unknown", "checked_at"}`.
+  `unknown` is an mdoc whose MSO names an identifier list (ISO/IEC
+  18013-5 §12.3.6.4), which the wallet can't check, and no status list
+  on which it's anything but valid (added within ABI 12: before, such an
+  mdoc was returned with no `status`).
 
 `display`, `valid_until` and `status` are absent when unknown.
 
@@ -720,7 +751,7 @@ can't use is `invalid_input`.
 
 The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",
-"require_mdl_signer_eku", "crls", "revocation"}`:
+"require_mdl_signer_eku", "crls", "revocation", "crl_issuers"}`:
 - `issuer_roots` (PEM) are the IACAs whose mdocs are accepted, of any
   document type `issuer_roots_by_doctype` doesn't name.
 - `issuer_roots_by_doctype` (an object of document type to PEM) are each
@@ -744,8 +775,9 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   closed for a CA without a current list, `SetCRLs(pem)` replaces the
   lists for sessions started before or after, and anything but CRLs is
   `invalid_input`. An MSO's status list chaining to the certificate its
-  status names needs that certificate's list too. Additive within
-  ABI 12.
+  status names needs that certificate's list too. `crl_issuers` are
+  the CAs of certificates pinned in the roots, as a Wallet's. Additive
+  within ABI 12.
 
 | Method | Result |
 |---|---|
@@ -797,7 +829,9 @@ another IACA the reader trusts. It returns `{"abi", "status"}`, where
 `status` is `valid`, `invalid` (revoked), `suspended`, another status
 the list defines (`0x` and its value), `none` (the MSO names no
 revocation list) or `unknown` (an identifier list, §12.3.6.3, which this
-reader can't check). Rely on the document only on `valid` or `none`. A
+reader can't check, and no status list or one on which the document is
+valid; within ABI 12, an MSO naming both was reported by its status
+list alone). Rely on the document only on `valid` or `none`. A
 failed fetch is `network`, a list that doesn't verify `protocol`, and
 cancelling `op` makes it `cancelled`. The list covers many documents, so
 fetching it doesn't tell its publisher which one was presented; it can

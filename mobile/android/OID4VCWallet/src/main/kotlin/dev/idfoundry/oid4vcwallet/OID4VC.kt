@@ -26,7 +26,11 @@ public class WalletException internal constructor(
     public val code: Code,
     /**
      * The remote party's OAuth error code, such as `invalid_grant` (a wrong PIN) or
-     * `access_denied`, when it gave one.
+     * `access_denied`, when it gave one. For [Code.invalidInput] it's `not_configured`
+     * (`Mobile.DetailNotConfigured`) when the wallet's configuration lacks what the call
+     * needs — such as `issuerRoots` or `redirectURI` to receive credentials, or
+     * `verifierRoots` to present them — rather than an argument being malformed: the
+     * app's configuration to fix, which [message] names by its JSON key (`issuer_roots`).
      */
     public val protocolError: String?,
     message: String,
@@ -177,6 +181,7 @@ public class WalletException internal constructor(
             code == Code.protocol && protocolError == "invalid_grant" -> "That code or PIN wasn't accepted."
             code == Code.protocol -> "The service refused the request."
             code == Code.platform -> "The wallet couldn't use its keys or storage."
+            code == Code.invalidInput && protocolError == Mobile.DetailNotConfigured -> "This wallet isn't set up for that."
             code == Code.invalidInput -> "That link or code isn't valid."
             code == Code.notFound -> "That credential is no longer in the wallet."
             code == Code.wrongStep -> "That step isn't available now."

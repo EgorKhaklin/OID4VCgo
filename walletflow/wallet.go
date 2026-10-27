@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/client"
 	"github.com/idfoundry/fapigo/fapihttp"
 	"github.com/idfoundry/fapigo/keys"
@@ -38,7 +39,12 @@ type Config struct {
 	// RedirectURI must be a native app's: a private-use URI scheme
 	// (com.example.wallet:/callback) or loopback http to 127.0.0.1 or
 	// [::1] (RFC 8252 §7.1, §7.3), not an https link, which
-	// ResumeIssuance can't complete (see AuthorizationStore).
+	// ResumeIssuance can't complete (see AuthorizationStore). At every
+	// assurance level, New refuses a RedirectURI fapigo/client wouldn't
+	// take: a private-use scheme is a reverse-order domain name and a
+	// single slash, reverse.domain:/path (com.example.wallet:/callback,
+	// not myapp:/callback or com.example.wallet://callback), and no
+	// redirect URI carries a fragment or credentials.
 	ClientID    string
 	RedirectURI string
 
@@ -405,6 +411,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err := cfg.validateChoices(); err != nil {
 		return nil, err
 	}
+	if err := cfg.checkRedirectURIForm(); err != nil {
+		return nil, err
+	}
 	if err := cfg.validateRevocation(); err != nil {
 		return nil, err
 	}
@@ -504,6 +513,31 @@ func (w *Wallet) checkReceivingAtNew() error {
 	}
 	if w.cfg.RedirectURI != "" && !nativeRedirectURI(w.cfg.RedirectURI) {
 		return errors.New("walletflow: in production, Config.RedirectURI must be a private-use URI scheme, such as com.example.wallet:/callback, or loopback http to 127.0.0.1 or [::1] (RFC 8252 §7.1, §7.3): ResumeIssuance can't complete an authorization that redirects anywhere else once the app is relaunched")
+	}
+	return nil
+}
+
+// checkRedirectURIForm refuses, at every assurance level, a
+// Config.RedirectURI fapigo/client wouldn't build an issuance's client
+// with: New would otherwise take it, and every issuance that
+// authenticates would fail once the Wallet Provider had been asked for
+// an attestation. It's client.Config's own redirect_uri check:
+// fapi.ParseRedirectURL admitting loopback http and a private-use
+// scheme, which must be a reverse-order domain name followed by a single
+// slash and the path, com.example.wallet:/callback (RFC 8252 §7.1) —
+// not myapp:/callback, com.example.wallet://callback or
+// com.example.wallet:callback — with no fragment or credentials; and,
+// under production assurance, a loopback one naming the IP literal
+// 127.0.0.1 or [::1] (§8.3).
+func (c Config) checkRedirectURIForm() error {
+	if c.RedirectURI == "" {
+		return nil
+	}
+	if _, err := fapi.ParseRedirectURL(c.RedirectURI, fapi.AllowLoopbackHTTP(), fapi.AllowPrivateUseScheme()); err != nil {
+		return fmt.Errorf("walletflow: Config.RedirectURI must be a private-use URI scheme in reverse.domain:/path form, such as com.example.wallet:/callback, or loopback http, with no fragment or credentials (RFC 8252 §7.1, §7.3): %w", err)
+	}
+	if u, err := url.Parse(c.RedirectURI); err == nil && !c.Development && u.Scheme == "http" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1" {
+		return errors.New("walletflow: outside Development, a loopback Config.RedirectURI names the IP literal 127.0.0.1 or [::1], not a host name (RFC 8252 §8.3)")
 	}
 	return nil
 }

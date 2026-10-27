@@ -22,7 +22,9 @@ import (
 // config is NewWallet's JSON configuration.
 type config struct {
 	// ClientID and RedirectURI: the wallet's registration with
-	// Authorization Servers.
+	// Authorization Servers. RedirectURI is a private-use URI scheme in
+	// reverse.domain:/path form or loopback http
+	// (walletflow.Config.RedirectURI).
 	ClientID    string `json:"client_id"`
 	RedirectURI string `json:"redirect_uri"`
 	// IssuerRoots and VerifierRoots are PEM certificates: the trust
@@ -147,6 +149,14 @@ type config struct {
 	// until SetCRLs supplies one; a role not named checks no revocation.
 	CRLs       string   `json:"crls,omitempty"`
 	Revocation []string `json:"revocation,omitempty"`
+	// CRLIssuers are PEM certificates of the CAs that issued
+	// certificates pinned in the roots (a leaf in verifier_roots, say),
+	// for a role Revocation names: a pinned certificate is checked
+	// against its CA's CRL, verified with the CA's certificate from here
+	// (certrevocation.CRLs.Issuers). They aren't trust anchors. Without
+	// its CA here, a pinned certificate that isn't self-signed is
+	// refused, failing closed.
+	CRLIssuers string `json:"crl_issuers,omitempty"`
 }
 
 // proximityDeviceAuth is the walletflow.ProximityDeviceAuth name names.
@@ -269,7 +279,7 @@ func walletRevocation(cfg config, wcfg *walletflow.Config) (*crlSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	crls, err := newCRLSet("crls", cfg.CRLs)
+	crls, err := newCRLSet(cfg.CRLs, cfg.CRLIssuers)
 	if err != nil {
 		return nil, err
 	}
@@ -593,9 +603,11 @@ func (w *Wallet) HolderKeyIDs() (string, error) {
 // CheckStatus fetches the issuer's status list for the credential
 // credentialID names, checks its signature, records the credential's revocation
 // status, and returns the credential's summary with it ("status":
-// {"value": "valid" | "invalid" | "suspended" | "0x…", "checked_at"}).
-// A credential without a status list is returned as it is, as is an
-// expired one, whose status list isn't fetched. The list
+// {"value": "valid" | "invalid" | "suspended" | "0x…" | "unknown",
+// "checked_at"}). A credential without a status list is returned as it
+// is, as is an expired one, whose status list isn't fetched; an mdoc
+// naming an identifier list, which isn't checked, is "unknown" unless a
+// status list it names too says otherwise than valid. The list
 // covers many credentials, so fetching it doesn't tell the issuer which
 // one is checked.
 func (w *Wallet) CheckStatus(op *Operation, credentialID string) (string, error) {

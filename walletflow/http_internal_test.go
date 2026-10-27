@@ -15,7 +15,7 @@ import (
 // be pointed at its own network: the default client won't dial a
 // private or loopback address outside Development.
 func TestNew_DefaultHTTPRefusesPrivateAddresses(t *testing.T) {
-	w, err := New(Config{ClientID: "wallet", RedirectURI: "app:/cb"}, Dependencies{
+	w, err := New(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb"}, Dependencies{
 		Keys: NewMemoryKeyStore(), Credentials: NewMemoryCredentialStore(),
 	})
 	if err != nil {
@@ -57,7 +57,7 @@ func TestNew_CallersHTTPGetsTimeout(t *testing.T) {
 	transport := &countingTransport{base: http.DefaultTransport}
 	given := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return errRedirect }}
 	deps := Dependencies{Keys: NewMemoryKeyStore(), Credentials: NewMemoryCredentialStore(), HTTP: given}
-	w, err := New(Config{ClientID: "wallet", RedirectURI: "app:/cb", Development: true}, deps)
+	w, err := New(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", Development: true}, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestNew_CallersHTTPGetsTimeout(t *testing.T) {
 	}
 
 	own := &http.Client{Timeout: time.Minute}
-	w, err = New(Config{ClientID: "wallet", RedirectURI: "app:/cb", Development: true}, Dependencies{Keys: NewMemoryKeyStore(), Credentials: NewMemoryCredentialStore(), HTTP: own})
+	w, err = New(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", Development: true}, Dependencies{Keys: NewMemoryKeyStore(), Credentials: NewMemoryCredentialStore(), HTTP: own})
 	if err != nil {
 		t.Fatal(err)
 	}

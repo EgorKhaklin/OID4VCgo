@@ -87,7 +87,13 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
     /// What kind of failure this is.
     public let code: Code
     /// The remote party's OAuth error code, such as `invalid_grant` (a
-    /// wrong PIN) or `access_denied`, when it gave one.
+    /// wrong PIN) or `access_denied`, when it gave one. For
+    /// ``Code/invalidInput`` it's `not_configured` (`MobileDetailNotConfigured`)
+    /// when the wallet's configuration lacks what the call needs — such
+    /// as `issuerRoots` or `redirectURI` to receive credentials, or
+    /// `verifierRoots` to present them — rather than an argument being
+    /// malformed: the app's configuration to fix, which `message` names
+    /// by its JSON key (`issuer_roots`).
     public let protocolError: String?
     /// Detail for logs: at most 300 characters, with no personal data, no
     /// remote party's own description, and no URL's path or query.
@@ -130,6 +136,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         case .protocolError where protocolError == "invalid_grant": "That code or PIN wasn't accepted."
         case .protocolError: "The service refused the request."
         case .platform: "The wallet couldn't use its keys or storage."
+        case .invalidInput where protocolError == MobileDetailNotConfigured: "This wallet isn't set up for that."
         case .invalidInput: "That link or code isn't valid."
         case .notFound: "That credential is no longer in the wallet."
         case .wrongStep: "That step isn't available now."

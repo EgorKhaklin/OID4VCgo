@@ -123,7 +123,11 @@ completes it and returns an issuance ready for
 SwiftUI, from `onOpenURL`. Outside development, resuming needs a
 `redirectURI` with the app's own URI scheme, such as
 `com.example.wallet:/callback`, so `Wallet` refuses an https Universal
-Link there.
+Link there. In development too, the scheme must be a domain name in
+reverse order followed by a single slash, `reverse.domain:/path`
+(RFC 8252 §7.1): `Wallet` refuses `myapp:/callback`,
+`com.example.wallet://callback` and `com.example.wallet:callback` as
+`invalidInput`, and any redirect URI with a fragment or credentials.
 
 ```swift
 /// Completes an authorization the app was killed during, from the

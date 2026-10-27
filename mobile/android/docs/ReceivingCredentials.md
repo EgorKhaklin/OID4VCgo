@@ -141,7 +141,12 @@ so when the redirect arrives at a relaunched app — a redirect
 it and returns an issuance ready for `requestCredentials()`. Outside
 development, resuming needs a `redirectURI` with the app's own URI
 scheme, such as `com.example.wallet:/callback`: it fails for an https
-App Link, which `Wallet` therefore refuses.
+App Link, which `Wallet` therefore refuses. In development too, the
+scheme must be a domain name in reverse order followed by a single
+slash, `reverse.domain:/path` (RFC 8252 §7.1): `Wallet` refuses
+`myapp:/callback`, `com.example.wallet://callback` and
+`com.example.wallet:callback` as `invalidInput`, and any redirect URI
+with a fragment or credentials.
 
 ```kotlin
 /** Completes an authorization the app's process was killed during, from the redirect that relaunched it. */

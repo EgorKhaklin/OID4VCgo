@@ -564,6 +564,11 @@ public data class ProximityReaderConfiguration(
      * from, until [ProximityReader.setCRLs] supplies one.
      */
     @SerialName("revocation") val revocation: List<RevocationRole> = emptyList(),
+    /**
+     * PEM certificates of the CAs that issued certificates pinned in the
+     * roots, for a role in [revocation], as [WalletConfiguration.crlIssuers].
+     */
+    @SerialName("crl_issuers") val crlIssuers: String = "",
 ) {
     /** A reader's trust role whose certificates can be checked for revocation. */
     @Serializable
@@ -977,8 +982,8 @@ public sealed interface MdocStatus {
     public data object NoStatus : MdocStatus
 
     /**
-     * The MSO names an identifier list (ISO/IEC 18013-5 §12.3.6.3), which isn't checked: the
-     * status isn't known.
+     * The MSO names an identifier list (ISO/IEC 18013-5 §12.3.6.3), which isn't checked, and no
+     * status list saying otherwise than valid: the status isn't known.
      */
     public data object Unknown : MdocStatus
 }
