@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -77,6 +78,17 @@ func FuzzRequestCredentialSignedProof(f *testing.F) {
 	f.Add([]byte(`{"typ":"openid4vci-proof+jwt","kid":"did:example:wallet#1"}`), payload, false)
 	f.Add([]byte(`{"typ":"openid4vci-proof+jwt","x5c":["AAAA"]}`), payload, false)
 	f.Add([]byte(`{"typ":"openid4vci-proof+jwt","jwk":{},"kid":"k"}`), payload, true)
+	// A key_attestation header (Appendix D.1, F.1) by the provider the
+	// fixture trusts, attesting walletKey: its verification, exp, nonce
+	// and attested-key checks.
+	exp := fx.now.Add(time.Hour).Unix()
+	keyAttestation, err := attestation.Issue(fx.attestationSigner, jose.ES256, attestation.Header{}, attestation.Claims{
+		IssuedAt: fx.now.Unix(), ExpiresAt: &exp, AttestedKeys: []json.RawMessage{jwkJSON(f, &walletKey.PublicKey)}, Nonce: "n",
+	})
+	if err != nil {
+		f.Fatalf("attestation.Issue: %v", err)
+	}
+	f.Add([]byte(`{"typ":"openid4vci-proof+jwt","jwk":{},"key_attestation":"`+keyAttestation+`"}`), payload, true)
 
 	f.Fuzz(func(t *testing.T, header, payload []byte, bindJWK bool) {
 		var h map[string]any
@@ -94,8 +106,14 @@ func FuzzRequestCredentialSignedProof(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if len(resp.Credentials) != 1 {
-			t.Fatalf("got %d credentials for one proof, want 1", len(resp.Credentials))
+		// One credential per proof, or per key a key_attestation
+		// attests, up to batch_size (2).
+		want := []int{1}
+		if _, ok := h["key_attestation"]; ok {
+			want = []int{1, 2}
+		}
+		if !slices.Contains(want, len(resp.Credentials)) {
+			t.Fatalf("got %d credentials for one proof, want %v", len(resp.Credentials), want)
 		}
 	})
 }
