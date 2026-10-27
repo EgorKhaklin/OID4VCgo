@@ -212,10 +212,12 @@ func (a *App) buildAuthorizationServer() error {
 		// from a certificate naming the wallet's registered Wallet
 		// Provider. Each anchor is bound to the providers it may vouch
 		// for, so a CA on a shared trust list can't attest for another
-		// provider's wallets.
+		// provider's wallets. The demo's Wallet Provider publishes no
+		// CRL, so its certificates' revocation isn't checked.
 		AttesterTrust: server.X5CAttesterChain{
 			Anchors:       a.providerAnchors,
 			IssuerBinding: server.AttesterIssuerBoundToAnchor,
+			Revocation:    server.NoClientCertificateRevocationCheck{},
 		},
 	}
 	if a.server, err = server.New(cfg, deps); err != nil {

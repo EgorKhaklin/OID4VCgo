@@ -48,6 +48,14 @@ const RecommendedClientAttestationAlgorithm = fapi.ES256
 // wallets even under a shared trust list. Under production assurance,
 // server.New takes only an anchor source declaring itself hardened for
 // live fetches, as server.StaticAttesterAnchors does.
+// X5CAttesterChain.Revocation is required at every assurance level:
+// server.ClientCertificateCRLs for the Wallet Provider CAs' CRLs, or
+// server.NoClientCertificateRevocationCheck{} to explicitly decline.
+// Under production assurance, server.New also requires
+// Dependencies.ClientAttestationStatus, which checks a Wallet
+// Attestation's status claim (OID4VCI 1.0 Appendix E): a checker, or
+// server.NoClientAttestationStatusCheck{} when the Wallet Providers
+// publish no status.
 func RecommendedAuthorizationServerConfig() (server.Config, error) {
 	extensions, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
 	if err != nil {
