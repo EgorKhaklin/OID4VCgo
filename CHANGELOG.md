@@ -1,5 +1,72 @@
 # Changelog
 
+## [0.55.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.54.0...v0.55.0) (2026-10-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **walletflow:** outside Development, set a revocation Checker for each trust role a walletflow.Config uses: IssuerRevocation and StatusRevocation with IssuerRoots or the mdoc roots, IssuerMetadataRevocation with IssuerMetadataRoots, RegistrarRevocation with RegistrarRoots, MdocReaderRevocation with MdocReaderRoots, and Revocation on a wallet.X5CVerifierRoots VerifierTrust. Use a certrevocation.Refresher's Checker(), your own Checker, or certrevocation.NoCheck{} to keep checking nothing. wallet.New under AssuranceProduction requires the same of IssuerMetadataRevocation and X5CVerifierRoots.Revocation. In the mobile libraries, outside development, name each role whose roots are set in "revocation" or in the new "no_revocation_check" (noRevocationCheck in Swift and Kotlin).
+* **walletflow:** walletflow.Wallet.CheckStatus records StatusUnknown ("unknown") for an mdoc naming an identifier list, where it used to return the credential with no status: treat it as not known, like a status never checked. The Swift and Kotlin CredentialStatus.Value gain an unknown case: add it to exhaustive switch and when expressions.
+* **walletflow:** walletflow.New, and mobile NewWallet (as invalid_input), refuse a Config.RedirectURI / redirect_uri that isn't a private-use scheme in reverse.domain:/path form (com.example.wallet:/callback), loopback http, or in Development https, or that carries a fragment or credentials, even in Development and for a wallet that doesn't receive credentials. Such a wallet could never complete an authenticated issuance; register and configure a redirect URI of that form instead.
+* **statuslist:** statuslist.Checker.Check and RequireValid with cwt true refuse a Status List Token without exp or with an unprotected x5chain. A list issued for mdocs must carry both; to check a CWT Status List Token outside ISO/IEC 18013-5, fetch it with Fetcher and call statuslist.CheckCWTX5Chain with the options it needs.
+* **identifierlist:** identifierlist.Check and Checker.Check refuse a reference with no Certificate when documentSignerPath is empty. Pass the MSO's IssuerAuth x5chain as verified (VerifiedCredential's IssuerChain, parsed), or, where every CA under the roots may decide every MSO's revocation, set VerifyOptions.UnboundSigner to identifierlist.AnyListSigner or to a policy of your own.
+* **issuer:** under issuer.AssuranceProduction, set Revocation on every issuer.X5CAttestationVerifier and issuer.X5CProofBindingKeyResolver in Dependencies: certrevocation.CRLs, such as the one a certrevocation.Refresher's Checker method returns, your own certrevocation.Checker, or certrevocation.NoCheck{} to keep accepting certificates without a revocation check.
+* **verifier:** under AssuranceProduction on Linux and other Unix systems, issuer roots built by adding certificates to x509.SystemCertPool() are refused. Build the pool from the credential issuers' own CAs (x509.NewCertPool plus AddCert), not from the system pool.
+* **verifier:** X5CIssuerKeyResolver without a LeafPolicy refuses an issuer certificate carrying the mdoc reader authentication extended key usage, or chaining only through intermediates restricted to other roles' purposes. Issue SD-JWT VC issuers their own certificates, or set LeafPolicy (verifier.AnyIssuerLeaf accepts every chain-verified leaf).
+* **verifier:** a TransactionStore must persist Transaction.Owner, or Begin and BeginDCAPI fail. Under AssuranceProduction, transactions saved before Owner was recorded can no longer be read: let pending ones expire (TransactionsConfig.Lifetime) before upgrading.
+* **mdocdcapi:** BuildRequest refuses an Origin that isn't https or loopback http once normalized, and VerifyResponse refuses a non-loopback http Pending.Origin even under AssuranceDevelopment, or a VerifyParams.Origins entry that isn't an origin. Serve development pages over https or from localhost, and list origins as
+* **verifier:** under AssuranceProduction, a TransactionsConfig used for the Digital Credentials API alone (no RequestURIBase) must set Origins, or NewTransactions fails; set them to the origins of the pages that call navigator.credentials.get.
+* **deps:** an Authorization Server built on fapigo/server with X5CAttesterChain must set its Revocation at every assurance level, to server.ClientCertificateCRLs for the Wallet Provider CAs' CRLs or to server.NoClientCertificateRevocationCheck{}. Under AssuranceProduction with attestation-based client authentication, Dependencies. ClientAttestationStatus is required: a checker of the attestation's status claim, or server.NoClientAttestationStatusCheck{}. A custom ClientCertificateRevocation must wrap server.ErrCertificateRevoked for a revoked certificate; any other error now answers server_error (500) instead of invalid_client. See FAPIgo's UPGRADING.md, v0.62.0.
+* **verifier:** RequireValidStatus refuses a credential with a status reference whose issuer it can't identify: one verified by a custom issuer key resolver that reports no issuer chain, with no iss (SD-JWT VC) or no MSO status Certificate (mdoc). Report the chain (SDJWTVCIssuerChainResolver, MdocIssuerChainResolver), or use RequireValidStatusFrom with a StatusIssuerPolicy, AnyStatusListSigner where every signer under the checker's roots may decide every credential's status. A non-object SD-JWT VC status claim is now an error.
+* **verifier:** an SD-JWT VC whose issuer certificate lists only serverAuth, clientAuth, codeSigning, emailProtection, timeStamping, OCSPSigning or IPsec extended key usages, or whose key usage omits digitalSignature, is now refused when X5CIssuerKeyResolver.LeafPolicy is unset. Issue issuer certificates without those, or set LeafPolicy to accept the ones yours carry. Under AssuranceProduction, issuer roots must be the issuers' own CAs, not x509.SystemCertPool.
+* **verifier:** under AssuranceProduction, set TransactionsConfig.Origins to use BeginDCAPI, and mdocdcapi.VerifyParams.Origins to verify an org-iso-mdoc response, each to the serialized origins of the pages that make Digital Credentials API requests. mdocdcapi.VerifyResponse refuses an http origin outside AssuranceDevelopment.
+* **verifier:** a TransactionStore must persist the new Transaction.Owner field; verifiertest's contract now checks it. Transactions instances that share a store and were meant to handle each other's requests must now have the same client_id, response_uri and RequestURIBase, or set the same TransactionsConfig.Scope. Instances sharing all three but applying different policies set a distinct Scope each.
+* **certrevocation:** a deployment that pins a leaf certificate, rather than a CA, as a trust anchor and checks it with certrevocation.CRLs now has it refused with ErrNoCurrentCRL unless the issuing CA's certificate is in CRLs.Issuers and a current CRL from that CA is held. Add the CA certificate to CRLs.Issuers, or to the Refresher's Issuers when using Refresher.Checker.
+* **issuer:** an AttestationStatusChecker that should deny a pending deferred transaction for a revoked or suspended key attestation must wrap issuer.ErrKeyAttestationRevoked in its error; any other error now leaves the transaction pending (ErrDeferredAttestationStatusUnknown) instead of denying it. Under AssuranceProduction, issuer.New refuses a Limits.NonceLifetime over an hour. haip.ValidateIssuerConfig refuses a scope shared by configurations requiring different key attestations.
+* **walletflow:** outside Development, walletflow.New and the mobile NewWallet refuse a RedirectURI that is https, or http to anything but 127.0.0.1 or [::1]. Register and use a private-use URI scheme redirect, such as com.example.wallet:/callback. The mobile libraries report a missing issuer_roots, redirect_uri, verifier_roots or HAIP provider as invalid_input rather than protocol.
+* **issuer:** under AssuranceProduction, issuer.New refuses a Credential Configuration whose ProofTypesSupported includes the attestation proof type unless Config.AllowAttestationProofType is set. Take jwt proofs with a key attestation in their key_attestation header instead (haip.RecommendedJWTKeyAttestationProofType), or set the field to keep the attestation proof type. haip.RecommendedIssuerConfig no longer includes the attestation proof type or a jwt proof type without a key attestation. SD-JWT VCs whose Prepare sets no Iss now carry iss set to Config.Issuer.
+
+### Features
+
+* **identifierlist:** issue and check ISO/IEC 18013-5 identifier lists ([4e48799](https://github.com/IDFoundry/OID4VCgo/commit/4e48799a2d2783a0969ff18b0d6847e7cc30763b))
+
+
+### Bug Fixes
+
+* **certrevocation:** bind Refresher URLs to issuers and keep a rollback floor ([84fd8d1](https://github.com/IDFoundry/OID4VCgo/commit/84fd8d1a0aaf5ca1c1d95dc5e61fc2e7fdaad91b))
+* **certrevocation:** check a pinned leaf against its CA's CRL ([1a5821c](https://github.com/IDFoundry/OID4VCgo/commit/1a5821c9cb33f269b4d220696aca6cec41f995a8))
+* **certrevocation:** hand OnAccept lists in the order they were accepted ([7d9e022](https://github.com/IDFoundry/OID4VCgo/commit/7d9e0227b7607ab0b0a291ebc92f71ea9e860304))
+* **certrevocation:** refuse unknown critical CRL extensions, allow clock skew ([af1717b](https://github.com/IDFoundry/OID4VCgo/commit/af1717bb97d1c1f1cdaf2913b4f8dd715c842dc0))
+* **dcql:** match values of every Go numeric kind ([8ad8ee3](https://github.com/IDFoundry/OID4VCgo/commit/8ad8ee316d52dd3790859689cf15c4339f77da7e))
+* **deps:** pin FAPIgo v0.62.0 ([76ae9c3](https://github.com/IDFoundry/OID4VCgo/commit/76ae9c3596317fbc6147026993592a7aafe6d0b0))
+* **haip:** compare key attestation requirements as sets ([4acb090](https://github.com/IDFoundry/OID4VCgo/commit/4acb09047189cfa9037ac0d83c74fb518259d885))
+* **identifierlist:** read a large identifier list without decoding it twice ([91f86d0](https://github.com/IDFoundry/OID4VCgo/commit/91f86d0deb5fa9c467ed1e5364ef3c6d04d658ad))
+* **identifierlist:** refuse a list signer nothing binds to the mdoc's issuer ([8f1308a](https://github.com/IDFoundry/OID4VCgo/commit/8f1308a299261f36b90bcc346b80809553c5d99b))
+* **issuer:** keep a deferral pending when its attestation status is unknown ([cbbc6a3](https://github.com/IDFoundry/OID4VCgo/commit/cbbc6a34149b47619d6e09c8f28636525800b5eb))
+* **issuer:** refuse relayable key attestations and name the issuer in iss ([4376fa0](https://github.com/IDFoundry/OID4VCgo/commit/4376fa09e05b1bd6f083c1a8e13e29dfb561e3cb))
+* **issuer:** require a revocation choice for x5c trust under AssuranceProduction ([976f69c](https://github.com/IDFoundry/OID4VCgo/commit/976f69c52fba1f693cfc8f4157e2ea7bcc6939e0))
+* **issuer:** tell an undecided key attestation check from an invalid one ([654e3c4](https://github.com/IDFoundry/OID4VCgo/commit/654e3c4e705f7faa58ab663b14ef2b91bb865be9))
+* **mdocdcapi:** normalize and validate the Verifier's origins ([5464a71](https://github.com/IDFoundry/OID4VCgo/commit/5464a716aacaf818d769608a843141f2a802128f))
+* refuse a status or identifier list token whose exp isn't after its iat ([312f5b4](https://github.com/IDFoundry/OID4VCgo/commit/312f5b4d6ec3909b34821a207f72a3ef94cb3167))
+* say so when a list signer's ECDSA key isn't on P-256 ([2d8edfb](https://github.com/IDFoundry/OID4VCgo/commit/2d8edfb1fa86e70156eca2cc9835d4cd90a43322))
+* **sdjwtvc:** refuse reserved names inside opaque claim values ([2deff38](https://github.com/IDFoundry/OID4VCgo/commit/2deff38ba87a74ab003a9b491abbca3ee09ceb7b))
+* **statuslist,identifierlist:** align revocation list verification with the specs ([1a8cf30](https://github.com/IDFoundry/OID4VCgo/commit/1a8cf306b51fe42f95215dde1404ec910ca93d7d))
+* **statuslist:** check a Checker's CWT Status List Token as an mdoc's ([9542915](https://github.com/IDFoundry/OID4VCgo/commit/9542915350da125c1fa13677060336ceaba4f722))
+* **verifier:** detect issuer roots built from the system root pool ([30a9c11](https://github.com/IDFoundry/OID4VCgo/commit/30a9c11af0e2e27c2c56403e00da73d65e2bfc13))
+* **verifier:** hold Digital Credentials API origins to an allow-list ([474587b](https://github.com/IDFoundry/OID4VCgo/commit/474587bba78c5875748d76ef6e8bad5ec654dd88))
+* **verifier:** normalize BeginDCAPI's origin and require Origins up front ([91740c2](https://github.com/IDFoundry/OID4VCgo/commit/91740c2c397f702c5ead1e194daadd6774728c6e))
+* **verifier:** refuse a status check whose list signer can't be bound ([e79839a](https://github.com/IDFoundry/OID4VCgo/commit/e79839ac1a7e5049daf36885fe4d43b6c68c4f80))
+* **verifier:** refuse a transaction store that drops Owner ([8f34374](https://github.com/IDFoundry/OID4VCgo/commit/8f3437400a33e46ff3f450239f90ee2e2c729971))
+* **verifier:** refuse mdoc reader certificates as SD-JWT VC issuers ([4ac3376](https://github.com/IDFoundry/OID4VCgo/commit/4ac337694a538b3840ad6454d2c8e0c38b2c7359))
+* **verifier:** refuse other roles' certificates as SD-JWT VC issuers by default ([5ee7441](https://github.com/IDFoundry/OID4VCgo/commit/5ee744104a620e5bac9b2068303567c66119e79d))
+* **verifier:** scope each transaction to the Transactions that created it ([a98a39b](https://github.com/IDFoundry/OID4VCgo/commit/a98a39bd322a13cbd5be99fa6f59ebfd0333c907))
+* **walletflow,mobile:** check an mdoc's status list as ISO/IEC 18013-5 §12.3.6.3 says ([7ef6916](https://github.com/IDFoundry/OID4VCgo/commit/7ef6916ca9d1dbc5a0146faf95981b595fb75881))
+* **walletflow:** count a shared mdoc identifier list entry as correlating copies ([7b2e8b9](https://github.com/IDFoundry/OID4VCgo/commit/7b2e8b9703b0a94f930d1d20d749ef7f8fa72d79))
+* **walletflow:** refuse a malformed redirect URI at New ([43325e5](https://github.com/IDFoundry/OID4VCgo/commit/43325e56d829e54e4ad1225711cc87eede1cee52))
+* **walletflow:** refuse redirect URIs a resumed issuance can't complete ([c866f58](https://github.com/IDFoundry/OID4VCgo/commit/c866f58c21346ad447cd9692d363ed530ab96102))
+* **walletflow:** report an mdoc naming an identifier list as status unknown ([e559043](https://github.com/IDFoundry/OID4VCgo/commit/e559043287823c7d80d33f6fd262278ecbce23f2))
+* **walletflow:** require an explicit revocation choice for each trust role in use ([8933dab](https://github.com/IDFoundry/OID4VCgo/commit/8933dab0ff5fc9634ad4138f27dc3f69e9d33ccf))
+
 ## [0.54.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.53.0...v0.54.0) (2026-10-26)
 
 
