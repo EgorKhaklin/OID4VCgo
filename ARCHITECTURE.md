@@ -395,8 +395,9 @@ changes whether *every* bullet below is `(done)`.
   MSO reference's `certificate` as sole anchor when it names one, else a
   path through the CA that signed the document signer
   (`mdoc.IdentifierListTrust`, `StatusTrust`'s sibling), given the MSO's
-  verified document signer path — then sub, and reports revocation
-  fail-closed. `Checker` adds fetching through `statuslist.Fetcher`, and
+  verified document signer path, and refuses a check with neither unless
+  `VerifyOptions.UnboundSigner` decides the signer — then sub, and
+  reports revocation fail-closed. `Checker` adds fetching through `statuslist.Fetcher`, and
   serves any number of credentials. Its CBOR claims are its own, on
   `internal/cose` for the envelope, like `statuslist`'s. Verification
   accepts the typ without its `application/` prefix too, and

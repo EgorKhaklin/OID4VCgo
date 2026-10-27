@@ -18,10 +18,16 @@ func TestBothPolicies(t *testing.T) {
 		"second nil":     {refuse, nil, false},
 		"both pass":      {pass, pass, true},
 		"second refuses": {pass, refuse, false},
+		"first refuses":  {refuse, pass, false},
 	} {
 		if err := BothPolicies(tc.first, tc.second)(nil, nil); (err == nil) != tc.ok {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+	called := false
+	second := func(*x509.Certificate, [][]*x509.Certificate) error { called = true; return nil }
+	if err := BothPolicies(refuse, second)(nil, nil); err == nil || called {
+		t.Errorf("first refusing: %v, second run %v; want refused before second", err, called)
 	}
 	if BothPolicies(nil, nil) != nil {
 		t.Error("BothPolicies(nil, nil) isn't nil")

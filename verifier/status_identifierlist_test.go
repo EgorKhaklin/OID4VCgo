@@ -60,6 +60,24 @@ func TestRequireValidStatus_IdentifierList(t *testing.T) {
 	if err := anySigner(ctx, "id", credential("/other", 0xcd, nil)); err != nil {
 		t.Errorf("no issuer chain, AnyStatusListSigner: %v", err)
 	}
+	// A Certificate the MSO's reference names is the list signer's sole
+	// trust anchor (ISO/IEC 18013-5 §12.3.6.2): it binds the signer with
+	// no issuer chain and no StatusIssuerPolicy.
+	pinned := func(path string, id byte, pin *x509.Certificate) verifier.VerifyResponseResult {
+		r := credential(path, id, nil)
+		r.Credentials[0].MdocStatus.IdentifierList.Certificate = pin.Raw
+		return r
+	}
+	if err := accept(ctx, "id", pinned("/same", 0xcd, iaca)); err != nil {
+		t.Errorf("pinned to the signer's IACA: %v", err)
+	}
+	if err := accept(ctx, "id", pinned("/same", 0xcc, iaca)); !errors.Is(err, identifierlist.ErrRevoked) {
+		t.Errorf("pinned, on the list: %v, want ErrRevoked", err)
+	}
+	refusing := verifier.RequireValidStatusFrom(checker, func(string, *x509.Certificate, [][]*x509.Certificate) error { return errors.New("not a Status Issuer") })
+	if err := refusing(ctx, "id", credential("/other", 0xcd, nil)); err == nil || !strings.Contains(err.Error(), "not a Status Issuer") {
+		t.Errorf("no issuer chain, a StatusIssuerPolicy refusing: %v", err)
+	}
 	// The handler serves only identifier lists, so its status list can't
 	// be read.
 	withStatusList := credential("/same", 0xcd, dsChain)
@@ -70,6 +88,7 @@ func TestRequireValidStatus_IdentifierList(t *testing.T) {
 	}{
 		"signed under another IACA":     {credential("/other", 0xcd, dsChain), "isn't under the CA that signed the document signer"},
 		"no issuer chain":               {credential("/same", 0xcd, nil), "can't be bound to its issuer"},
+		"pinned to another IACA":        {pinned("/same", 0xcd, other), "token signer"},
 		"and an unreadable status list": {withStatusList, "statuslist: fetch"},
 	} {
 		err := accept(ctx, "id", tc.result)

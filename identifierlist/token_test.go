@@ -325,9 +325,41 @@ func TestCheck_IACABinding(t *testing.T) {
 
 	_, _, err := Check(context.Background(), tokenUnder(other, otherKey), roots, ref, dsPath, VerifyOptions{})
 	wantErr(t, "under another IACA", err, "isn't under the CA that signed the document signer")
-	if _, _, err := Check(context.Background(), tokenUnder(other, otherKey), roots, ref, nil, VerifyOptions{}); err != nil {
-		t.Errorf("no path, no certificate, under the roots: %v", err)
+}
+
+// TestCheck_UnboundSigner: with neither a document signer path nor a
+// pinned Certificate, nothing binds the list's signer to the mdoc's
+// issuer, so the check is refused — another issuer's signer under the
+// same roots would otherwise vouch for the MSO — unless
+// VerifyOptions.UnboundSigner decides the signer.
+func TestCheck_UnboundSigner(t *testing.T) {
+	victim, _ := testcert.CA(t, "IACA")
+	other, otherKey := testcert.CA(t, "another IACA")
+	roots := x509.NewCertPool()
+	roots.AddCert(victim)
+	roots.AddCert(other)
+	leaf, key := testcert.Leaf(t, "another issuer's list signer", other, otherKey)
+	token, err := IssueToken(key, cose.ES256, claimsAt(time.Now()), []*x509.Certificate{leaf}, IssueOptions{})
+	if err != nil {
+		t.Fatal(err)
 	}
+	ref := Ref{ID: []byte{1}, URI: testURI}
+	refuse := func(*x509.Certificate, [][]*x509.Certificate) error { return errors.New("refused") }
+
+	revoked, _, err := Check(context.Background(), token, roots, ref, nil, VerifyOptions{})
+	wantErr(t, "no path, no certificate", err, "can't be bound to the mdoc's issuer")
+	if !revoked {
+		t.Error("no path, no certificate: not reported revoked")
+	}
+	if revoked, _, err := Check(context.Background(), token, roots, ref, nil, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil || revoked {
+		t.Errorf("AnyListSigner: revoked %v, %v", revoked, err)
+	}
+	_, _, err = Check(context.Background(), token, roots, ref, nil, VerifyOptions{UnboundSigner: refuse})
+	wantErr(t, "UnboundSigner refuses", err, "refused")
+	_, _, err = Check(context.Background(), token, roots, ref, nil, VerifyOptions{UnboundSigner: AnyListSigner, LeafPolicy: refuse})
+	wantErr(t, "LeafPolicy with AnyListSigner", err, "refused")
+	_, _, err = Check(context.Background(), token, x509.NewCertPool(), ref, nil, VerifyOptions{UnboundSigner: AnyListSigner})
+	wantErr(t, "AnyListSigner, not under the roots", err, "token signer")
 }
 
 // VerifyOptions.Revocation refuses an identifier list whose signer's

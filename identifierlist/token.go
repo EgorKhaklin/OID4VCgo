@@ -33,6 +33,10 @@ const MediaType = "application/identifierlist+cwt"
 // compatibility with implementations that expect it, and Annex D.6's
 // informative example omits the prefix too. IssueToken issues MediaType
 // unless IssueOptions.Typ asks for this; verification accepts either.
+//
+// Annex D.6's example also misspells the typ, dropping the second "i"
+// of "identifier"; neither IssueToken nor verification takes that
+// spelling, which no clause of the standard names.
 const BareTyp = "identifierlist+cwt"
 
 // CWT claim keys: sub/exp/nbf/iat are RFC 8392's, ttl and status_list
@@ -195,8 +199,10 @@ type VerifyOptions struct {
 
 	// MaxAge, if set, refuses a token issued longer ago: a list signed
 	// before a revocation stays valid until its exp, so anyone serving
-	// bytes at the uri could replay it until then. Zero leaves
-	// freshness to exp. Negative is an error, not "no limit".
+	// bytes at the uri could replay it until then. It is the only bound
+	// on that replay this package sets: zero leaves freshness to exp,
+	// however far ahead the issuer put it, and a token's ttl only says
+	// how long it may be cached. Negative is an error, not "no limit".
 	MaxAge time.Duration
 
 	// MaxClockSkew is how far in the future iat and nbf may be; zero
@@ -210,10 +216,30 @@ type VerifyOptions struct {
 	// themselves; LeafPolicy narrows that further, never widens it.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
+	// UnboundSigner decides the list's signer when Check and Checker
+	// have nothing to bind it to the mdoc's issuer with: the reference
+	// names no Certificate and no document signer path is given. It is
+	// run, as LeafPolicy is and before it, on a signer that chains to
+	// the roots: nil to accept it, an error to refuse. Nil refuses every
+	// such check, since any CA under the roots could otherwise sign a
+	// list that says another issuer's MSO isn't revoked. AnyListSigner
+	// accepts every signer under the roots: set it only where every CA
+	// they anchor may decide every MSO's revocation — roots of one
+	// issuer alone, say. VerifyToken, which binds no signer, ignores it.
+	UnboundSigner func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
+
 	// Revocation, if set, checks the signer's certificate chain for
 	// revocation; see certrevocation.
 	Revocation certrevocation.Checker
 }
+
+// AnyListSigner is a VerifyOptions.UnboundSigner accepting every
+// identifier list signer under the roots.
+func AnyListSigner(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+
+// errUnboundSigner refuses a check that nothing ties the list's signer
+// to the mdoc's issuer for.
+var errUnboundSigner = errors.New("identifierlist: the list's signer can't be bound to the mdoc's issuer: pass the MSO's document signer path (its IssuerAuth x5chain as verified), or set VerifyOptions.UnboundSigner (AnyListSigner accepts every signer under the roots)")
 
 func (o VerifyOptions) now() time.Time {
 	if o.Now == nil {
@@ -275,7 +301,8 @@ func verifyToken(ctx context.Context, token []byte, roots *x509.CertPool, policy
 // signer (for an mDL, the IACA), with documentSignerPath the MSO's
 // IssuerAuth x5chain as verified, leaf first, with or without its
 // anchor (credential/mdoc.IdentifierListTrust). With neither, the
-// chain must verify to roots.
+// check is refused unless opts.UnboundSigner accepts the signer, which
+// must then chain to roots.
 //
 // ref and documentSignerPath must come from an MSO whose signature and
 // document signer chain were verified: an unverified MSO could name
@@ -299,17 +326,9 @@ func check(ctx context.Context, token []byte, roots *x509.CertPool, ref Ref, doc
 	if err := ref.validate(); err != nil {
 		return TokenClaims{}, err
 	}
-	policy := opts.LeafPolicy
-	if len(ref.Certificate) > 0 || len(documentSignerPath) > 0 {
-		trust, err := mdoc.IdentifierListTrust(&mdoc.IdentifierListRef{Certificate: ref.Certificate}, documentSignerPath)
-		if err != nil {
-			return TokenClaims{}, fmt.Errorf("identifierlist: the list's signer can't be bound to the mdoc's issuer: %w", err)
-		}
-		if trust.Roots != nil {
-			roots = trust.Roots
-		} else {
-			policy = certchain.BothPolicies(trust.LeafPolicy, opts.LeafPolicy)
-		}
+	roots, policy, err := signerTrust(roots, ref, documentSignerPath, opts)
+	if err != nil {
+		return TokenClaims{}, err
 	}
 	if roots == nil {
 		return TokenClaims{}, errors.New("identifierlist: no trust anchors: roots is nil and the reference names no certificate")
@@ -324,8 +343,27 @@ func check(ctx context.Context, token []byte, roots *x509.CertPool, ref Ref, doc
 	return claims, nil
 }
 
+// signerTrust is the roots and leaf policy a list's signer must meet
+// for ref, as Check describes.
+func signerTrust(roots *x509.CertPool, ref Ref, documentSignerPath []*x509.Certificate, opts VerifyOptions) (*x509.CertPool, func(*x509.Certificate, [][]*x509.Certificate) error, error) {
+	if len(ref.Certificate) == 0 && len(documentSignerPath) == 0 {
+		if opts.UnboundSigner == nil {
+			return nil, nil, errUnboundSigner
+		}
+		return roots, certchain.BothPolicies(opts.UnboundSigner, opts.LeafPolicy), nil
+	}
+	trust, err := mdoc.IdentifierListTrust(&mdoc.IdentifierListRef{Certificate: ref.Certificate}, documentSignerPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("identifierlist: the list's signer can't be bound to the mdoc's issuer: %w", err)
+	}
+	if trust.Roots != nil {
+		return trust.Roots, opts.LeafPolicy, nil
+	}
+	return roots, certchain.BothPolicies(trust.LeafPolicy, opts.LeafPolicy), nil
+}
+
 type identifierListClaim struct {
-	Identifiers map[cbor.ByteString]cbor.RawMessage `cbor:"identifiers"`
+	Identifiers cbor.RawMessage `cbor:"identifiers"`
 }
 
 func parseClaims(raw []byte) (TokenClaims, *int64, error) {
@@ -370,19 +408,50 @@ func parseClaims(raw []byte) (TokenClaims, *int64, error) {
 	if !ok {
 		return TokenClaims{}, nil, errors.New("identifierlist: CWT is missing the required identifier_list claim")
 	}
+	// The walk above checked the whole claims set, duplicate keys at
+	// every depth included, so the list is decoded without walking it
+	// again, and its identifiers are read in place rather than built
+	// into a map: a list near maxTokenBytes holds most of a million.
 	var list identifierListClaim
-	if err := decMode.Unmarshal(v, &list); err != nil {
+	if err := decMode.DecMode.Unmarshal(v, &list); err != nil {
 		return TokenClaims{}, nil, fmt.Errorf("identifierlist: identifier_list claim: %w", err)
 	}
-	if list.Identifiers == nil {
+	if !strictcbor.IsMap(list.Identifiers) {
 		return TokenClaims{}, nil, errors.New("identifierlist: identifier_list claim has no identifiers map")
 	}
-	claims.Identifiers = make([][]byte, 0, len(list.Identifiers))
-	for id := range list.Identifiers {
-		claims.Identifiers = append(claims.Identifiers, []byte(id))
+	if claims.Identifiers, err = identifiers(list.Identifiers); err != nil {
+		return TokenClaims{}, nil, err
 	}
-	slices.SortFunc(claims.Identifiers, bytes.Compare)
 	return claims, nbf, nil
+}
+
+// identifiers reads the identifiers map of an identifier_list claim
+// (ISO/IEC 18013-5 §12.3.6.4: a non-empty Identifier, a bstr, to its
+// IdentifierInfo, a map), sorted. They share raw's memory.
+func identifiers(raw []byte) ([][]byte, error) {
+	n := 0
+	if err := strictcbor.Entries(raw, func(_, _ []byte) error { n++; return nil }); err != nil {
+		return nil, fmt.Errorf("identifierlist: identifiers: %w", err)
+	}
+	ids := make([][]byte, 0, n)
+	err := strictcbor.Entries(raw, func(key, info []byte) error {
+		id, ok := strictcbor.Bytes(key)
+		switch {
+		case !ok:
+			return errors.New("identifierlist: an identifier isn't a byte string")
+		case len(id) == 0:
+			return errors.New("identifierlist: the list holds an empty identifier")
+		case !strictcbor.IsMap(info):
+			return fmt.Errorf("identifierlist: identifier %x's IdentifierInfo isn't a map", id)
+		}
+		ids = append(ids, id)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(ids, bytes.Compare)
+	return ids, nil
 }
 
 // numericDate reads claim key as a CWT NumericDate (RFC 8392 §2: an

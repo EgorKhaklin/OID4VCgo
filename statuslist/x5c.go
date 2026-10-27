@@ -3,8 +3,6 @@ package statuslist
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -70,14 +68,13 @@ func checkX5C(ctx context.Context, token string, roots *x509.CertPool, ref Statu
 	if err := checkSignerIsIssuer(leaf, opts); err != nil {
 		return 0, TokenClaims{}, err
 	}
-	var alg jose.Alg
-	switch leaf.PublicKey.(type) {
-	case *ecdsa.PublicKey:
-		alg = jose.ES256
-	case ed25519.PublicKey:
+	eddsa, err := certchain.SignerKeyIsEdDSA(leaf.PublicKey)
+	if err != nil {
+		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
+	}
+	alg := jose.ES256
+	if eddsa {
 		alg = jose.EdDSA
-	default:
-		return 0, TokenClaims{}, fmt.Errorf("statuslist: token signer: unsupported key type %T", leaf.PublicKey)
 	}
 	return Check(token, leaf.PublicKey, alg, ref, opts)
 }

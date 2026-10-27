@@ -35,7 +35,8 @@ func statusServer(t *testing.T) (*httptest.Server, *x509.CertPool) {
 			t.Error(err)
 			return
 		}
-		claims := TokenClaims{Sub: uri, Iat: time.Now().Unix(), StatusList: sl}
+		exp := time.Now().Add(time.Hour).Unix()
+		claims := TokenClaims{Sub: uri, Iat: time.Now().Unix(), Exp: &exp, StatusList: sl}
 		if r.Header.Get("Accept") == CWTTokenMediaType {
 			token, err := IssueTokenCWTX5Chain(leafKey, cose.ES256, claims, []*x509.Certificate{leaf})
 			if err != nil {

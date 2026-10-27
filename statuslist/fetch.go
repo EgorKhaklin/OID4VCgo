@@ -172,6 +172,10 @@ type Checker struct {
 // Check fetches and checks the Status List Token ref names: the CWT
 // form when cwt is true (an mdoc's reference), the JWT form otherwise
 // (an SD-JWT VC's — SD-JWT VC requires a JWT Status List Token).
+// The CWT form is checked as an mdoc's revocation list: Options's
+// RequireExp and X5ChainProtectedOnly are applied whatever they're set
+// to (ISO/IEC 18013-5 §12.3.6.3). For a CWT Status List Token outside
+// that profile, call CheckCWTX5Chain.
 func (c Checker) Check(ctx context.Context, ref StatusListRef, cwt bool) (StatusType, TokenClaims, error) {
 	return failClosed(c.check(ctx, ref, cwt))
 }
@@ -191,7 +195,9 @@ func (c Checker) check(ctx context.Context, ref StatusListRef, cwt bool) (Status
 	}
 	// check's result is failClosed by Check.
 	if cwt {
-		return checkCWTX5Chain(ctx, token, c.Roots, ref, c.Options)
+		opts := c.Options
+		opts.RequireExp, opts.X5ChainProtectedOnly = true, true
+		return checkCWTX5Chain(ctx, token, c.Roots, ref, opts)
 	}
 	return checkX5C(ctx, string(token), c.Roots, ref, c.Options)
 }

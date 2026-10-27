@@ -34,6 +34,8 @@ func TestWindowCheck(t *testing.T) {
 		"negative MaxAge":        {jwtdate.Window{MaxAge: -time.Second}, at(0), ptr(at(time.Hour)), nil, "MaxAge is negative"},
 		"no exp, required":       {jwtdate.Window{RequireExp: true}, at(0), nil, nil, "missing the required exp"},
 		"exp out of range":       {jwtdate.Window{}, at(0), ptr(jwtdate.Max + 1), nil, "exp is out of range"},
+		"exp at iat":             {jwtdate.Window{}, at(0), ptr(at(0)), nil, "exp isn't after its iat"},
+		"exp before iat":         {jwtdate.Window{}, at(30 * time.Second), ptr(at(10 * time.Second)), nil, "exp isn't after its iat"},
 		// RFC 7519 §4.1.4: expired at exp, not after it.
 		"at exp": {jwtdate.Window{}, at(-time.Minute), ptr(at(0)), nil, "is expired"},
 	} {

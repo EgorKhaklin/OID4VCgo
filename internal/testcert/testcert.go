@@ -120,13 +120,20 @@ func Leaf(t testing.TB, commonName string, ca *x509.Certificate, caKey *ecdsa.Pr
 	if err != nil {
 		t.Fatalf("testcert: generate leaf key: %v", err)
 	}
+	return LeafFor(t, commonName, &key.PublicKey, ca, caKey), key
+}
+
+// LeafFor is Leaf for a public key of the caller's: another curve's or
+// algorithm's, say.
+func LeafFor(t testing.TB, commonName string, pub crypto.PublicKey, ca *x509.Certificate, caKey *ecdsa.PrivateKey) *x509.Certificate {
+	t.Helper()
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject:      pkix.Name{CommonName: commonName},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(24 * time.Hour),
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, pub, caKey)
 	if err != nil {
 		t.Fatalf("testcert: create leaf certificate: %v", err)
 	}
@@ -134,7 +141,7 @@ func Leaf(t testing.TB, commonName string, ca *x509.Certificate, caKey *ecdsa.Pr
 	if err != nil {
 		t.Fatalf("testcert: parse leaf certificate: %v", err)
 	}
-	return cert, key
+	return cert
 }
 
 // Issue issues tmpl under parent/parentKey for a fresh EC P-256 key,

@@ -2,8 +2,6 @@ package cose
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/x509"
 	"fmt"
 	"time"
@@ -47,12 +45,12 @@ func X5ChainSigner(ctx context.Context, sign1 []byte, trust X5ChainTrust) (*x509
 	if err != nil {
 		return nil, 0, fmt.Errorf("token signer: %w", err)
 	}
-	switch leaf.PublicKey.(type) {
-	case *ecdsa.PublicKey:
-		return leaf, ES256, nil
-	case ed25519.PublicKey:
-		return leaf, EdDSA, nil
-	default:
-		return nil, 0, fmt.Errorf("token signer: unsupported key type %T", leaf.PublicKey)
+	eddsa, err := certchain.SignerKeyIsEdDSA(leaf.PublicKey)
+	if err != nil {
+		return nil, 0, fmt.Errorf("token signer: %w", err)
 	}
+	if eddsa {
+		return leaf, EdDSA, nil
+	}
+	return leaf, ES256, nil
 }

@@ -30,9 +30,10 @@ type Window struct {
 
 // Check checks a token's iat, exp and nbf at now: iat present (non-zero)
 // and in range, iat and nbf no later than MaxClockSkew ahead (RFC 7519
-// §4.1.5), iat no longer ago than MaxAge, and now before exp (RFC 7519
-// §4.1.4, RFC 8392 §3.1.4: "on or after" exp it is refused). Its errors
-// carry no package prefix, for the caller to add its own.
+// §4.1.5), iat no longer ago than MaxAge, exp after iat, and now before
+// exp (RFC 7519 §4.1.4, RFC 8392 §3.1.4: "on or after" exp it is
+// refused). Its errors carry no package prefix, for the caller to add
+// its own.
 func (w Window) Check(iat int64, exp, nbf *int64, now time.Time) error {
 	if w.MaxAge < 0 {
 		return errors.New("VerifyOptions.MaxAge is negative")
@@ -82,6 +83,11 @@ func (w Window) checkFreshness(issued time.Time, exp *int64, now time.Time) erro
 	expires, err := FromUnix(*exp)
 	if err != nil {
 		return errors.New("token exp is out of range")
+	}
+	// A token that expires as it's issued was never valid; the issuers
+	// in this module refuse to sign one.
+	if !expires.After(issued) {
+		return errors.New("token exp isn't after its iat")
 	}
 	if !now.Before(expires) {
 		return errors.New("token is expired")
