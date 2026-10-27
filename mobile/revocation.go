@@ -139,17 +139,17 @@ const (
 	revocationStatus         = "status"
 )
 
-// revocationRoles checks roles, a "revocation" configuration, names
-// only roles in known, each once, and returns whether each known role
-// is named.
-func revocationRoles(roles []string, known ...string) (map[string]bool, error) {
+// revocationRoles checks roles, the configuration key key's list of
+// revocation roles, names only roles in known, each once, and returns
+// whether each known role is named.
+func revocationRoles(key string, roles []string, known ...string) (map[string]bool, error) {
 	named := make(map[string]bool, len(roles))
 	for _, r := range roles {
 		switch {
 		case !slices.Contains(known, r):
-			return nil, newError(CodeInvalidInput, fmt.Errorf("revocation: %q isn't a role: want one of %q", r, known))
+			return nil, newError(CodeInvalidInput, fmt.Errorf("%s: %q isn't a role: want one of %q", key, r, known))
 		case named[r]:
-			return nil, newError(CodeInvalidInput, fmt.Errorf("revocation: %q is named twice", r))
+			return nil, newError(CodeInvalidInput, fmt.Errorf("%s: %q is named twice", key, r))
 		}
 		named[r] = true
 	}

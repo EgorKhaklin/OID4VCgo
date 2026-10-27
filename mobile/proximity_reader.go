@@ -143,7 +143,7 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 // configureRevocation sets the revocation check of each role cfg's
 // "revocation" names, over cfg's "crls".
 func (r *ProximityReader) configureRevocation(cfg proximityReaderConfig) error {
-	named, err := revocationRoles(cfg.Revocation, revocationIssuer, revocationStatus)
+	named, err := revocationRoles("revocation", cfg.Revocation, revocationIssuer, revocationStatus)
 	if err != nil {
 		return err
 	}

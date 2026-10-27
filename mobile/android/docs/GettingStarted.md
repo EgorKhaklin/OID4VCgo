@@ -125,12 +125,15 @@ An `IOException` the provider throws reaches the wallet as a retryable
 Create one `Wallet` when the app starts — in your `Application`, say —
 and keep it. Creating it makes no network requests. At launch, before
 anything else, sweep the Keystore of keys no credential uses: an
-issuance the app quit in the middle of leaves its keys behind.
+issuance the app quit in the middle of leaves its keys behind. Each
+trust role whose roots you set needs a revocation choice: checked against
+the CRLs your app fetches (`revocation`), or declined
+(`noRevocationCheck`); see [Going to production](GoingToProduction.md).
 
 ```kotlin
 /** The app's wallet, created once. `currentActivity` is the activity the holder sees, for the biometric prompt. */
 @RequiresApi(Build.VERSION_CODES.R)
-class AppWallet(context: Context, currentActivity: () -> Activity?, issuerRoots: String, verifierRoots: String) {
+class AppWallet(context: Context, currentActivity: () -> Activity?, issuerRoots: String, verifierRoots: String, crls: String) {
     private val keys = AndroidKeystoreKeyStore(authenticator = BiometricPromptAuthenticator(currentActivity))
 
     val wallet = Wallet(
@@ -139,6 +142,12 @@ class AppWallet(context: Context, currentActivity: () -> Activity?, issuerRoots:
             redirectURI = "com.example.wallet:/callback",
             issuerRoots = issuerRoots,
             verifierRoots = verifierRoots,
+            crls = crls,
+            revocation = listOf(
+                WalletConfiguration.RevocationRole.ISSUER,
+                WalletConfiguration.RevocationRole.STATUS,
+                WalletConfiguration.RevocationRole.VERIFIER,
+            ),
         ),
         keys,
         FileCredentialStore.standard(context),

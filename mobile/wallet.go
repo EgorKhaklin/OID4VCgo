@@ -146,9 +146,14 @@ type config struct {
 	// "mdoc_reader", "verifier", "status"; walletflow.Config's
 	// *Revocation fields and wallet.X5CVerifierRoots.Revocation). A
 	// role named fails closed for any CA it has no current CRL from,
-	// until SetCRLs supplies one; a role not named checks no revocation.
-	CRLs       string   `json:"crls,omitempty"`
-	Revocation []string `json:"revocation,omitempty"`
+	// until SetCRLs supplies one. NoRevocationCheck names the roles that
+	// decline checking revocation (certrevocation.NoCheck). Outside
+	// development, each role whose roots are set must be named in one
+	// of the two; a role can't be in both. In development, a role in
+	// neither checks no revocation.
+	CRLs              string   `json:"crls,omitempty"`
+	Revocation        []string `json:"revocation,omitempty"`
+	NoRevocationCheck []string `json:"no_revocation_check,omitempty"`
 	// CRLIssuers are PEM certificates of the CAs that issued
 	// certificates pinned in the roots (a leaf in verifier_roots, say),
 	// for a role Revocation names: a pinned certificate is checked
@@ -271,11 +276,18 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 
 // walletRevocation sets the revocation check of each role cfg's
 // "revocation" names on wcfg, over a crlSet holding cfg's "crls", which
-// it returns for SetCRLs. It runs after walletConfig, whose
-// VerifierTrust it extends.
+// it returns for SetCRLs, and certrevocation.NoCheck for each role its
+// "no_revocation_check" names. Outside development, it refuses a role
+// whose roots are set that neither names. It runs after walletConfig,
+// whose VerifierTrust it extends.
 func walletRevocation(cfg config, wcfg *walletflow.Config) (*crlSet, error) {
-	named, err := revocationRoles(cfg.Revocation, revocationIssuer, revocationIssuerMetadata, revocationRegistrar,
-		revocationMdocReader, revocationVerifier, revocationStatus)
+	known := []string{revocationIssuer, revocationIssuerMetadata, revocationRegistrar,
+		revocationMdocReader, revocationVerifier, revocationStatus}
+	named, err := revocationRoles("revocation", cfg.Revocation, known...)
+	if err != nil {
+		return nil, err
+	}
+	declined, err := revocationRoles("no_revocation_check", cfg.NoRevocationCheck, known...)
 	if err != nil {
 		return nil, err
 	}
@@ -283,19 +295,34 @@ func walletRevocation(cfg config, wcfg *walletflow.Config) (*crlSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	checker := crls.checker()
-	set := func(role string, field *certrevocation.Checker) {
-		if named[role] {
-			*field = checker
+	vt, isX5C := wcfg.VerifierTrust.(wallet.X5CVerifierRoots)
+	issuerKeys := "issuer_roots, mdoc_issuer_roots or mdoc_issuer_roots_by_doctype"
+	receives := wcfg.IssuerRoots != nil || wcfg.MdocIssuerRoots != nil || len(wcfg.MdocIssuerRootsByDocType) > 0
+	for _, r := range []struct {
+		role  string
+		keys  string
+		inUse bool
+		field *certrevocation.Checker
+	}{
+		{revocationIssuer, issuerKeys, receives, &wcfg.IssuerRevocation},
+		{revocationStatus, issuerKeys, receives, &wcfg.StatusRevocation},
+		{revocationIssuerMetadata, "issuer_metadata_roots", wcfg.IssuerMetadataRoots != nil, &wcfg.IssuerMetadataRevocation},
+		{revocationRegistrar, "registrar_roots", wcfg.RegistrarRoots != nil, &wcfg.RegistrarRevocation},
+		{revocationMdocReader, "mdoc_reader_roots", wcfg.MdocReaderRoots != nil, &wcfg.MdocReaderRevocation},
+		{revocationVerifier, "verifier_roots", isX5C, &vt.Revocation},
+	} {
+		switch {
+		case named[r.role] && declined[r.role]:
+			return nil, newError(CodeInvalidInput, fmt.Errorf("%q is named in both revocation and no_revocation_check", r.role))
+		case named[r.role]:
+			*r.field = crls.checker()
+		case declined[r.role]:
+			*r.field = certrevocation.NoCheck{}
+		case r.inUse && !cfg.Development:
+			return nil, newError(CodeInvalidInput, fmt.Errorf("%s is set: outside development, name %q in revocation, checked against crls, or in no_revocation_check to decline", r.keys, r.role))
 		}
 	}
-	set(revocationIssuer, &wcfg.IssuerRevocation)
-	set(revocationIssuerMetadata, &wcfg.IssuerMetadataRevocation)
-	set(revocationRegistrar, &wcfg.RegistrarRevocation)
-	set(revocationMdocReader, &wcfg.MdocReaderRevocation)
-	set(revocationStatus, &wcfg.StatusRevocation)
-	if vt, ok := wcfg.VerifierTrust.(wallet.X5CVerifierRoots); ok {
-		set(revocationVerifier, &vt.Revocation)
+	if isX5C {
 		wcfg.VerifierTrust = vt
 	}
 	return crls, nil

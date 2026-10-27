@@ -298,6 +298,18 @@ CRLs it holds, through `certrevocation.CRLs`.
 - **Optional field, new call, same ABI:** `crls`, `revocation` and
   `SetCRLs` are additive, so `ABIVersion` stays 12; a wrapper that
   doesn't know them never sends them.
+- **Declining is explicit:** outside `development`, a Wallet refuses
+  (`invalid_input`) a role whose roots are set unless `revocation` or
+  `no_revocation_check` names it, as `walletflow.New` refuses a nil
+  Checker for a role in use (`certrevocation.NoCheck{}` to decline) and
+  the verifier and issuer refuse one in production. A role left out
+  used to check nothing silently. The refusal is a configuration
+  `NewWallet` used to take, like the `redirect_uri` forms it refuses,
+  not a changed call or JSON shape, so `ABIVersion` stays 12; the
+  wrappers ship with the Go library and gain `noRevocationCheck` with
+  it. A ProximityReader has no `development` setting to tell a
+  production reader by, so a role its `revocation` leaves out still
+  checks nothing there.
 
 ## Phases
 

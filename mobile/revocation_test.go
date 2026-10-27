@@ -147,6 +147,93 @@ func TestWalletRevocation_Roles(t *testing.T) {
 	}
 }
 
+// Outside development, each role whose roots are set must be named in
+// "revocation" or "no_revocation_check": one in neither is
+// invalid_input naming the roots' key and both lists, one in both is
+// refused, and one declined gets certrevocation.NoCheck. Development
+// takes a role in neither.
+func TestWalletRevocation_ExplicitChoice(t *testing.T) {
+	pool := func(name string) string {
+		ca, _ := testcert.CA(t, name)
+		return pemOf("CERTIFICATE", ca.Raw)
+	}
+	base := config{
+		IssuerRoots: pool("issuer root"), VerifierRoots: pool("verifier root"), RegistrarRoots: pool("registrar root"),
+		MdocReaderRoots: pool("reader root"), IssuerMetadataRoots: pool("metadata root"),
+	}
+	all := []string{"issuer", "issuer_metadata", "registrar", "mdoc_reader", "verifier", "status"}
+	keys := map[string]string{
+		"issuer": "issuer_roots", "status": "issuer_roots", "issuer_metadata": "issuer_metadata_roots",
+		"registrar": "registrar_roots", "mdoc_reader": "mdoc_reader_roots", "verifier": "verifier_roots",
+	}
+	run := func(cfg config) (revocationCheckers, error) {
+		wcfg, err := walletConfig(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = walletRevocation(cfg, &wcfg)
+		vt, _ := wcfg.VerifierTrust.(wallet.X5CVerifierRoots)
+		return revocationCheckers{wcfg.IssuerRevocation, wcfg.StatusRevocation, wcfg.IssuerMetadataRevocation,
+			wcfg.RegistrarRevocation, wcfg.MdocReaderRevocation, vt.Revocation}, err
+	}
+
+	cfg := base
+	cfg.NoRevocationCheck = all
+	got, err := run(cfg)
+	if err != nil {
+		t.Fatalf("every role declined: %v", err)
+	}
+	for i, c := range got {
+		if _, ok := c.(certrevocation.NoCheck); !ok {
+			t.Errorf("declined role %d checks with %T, want certrevocation.NoCheck", i, c)
+		}
+	}
+	for _, role := range all {
+		cfg := base
+		cfg.Revocation = []string{role}
+		for _, r := range all {
+			if r != role {
+				cfg.NoRevocationCheck = append(cfg.NoRevocationCheck, r)
+			}
+		}
+		if _, err := run(cfg); err != nil {
+			t.Errorf("%s checked, the rest declined: %v", role, err)
+		}
+		cfg.Revocation = nil
+		_, err := run(cfg)
+		if code(err) != CodeInvalidInput || !strings.Contains(err.Error(), keys[role]) ||
+			!strings.Contains(err.Error(), "no_revocation_check") || !strings.Contains(err.Error(), `"`+role+`"`) {
+			t.Errorf("%s in neither list: %v, want invalid_input naming %s and no_revocation_check", role, err, keys[role])
+		}
+		cfg.Development = true
+		if _, err := run(cfg); err != nil {
+			t.Errorf("%s in neither list, in development: %v", role, err)
+		}
+		cfg.Development = false
+		cfg.Revocation = []string{role}
+		cfg.NoRevocationCheck = all
+		if _, err := run(cfg); code(err) != CodeInvalidInput || !strings.Contains(err.Error(), "both") {
+			t.Errorf("%s in both lists: %v, want invalid_input", role, err)
+		}
+	}
+	// A role whose roots aren't set needs neither.
+	if _, err := run(config{}); err != nil {
+		t.Errorf("no roots: %v", err)
+	}
+	for name, roles := range map[string][]string{"unknown": {"holder"}, "twice": {"issuer", "issuer"}} {
+		cfg := base
+		cfg.NoRevocationCheck = roles
+		if _, err := run(cfg); code(err) != CodeInvalidInput || !strings.Contains(err.Error(), "no_revocation_check") {
+			t.Errorf("no_revocation_check %s: %v, want invalid_input", name, err)
+		}
+	}
+}
+
+// revocationCheckers are a walletflow.Config's revocation Checkers:
+// the issuer's, status lists', issuer metadata's, registrars', mdoc
+// readers' and Verifiers'.
+type revocationCheckers [6]certrevocation.Checker
+
 // A reader's "revocation" knows "issuer" and "status" only, and its
 // SetCRLs refuses what isn't a CRL.
 func TestNewProximityReader_Revocation(t *testing.T) {

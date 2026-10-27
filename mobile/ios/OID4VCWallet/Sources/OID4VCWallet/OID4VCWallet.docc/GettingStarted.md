@@ -103,7 +103,10 @@ A `URLError` the provider throws reaches the wallet as a retryable
 Create one ``Wallet`` when the app starts, and keep it. Creating it
 makes no network requests. At launch, before anything else, sweep the
 Keychain of keys no credential uses: an issuance the app quit in the
-middle of leaves its keys behind.
+middle of leaves its keys behind. Each trust role whose roots you set
+needs a revocation choice: checked against the CRLs your app fetches
+(``WalletConfiguration/revocation``), or declined
+(``WalletConfiguration/noRevocationCheck``); see <doc:GoingToProduction>.
 
 ```swift
 /// The app's wallet, created once at launch.
@@ -112,12 +115,14 @@ final class AppWallet {
     let wallet: Wallet
     private let keys: KeychainKeyStore
 
-    init(clientID: String, redirectURI: String, issuerRoots: String, verifierRoots: String, provider: URL) throws {
+    init(clientID: String, redirectURI: String, issuerRoots: String, verifierRoots: String, crls: String, provider: URL) throws {
         let configuration = WalletConfiguration(
             clientID: clientID,
             redirectURI: redirectURI,
             issuerRoots: issuerRoots,
-            verifierRoots: verifierRoots)
+            verifierRoots: verifierRoots,
+            crls: crls,
+            revocation: [.issuer, .status, .verifier])
         keys = KeychainKeyStore()
         wallet = try Wallet(
             configuration: configuration,

@@ -62,7 +62,14 @@ development only.
   roles to check in ``WalletConfiguration/revocation`` and give their
   CAs' CRLs (PEM `X509 CRL` blocks) in ``WalletConfiguration/crls``. A
   role listed fails closed for any CA it has no current CRL from, so
-  list only roles whose CAs publish CRLs. CRLs expire at their
+  list only roles whose CAs publish CRLs. Every role whose roots you set
+  must be in ``WalletConfiguration/revocation`` or in
+  ``WalletConfiguration/noRevocationCheck``, which declines checking
+  it, or the wallet isn't made (`invalidInput`): decline only where
+  something else stands in for revocation, such as certificates too
+  short-lived to be worth revoking. ``WalletConfiguration/issuerRoots``
+  and the mdoc roots bring two roles, `.issuer` and `.status` (the
+  status lists' signers). CRLs expire at their
   nextUpdate: fetch fresh ones in the background and hand them over
   with ``Wallet/setCRLs(_:)``, which replaces them all (empty text
   removes them) and throws `invalidInput`, keeping the old lists, for

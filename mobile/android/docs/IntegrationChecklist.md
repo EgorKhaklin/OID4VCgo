@@ -35,12 +35,14 @@ is a complete, working app on this library to compare against.
 - [ ] Errors are shown with `WalletException.description` and
   `ProximityException.description`, and retried only when the guide
   says so. ([Handling errors](HandlingErrors.md))
-- [ ] Revocation, where your ecosystem's CAs publish CRLs: the roles to
-  check in `revocation`, their CAs' CRLs in `crls`, and, for a
-  certificate pinned in the roots, its CA's certificate in
-  `crlIssuers`. Fresh CRLs are fetched in the background and handed
-  over with `Wallet.setCRLs` before the old ones expire. *Check:* a
-  certificate on a CRL is refused.
+- [ ] Revocation, for every role whose roots you set: where your
+  ecosystem's CAs publish CRLs, the role in `revocation`, its CAs' CRLs
+  in `crls`, and, for a certificate pinned in the roots, its CA's
+  certificate in `crlIssuers`; otherwise the role in
+  `noRevocationCheck`, a deliberate decision. Fresh CRLs are fetched in
+  the background and handed over with `Wallet.setCRLs` before the old
+  ones expire. *Check:* `Wallet(...)` succeeds with your production
+  configuration, and a certificate on a CRL is refused.
   ([Going to production](GoingToProduction.md))
 
 ## 2. Receiving credentials
