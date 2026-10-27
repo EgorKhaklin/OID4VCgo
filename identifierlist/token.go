@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -86,9 +84,9 @@ type TokenClaims struct {
 	// Iat is when the list was signed, in seconds since 1970. REQUIRED.
 	Iat int64
 
-	// Exp is when the list stops being valid. REQUIRED to issue
-	// (ISO/IEC 18013-5 §12.3.6.3: "The exp claim shall be present");
-	// VerifyToken leaves it nil for a token without one.
+	// Exp is when the list stops being valid. REQUIRED (ISO/IEC
+	// 18013-5 §12.3.6.3: "The exp claim shall be present"): IssueToken
+	// and VerifyToken refuse a token without one.
 	Exp *int64
 
 	// TTL, if set, is how long a Relying Party may cache the list, in
@@ -128,9 +126,9 @@ func IssueToken(signer crypto.Signer, alg oid4vci.COSEAlg, claims TokenClaims, c
 	if err := claims.validate(); err != nil {
 		return nil, err
 	}
-	ders, err := signerChain(signer, chain)
+	ders, err := certchain.SignerChainDERs(signer, chain)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("identifierlist: %w", err)
 	}
 	typ := opts.Typ
 	if typ == "" {
@@ -188,27 +186,6 @@ func (c TokenClaims) validate() error {
 	return nil
 }
 
-// signerChain checks chain starts with signer's certificate and is the
-// chain HAIP 1.0 §6.1 has a list signer present, as
-// statuslist.IssueTokenCWTX5Chain does, and returns its DER encodings.
-func signerChain(signer crypto.Signer, chain []*x509.Certificate) ([][]byte, error) {
-	if len(chain) == 0 {
-		return nil, errors.New("identifierlist: a certificate chain is required")
-	}
-	pub, ok := chain[0].PublicKey.(interface{ Equal(crypto.PublicKey) bool })
-	if !ok || !pub.Equal(signer.Public()) {
-		return nil, errors.New("identifierlist: the chain's first certificate isn't the signer's")
-	}
-	if err := certchain.CheckPresentedChain(chain[0], chain[1:]); err != nil {
-		return nil, fmt.Errorf("identifierlist: %w", err)
-	}
-	ders := make([][]byte, len(chain))
-	for i, c := range chain {
-		ders[i] = c.Raw
-	}
-	return ders, nil
-}
-
 // VerifyOptions configures VerifyToken, Check and Checker. Its fields
 // mean what statuslist.VerifyOptions's of the same name do.
 type VerifyOptions struct {
@@ -219,9 +196,7 @@ type VerifyOptions struct {
 	// MaxAge, if set, refuses a token issued longer ago: a list signed
 	// before a revocation stays valid until its exp, so anyone serving
 	// bytes at the uri could replay it until then. Zero leaves
-	// freshness to exp, and refuses a token without exp issued more
-	// than DefaultMaxAgeWithoutExp ago. Negative is an error, not "no
-	// limit".
+	// freshness to exp. Negative is an error, not "no limit".
 	MaxAge time.Duration
 
 	// MaxClockSkew is how far in the future iat and nbf may be; zero
@@ -240,12 +215,6 @@ type VerifyOptions struct {
 	Revocation certrevocation.Checker
 }
 
-// DefaultMaxAgeWithoutExp bounds how long ago a token with no exp may
-// have been issued, when VerifyOptions.MaxAge is unset.
-const DefaultMaxAgeWithoutExp = 24 * time.Hour
-
-const defaultMaxClockSkew = time.Minute
-
 func (o VerifyOptions) now() time.Time {
 	if o.Now == nil {
 		return time.Now()
@@ -254,39 +223,27 @@ func (o VerifyOptions) now() time.Time {
 }
 
 // VerifyToken verifies an identifier list carrying its signer's
-// x5chain, tagged or untagged: the chain to roots (on a path
-// LeafPolicy approves and Revocation passes), the signature with its
-// leaf's key, the typ header (MediaType or BareTyp, case-insensitively),
-// its claims — identifier_list present, Token Status List's status_list
-// absent (ISO/IEC 18013-5 §12.3.6.4) — and its times. It doesn't bind
-// the signer to an mdoc's issuer or check sub against a reference:
-// that's Check's job.
+// x5chain in its protected header (ISO/IEC 18013-5 §12.3.6.3), tagged
+// or untagged: the chain to roots (on a path LeafPolicy approves and
+// Revocation passes), the signature with its leaf's key, the typ header
+// (MediaType or BareTyp, case-insensitively), its claims —
+// identifier_list present, Token Status List's status_list absent
+// (§12.3.6.4) — and its times, refusing a token without exp
+// (§12.3.6.3). It doesn't bind the signer to an mdoc's issuer or check
+// sub against a reference: that's Check's job.
 func VerifyToken(ctx context.Context, token []byte, roots *x509.CertPool, opts VerifyOptions) (TokenClaims, error) {
 	return verifyToken(ctx, token, roots, opts.LeafPolicy, opts)
 }
 
 // verifyToken is VerifyToken with policy in place of opts.LeafPolicy.
 func verifyToken(ctx context.Context, token []byte, roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error, opts VerifyOptions) (TokenClaims, error) {
-	if opts.MaxAge < 0 {
-		return TokenClaims{}, errors.New("identifierlist: VerifyOptions.MaxAge is negative")
-	}
-	protected, unprotected, _, err := cose.DecodeUnverifiedMax(token, maxTokenBytes)
-	if err != nil {
-		return TokenClaims{}, fmt.Errorf("identifierlist: decode token: %w", err)
-	}
 	now := opts.now()
-	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, cose.X5ChainOf(protected, unprotected), roots, policy, opts.Revocation, now)
+	// §12.3.6.3 has the x5chain protected, where the signature covers it.
+	leaf, alg, err := cose.X5ChainSigner(ctx, token, cose.X5ChainTrust{
+		MaxBytes: maxTokenBytes, ProtectedOnly: true, Roots: roots, Policy: policy, Revocation: opts.Revocation, Now: now,
+	})
 	if err != nil {
-		return TokenClaims{}, fmt.Errorf("identifierlist: token signer: %w", err)
-	}
-	var alg cose.Alg
-	switch leaf.PublicKey.(type) {
-	case *ecdsa.PublicKey:
-		alg = cose.ES256
-	case ed25519.PublicKey:
-		alg = cose.EdDSA
-	default:
-		return TokenClaims{}, fmt.Errorf("identifierlist: token signer: unsupported key type %T", leaf.PublicKey)
+		return TokenClaims{}, fmt.Errorf("identifierlist: %w", err)
 	}
 	protected, _, raw, err := cose.VerifyMax(alg, leaf.PublicKey, token, nil, maxTokenBytes)
 	if err != nil {
@@ -299,8 +256,9 @@ func verifyToken(ctx context.Context, token []byte, roots *x509.CertPool, policy
 	if err != nil {
 		return TokenClaims{}, err
 	}
-	if err := checkTimes(claims.Iat, claims.Exp, nbf, now, opts); err != nil {
-		return TokenClaims{}, err
+	window := jwtdate.Window{MaxAge: opts.MaxAge, MaxClockSkew: opts.MaxClockSkew, RequireExp: true}
+	if err := window.Check(claims.Iat, claims.Exp, nbf, now); err != nil {
+		return TokenClaims{}, fmt.Errorf("identifierlist: %w", err)
 	}
 	return claims, nil
 }
@@ -350,7 +308,7 @@ func check(ctx context.Context, token []byte, roots *x509.CertPool, ref Ref, doc
 		if trust.Roots != nil {
 			roots = trust.Roots
 		} else {
-			policy = bothPolicies(trust.LeafPolicy, opts.LeafPolicy)
+			policy = certchain.BothPolicies(trust.LeafPolicy, opts.LeafPolicy)
 		}
 	}
 	if roots == nil {
@@ -364,20 +322,6 @@ func check(ctx context.Context, token []byte, roots *x509.CertPool, ref Ref, doc
 		return TokenClaims{}, fmt.Errorf("identifierlist: token sub %q isn't the reference's uri %q", claims.Sub, ref.URI)
 	}
 	return claims, nil
-}
-
-// bothPolicies is a LeafPolicy passing only what first and, if set,
-// second both pass.
-func bothPolicies(first, second func(*x509.Certificate, [][]*x509.Certificate) error) func(*x509.Certificate, [][]*x509.Certificate) error {
-	if second == nil {
-		return first
-	}
-	return func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
-		if err := first(leaf, chains); err != nil {
-			return err
-		}
-		return second(leaf, chains)
-	}
 }
 
 type identifierListClaim struct {
@@ -453,57 +397,12 @@ func numericDate(decoded map[int]cbor.RawMessage, key int, name string) (*int64,
 	if err := decMode.Unmarshal(v, &n); err != nil {
 		return nil, fmt.Errorf("identifierlist: %s claim: %w", name, err)
 	}
-	var at time.Time
-	var err error
-	switch n := n.(type) {
-	case uint64:
-		if n > jwtdate.Max {
-			return nil, fmt.Errorf("identifierlist: %s claim is out of range", name)
-		}
-		at, err = jwtdate.FromUnix(int64(n))
-	case int64:
-		at, err = jwtdate.FromUnix(n)
-	case float64:
-		at, err = jwtdate.FromFloat(n)
-	case float32:
-		at, err = jwtdate.FromFloat(float64(n))
-	default:
-		return nil, fmt.Errorf("identifierlist: %s claim isn't a NumericDate", name)
-	}
+	at, err := jwtdate.FromCBOR(n)
 	if err != nil {
 		return nil, fmt.Errorf("identifierlist: %s claim: %w", name, err)
 	}
 	unix := at.Unix()
 	return &unix, nil
-}
-
-// checkTimes applies statuslist's rules for a token's times: issued
-// and valid (nbf) no later than MaxClockSkew ahead, no longer ago than
-// MaxAge (or DefaultMaxAgeWithoutExp, without exp or MaxAge), and not
-// expired (RFC 8392 §3.1.4: "on or after" exp it is refused).
-func checkTimes(iat int64, exp, nbf *int64, now time.Time, opts VerifyOptions) error {
-	skew := opts.MaxClockSkew
-	if skew == 0 {
-		skew = defaultMaxClockSkew
-	}
-	issued := time.Unix(iat, 0)
-	if issued.After(now.Add(skew)) {
-		return errors.New("identifierlist: token was issued in the future")
-	}
-	if nbf != nil && time.Unix(*nbf, 0).After(now.Add(skew)) {
-		return fmt.Errorf("identifierlist: token isn't valid before %s", time.Unix(*nbf, 0).UTC().Format(time.RFC3339))
-	}
-	maxAge := opts.MaxAge
-	if maxAge == 0 && exp == nil {
-		maxAge = DefaultMaxAgeWithoutExp
-	}
-	if maxAge > 0 && issued.Before(now.Add(-maxAge)) {
-		return fmt.Errorf("identifierlist: token was issued %s ago, over the %s allowed", now.Sub(issued).Round(time.Second), maxAge)
-	}
-	if exp != nil && !now.Before(time.Unix(*exp, 0)) {
-		return errors.New("identifierlist: token is expired")
-	}
-	return nil
 }
 
 // encMode encodes claims deterministically (RFC 8949 §4.2.1), so the

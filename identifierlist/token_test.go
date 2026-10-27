@@ -236,6 +236,14 @@ func TestCheck_Refuses(t *testing.T) {
 	list := map[string]any{"identifiers": map[string]any{}}
 	exp := now.Add(time.Hour).Unix()
 	at := func(d time.Duration) func() time.Time { return func() time.Time { return now.Add(d) } }
+	rawClaims, err := encMode.Marshal(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Unix(), cwtClaimExp: exp, cwtClaimIdentifierList: list})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unprotectedChain, err := cose.SignTagged(cose.ES256, pki.key, cose.Headers{Typ: MediaType}, cose.Headers{X5Chain: [][]byte{pki.leaf.Raw}}, rawClaims, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for name, tc := range map[string]struct {
 		token []byte
@@ -244,25 +252,26 @@ func TestCheck_Refuses(t *testing.T) {
 		opts  VerifyOptions
 		want  string
 	}{
-		"untrusted root":                 {token, untrusted, ref, VerifyOptions{}, "token signer"},
-		"nil roots, no certificate":      {token, nil, ref, VerifyOptions{}, "no trust anchors"},
-		"tampered signature":             {tampered, pki.roots, ref, VerifyOptions{}, "verify CWT signature"},
-		"not a COSE_Sign1":               {[]byte{0xa0}, pki.roots, ref, VerifyOptions{}, "decode token"},
-		"another list's sub":             {token, pki.roots, Ref{ID: []byte{2}, URI: "https://example.com/identifierlists/2"}, VerifyOptions{}, "isn't the reference's uri"},
-		"no id in the reference":         {token, pki.roots, Ref{URI: testURI}, VerifyOptions{}, "needs an id and a uri"},
-		"expired":                        {token, pki.roots, ref, VerifyOptions{Now: at(time.Hour)}, "is expired"},
-		"issued in the future":           {token, pki.roots, ref, VerifyOptions{Now: at(-time.Hour)}, "issued in the future"},
-		"older than MaxAge":              {token, pki.roots, ref, VerifyOptions{Now: at(30 * time.Minute), MaxAge: time.Minute}, "over the 1m0s allowed"},
-		"negative MaxAge":                {token, pki.roots, ref, VerifyOptions{MaxAge: -time.Second}, "MaxAge is negative"},
-		"no exp, older than the default": {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Add(-48 * time.Hour).Unix(), cwtClaimIdentifierList: list}), pki.roots, ref, VerifyOptions{}, "over the 24h0m0s allowed"},
-		"not yet valid (nbf)":            {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Unix(), cwtClaimExp: exp, cwtClaimNbf: now.Add(time.Hour).Unix(), cwtClaimIdentifierList: list}), pki.roots, ref, VerifyOptions{}, "isn't valid before"},
-		"iat zero":                       {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: 0, cwtClaimExp: exp, cwtClaimIdentifierList: list}), pki.roots, ref, VerifyOptions{}, "missing the required iat"},
-		"no identifier_list":             {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Unix(), cwtClaimExp: exp}), pki.roots, ref, VerifyOptions{}, "missing the required identifier_list"},
-		"a status_list claim too":        {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Unix(), cwtClaimExp: exp, cwtClaimStatusList: map[string]any{"bits": 1, "lst": []byte{0}}, cwtClaimIdentifierList: list}), pki.roots, ref, VerifyOptions{}, "carries a status_list claim"},
-		"no identifiers map":             {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Unix(), cwtClaimExp: exp, cwtClaimIdentifierList: map[string]any{}}), pki.roots, ref, VerifyOptions{}, "has no identifiers map"},
-		"no sub":                         {sign(map[int]any{cwtClaimIat: now.Unix(), cwtClaimExp: exp, cwtClaimIdentifierList: list}), pki.roots, ref, VerifyOptions{}, "missing the required sub"},
-		"zero ttl":                       {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Unix(), cwtClaimExp: exp, cwtClaimTTL: 0, cwtClaimIdentifierList: list}), pki.roots, ref, VerifyOptions{}, "ttl claim isn't a positive integer"},
-		"LeafPolicy refuses":             {token, pki.roots, ref, VerifyOptions{LeafPolicy: func(*x509.Certificate, [][]*x509.Certificate) error { return errors.New("refused") }}, "leaf certificate policy"},
+		"untrusted root":            {token, untrusted, ref, VerifyOptions{}, "token signer"},
+		"nil roots, no certificate": {token, nil, ref, VerifyOptions{}, "no trust anchors"},
+		"tampered signature":        {tampered, pki.roots, ref, VerifyOptions{}, "verify CWT signature"},
+		"not a COSE_Sign1":          {[]byte{0xa0}, pki.roots, ref, VerifyOptions{}, "decode token"},
+		"another list's sub":        {token, pki.roots, Ref{ID: []byte{2}, URI: "https://example.com/identifierlists/2"}, VerifyOptions{}, "isn't the reference's uri"},
+		"no id in the reference":    {token, pki.roots, Ref{URI: testURI}, VerifyOptions{}, "needs an id and a uri"},
+		"expired":                   {token, pki.roots, ref, VerifyOptions{Now: at(time.Hour)}, "is expired"},
+		"issued in the future":      {token, pki.roots, ref, VerifyOptions{Now: at(-time.Hour)}, "issued in the future"},
+		"older than MaxAge":         {token, pki.roots, ref, VerifyOptions{Now: at(30 * time.Minute), MaxAge: time.Minute}, "over the 1m0s allowed"},
+		"negative MaxAge":           {token, pki.roots, ref, VerifyOptions{MaxAge: -time.Second}, "MaxAge is negative"},
+		"no exp":                    {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Unix(), cwtClaimIdentifierList: list}), pki.roots, ref, VerifyOptions{}, "missing the required exp"},
+		"x5chain unprotected":       {unprotectedChain, pki.roots, ref, VerifyOptions{}, "token signer"},
+		"not yet valid (nbf)":       {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Unix(), cwtClaimExp: exp, cwtClaimNbf: now.Add(time.Hour).Unix(), cwtClaimIdentifierList: list}), pki.roots, ref, VerifyOptions{}, "isn't valid before"},
+		"iat zero":                  {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: 0, cwtClaimExp: exp, cwtClaimIdentifierList: list}), pki.roots, ref, VerifyOptions{}, "missing the required iat"},
+		"no identifier_list":        {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Unix(), cwtClaimExp: exp}), pki.roots, ref, VerifyOptions{}, "missing the required identifier_list"},
+		"a status_list claim too":   {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Unix(), cwtClaimExp: exp, cwtClaimStatusList: map[string]any{"bits": 1, "lst": []byte{0}}, cwtClaimIdentifierList: list}), pki.roots, ref, VerifyOptions{}, "carries a status_list claim"},
+		"no identifiers map":        {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Unix(), cwtClaimExp: exp, cwtClaimIdentifierList: map[string]any{}}), pki.roots, ref, VerifyOptions{}, "has no identifiers map"},
+		"no sub":                    {sign(map[int]any{cwtClaimIat: now.Unix(), cwtClaimExp: exp, cwtClaimIdentifierList: list}), pki.roots, ref, VerifyOptions{}, "missing the required sub"},
+		"zero ttl":                  {sign(map[int]any{cwtClaimSub: testURI, cwtClaimIat: now.Unix(), cwtClaimExp: exp, cwtClaimTTL: 0, cwtClaimIdentifierList: list}), pki.roots, ref, VerifyOptions{}, "ttl claim isn't a positive integer"},
+		"LeafPolicy refuses":        {token, pki.roots, ref, VerifyOptions{LeafPolicy: func(*x509.Certificate, [][]*x509.Certificate) error { return errors.New("refused") }}, "leaf certificate policy"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			revoked, _, err := Check(context.Background(), tc.token, tc.roots, tc.ref, pki.dsPath, tc.opts)
@@ -271,16 +280,6 @@ func TestCheck_Refuses(t *testing.T) {
 			}
 			wantErr(t, name, err, tc.want)
 		})
-	}
-}
-
-// TestVerifyToken_NoExp: a token without exp is read within
-// DefaultMaxAgeWithoutExp.
-func TestVerifyToken_NoExp(t *testing.T) {
-	pki := newPKI(t)
-	token := signRaw(t, pki, MediaType, map[int]any{cwtClaimSub: testURI, cwtClaimIat: time.Now().Unix(), cwtClaimIdentifierList: map[string]any{"identifiers": map[string]any{}}})
-	if claims, err := VerifyToken(context.Background(), token, pki.roots, VerifyOptions{}); err != nil || claims.Exp != nil {
-		t.Errorf("claims %+v, %v", claims, err)
 	}
 }
 

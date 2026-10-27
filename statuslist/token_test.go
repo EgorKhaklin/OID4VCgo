@@ -131,12 +131,16 @@ func TestVerifyToken_RejectsWrongTyp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	compact, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "not-a-statuslist+jwt"}, raw)
-	if err != nil {
-		t.Fatalf("Sign: %v", err)
-	}
-	if _, err := VerifyToken(compact, &key.PublicKey, jose.ES256, VerifyOptions{}); err == nil {
-		t.Errorf("VerifyToken accepted the wrong typ header")
+	// typ is a media type (RFC 7515 §4.1.9): case-insensitive, its
+	// "application/" prefix optional.
+	for typ, ok := range map[string]bool{"not-a-statuslist+jwt": false, "Application/StatusList+JWT": true} {
+		compact, err := jose.Sign(jose.ES256, key, map[string]any{"typ": typ}, raw)
+		if err != nil {
+			t.Fatalf("Sign: %v", err)
+		}
+		if _, err := VerifyToken(compact, &key.PublicKey, jose.ES256, VerifyOptions{}); (err == nil) != ok {
+			t.Errorf("typ %q: %v", typ, err)
+		}
 	}
 }
 

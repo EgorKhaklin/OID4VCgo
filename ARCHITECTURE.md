@@ -388,8 +388,10 @@ changes whether *every* bullet below is `(done)`.
   `Publisher` is optional sugar over it (`Token`, and a cached
   `ServeHTTP` that keeps serving an unexpired token when re-signing
   fails and reports failures to `OnError`). `VerifyToken` verifies the
-  x5chain to roots, the signature, typ, the claims (no `status_list`)
-  and `statuslist`'s time rules; `Check` adds §12.3.6.2's binding — the
+  protected x5chain to roots, the signature, typ, the claims (no
+  `status_list`) and `statuslist`'s time rules with exp required
+  (§12.3.6.3; the rules are shared, in `internal/jwtdate`, as is the
+  x5chain signer step, in `internal/cose`); `Check` adds §12.3.6.2's binding — the
   MSO reference's `certificate` as sole anchor when it names one, else a
   path through the CA that signed the document signer
   (`mdoc.IdentifierListTrust`, `StatusTrust`'s sibling), given the MSO's

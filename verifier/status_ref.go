@@ -204,22 +204,9 @@ func requireNotOnIdentifierList(ctx context.Context, checker statuslist.Checker,
 		if statusIssuers == nil {
 			return errUnboundStatusSigner
 		}
-		c.Options.LeafPolicy = bothPolicies(o.LeafPolicy, unnamedStatusIssuer(statusIssuers))
+		c.Options.LeafPolicy = certchain.BothPolicies(o.LeafPolicy, unnamedStatusIssuer(statusIssuers))
 	}
 	return c.RequireNotRevoked(ctx, ref, path)
-}
-
-// bothPolicies is a LeafPolicy requiring base, if set, and then p.
-func bothPolicies(base, p func(*x509.Certificate, [][]*x509.Certificate) error) func(*x509.Certificate, [][]*x509.Certificate) error {
-	if base == nil {
-		return p
-	}
-	return func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
-		if err := base(leaf, chains); err != nil {
-			return err
-		}
-		return p(leaf, chains)
-	}
 }
 
 // unnamedStatusIssuer is statusIssuers as a LeafPolicy, for a credential
@@ -310,7 +297,8 @@ func (vc VerifiedCredential) issuerKey() crypto.PublicKey {
 // signer trusted as ISO/IEC 18013-5 §12.3.6 says (mdoc.StatusTrust), or
 // a Status Issuer statusIssuers accepts, given no issuer name. An mdoc
 // verified with no issuer chain, and whose MSO names no status
-// Certificate, is refused unless statusIssuers decides its signer.
+// Certificate, is refused unless statusIssuers decides its signer. The
+// list must carry exp and its signer's x5chain protected (§12.3.6.3).
 func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, statusIssuers StatusIssuerPolicy) (statuslist.Checker, error) {
 	var ref *mdoc.StatusListRef
 	if vc.MdocStatus != nil {
@@ -321,6 +309,7 @@ func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, status
 		return checker, err
 	}
 	c := checker
+	c.Options.RequireExp, c.Options.X5ChainProtectedOnly = true, true
 	base := checker.Options.LeafPolicy
 	if (ref == nil || len(ref.Certificate) == 0) && len(path) == 0 {
 		// Nothing ties the list's signer to the document's issuer but
@@ -328,7 +317,7 @@ func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, status
 		if statusIssuers == nil {
 			return checker, errUnboundStatusSigner
 		}
-		c.Options.LeafPolicy = bothPolicies(base, unnamedStatusIssuer(statusIssuers))
+		c.Options.LeafPolicy = certchain.BothPolicies(base, unnamedStatusIssuer(statusIssuers))
 		return c, nil
 	}
 	trust, err := mdoc.StatusTrust(ref, path)

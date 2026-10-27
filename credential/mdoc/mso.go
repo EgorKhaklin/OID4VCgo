@@ -73,18 +73,21 @@ type Status struct {
 // from this type, and IdentifierListTrust binds the list's signer), or
 // verifier.RequireValidStatus for a presented mdoc.
 //
-// Issue refuses a reference with no URI, or whose Certificate isn't an
-// X.509 certificate (see validate).
+// Issue refuses a reference with no ID or URI, or whose Certificate
+// isn't an X.509 certificate (see validate).
 type IdentifierListRef struct {
 	ID          []byte `cbor:"id"`
 	URI         string `cbor:"uri"`
 	Certificate []byte `cbor:"certificate,omitempty"`
 }
 
-// validate checks r's uri is set, as Claims.Status.URI must be, and
-// that its certificate, only when present, is one (§12.3.6.2: "it
-// shall contain a certificate").
+// validate checks r's id and uri are set, as §12.3.6.4's
+// IdentifierListInfo requires, and that its certificate, only when
+// present, is one (§12.3.6.2: "it shall contain a certificate").
 func (r *IdentifierListRef) validate() error {
+	if len(r.ID) == 0 {
+		return fmt.Errorf("mdoc: Claims.IdentifierList.ID is required")
+	}
 	if r.URI == "" {
 		return fmt.Errorf("mdoc: Claims.IdentifierList.URI is required")
 	}
