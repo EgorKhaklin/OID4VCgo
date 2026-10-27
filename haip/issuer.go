@@ -35,7 +35,9 @@ func RecommendedJWTProofType() oid4vci.ProofTypeConfiguration {
 // issuer is a c_nonce from the unauthenticated Nonce Endpoint, and a
 // key attestation can be relayed between issuers (see
 // oid4vci.ProofTypeAttestation), whereas a jwt proof is signed by an
-// attested key and names the issuer in aud.
+// attested key and names the issuer in aud. issuer.New refuses this
+// proof type under AssuranceProduction unless
+// issuer.Config.AllowAttestationProofType takes it.
 func RecommendedAttestationProofType() oid4vci.ProofTypeConfiguration {
 	return oid4vci.ProofTypeConfiguration{
 		ProofSigningAlgValuesSupported: []string{string(RecommendedJOSEAlgorithm)},
@@ -65,9 +67,10 @@ func RecommendedJWTKeyAttestationProofType() oid4vci.ProofTypeConfiguration {
 type IssuerRecommendations struct {
 	// ProofTypesSupported is ready to assign directly to a
 	// CredentialConfiguration that requires cryptographic key binding
-	// (i.e. one that also sets CryptographicBindingMethodsSupported) —
-	// see RecommendedJWTProofType/RecommendedAttestationProofType's
-	// own doc comments for each entry's citation.
+	// (i.e. one that also sets CryptographicBindingMethodsSupported):
+	// jwt proofs carrying a Key Attestation in their key_attestation
+	// header (RecommendedJWTKeyAttestationProofType), HAIP 1.0 §4.5.1's
+	// combination that binds each proof to this issuer by its aud.
 	ProofTypesSupported map[string]oid4vci.ProofTypeConfiguration
 }
 
@@ -76,11 +79,17 @@ type IssuerRecommendations struct {
 // actually grounds a specific value for. As with FAPIgo's own
 // RecommendedLimits/RecommendedAlgorithms, this is a starting point to
 // call and override, not something issuer.New applies on its own.
+//
+// Its proof types require a Key Attestation (Wallets MUST support them,
+// §4.5.1) in jwt proofs only: the attestation proof type
+// (RecommendedAttestationProofType) names no audience, so another
+// issuer could relay a Wallet's key attestation here, and issuer.New
+// refuses it under AssuranceProduction without
+// issuer.Config.AllowAttestationProofType.
 func RecommendedIssuerConfig() IssuerRecommendations {
 	return IssuerRecommendations{
 		ProofTypesSupported: map[string]oid4vci.ProofTypeConfiguration{
-			oid4vci.ProofTypeJWT:         RecommendedJWTProofType(),
-			oid4vci.ProofTypeAttestation: RecommendedAttestationProofType(),
+			oid4vci.ProofTypeJWT: RecommendedJWTKeyAttestationProofType(),
 		},
 	}
 }

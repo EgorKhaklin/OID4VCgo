@@ -35,22 +35,15 @@ func TestRecommendedAttestationProofType(t *testing.T) {
 
 func TestRecommendedIssuerConfig(t *testing.T) {
 	rec := haip.RecommendedIssuerConfig()
-	if len(rec.ProofTypesSupported) != 2 {
-		t.Fatalf("ProofTypesSupported has %d entries, want 2", len(rec.ProofTypesSupported))
+	if len(rec.ProofTypesSupported) != 1 {
+		t.Fatalf("ProofTypesSupported has %d entries, want 1 (jwt)", len(rec.ProofTypesSupported))
 	}
 	jwtPTC, ok := rec.ProofTypesSupported[oid4vci.ProofTypeJWT]
 	if !ok {
 		t.Fatalf("ProofTypesSupported is missing %q", oid4vci.ProofTypeJWT)
 	}
-	if jwtPTC.KeyAttestationsRequired != nil {
-		t.Errorf("jwt proof type KeyAttestationsRequired = %v, want nil", jwtPTC.KeyAttestationsRequired)
-	}
-	attestationPTC, ok := rec.ProofTypesSupported[oid4vci.ProofTypeAttestation]
-	if !ok {
-		t.Fatalf("ProofTypesSupported is missing %q", oid4vci.ProofTypeAttestation)
-	}
-	if attestationPTC.KeyAttestationsRequired == nil {
-		t.Errorf("attestation proof type KeyAttestationsRequired = nil, want non-nil")
+	if jwtPTC.KeyAttestationsRequired == nil {
+		t.Errorf("jwt proof type KeyAttestationsRequired = nil, want a key attestation required")
 	}
 }
 

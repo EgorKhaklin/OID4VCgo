@@ -1434,8 +1434,11 @@ changes whether *every* bullet below is `(done)`.
   `RecommendedJWTKeyAttestationProofType()`: `issuer` verifies the
   header's attestation (its signer, exp, the proof's c_nonce, and that
   it attests the proof's key) and issues for each key it attests.
-  `RecommendedIssuerConfig()` bundles both proof types
-  into an `IssuerRecommendations`, deliberately not a complete
+  `RecommendedIssuerConfig()` takes only the jwt combination, since the
+  attestation proof type names no audience and so can be relayed between
+  issuers (`issuer.New` refuses it under production assurance without
+  `Config.AllowAttestationProofType`), and returns an
+  `IssuerRecommendations`, deliberately not a complete
   `issuer.Config` — an Issuer's own identifier/endpoint URLs, a
   Credential Configuration's own Format/VCT/DocType/Scope, and every
   `issuer.Limits` duration are all deployment-specific values neither
