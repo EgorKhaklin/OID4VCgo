@@ -100,12 +100,14 @@ type VerifyOptions struct {
 	// RequireExp refuses a token without exp. draft-14 leaves exp
 	// optional; ISO/IEC 18013-5 §12.3.6.3 has it present in an mdoc's
 	// revocation list ("The exp claim shall be present").
+	// Checker.Check sets it for the CWT form.
 	RequireExp bool
 
 	// X5ChainProtectedOnly has CheckCWTX5Chain read the signer's
 	// x5chain from the protected header alone, as ISO/IEC 18013-5
 	// §12.3.6.3 has an mdoc's revocation list carry it. Unset, an
 	// unprotected x5chain is accepted too, as RFC 9360 allows.
+	// Checker.Check sets it for the CWT form.
 	X5ChainProtectedOnly bool
 
 	// LeafPolicy, used by CheckX5C/CheckCWTX5Chain only, is run on the
