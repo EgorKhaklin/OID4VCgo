@@ -118,6 +118,14 @@ func TestVerifyResponse_ProductionDecisions(t *testing.T) {
 		"decided": {func(p *mdocdcapi.VerifyParams) {
 			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
 		}, ""},
+		"the system root pool": {func(p *mdocdcapi.VerifyParams) {
+			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck = verifier.AssuranceProduction, true, true
+			system, err := x509.SystemCertPool()
+			if err != nil {
+				t.Skipf("no system root pool: %v", err)
+			}
+			p.IssuerKeys = verifier.X5ChainIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}
+		}, "system root pool"},
 		"no origins": {func(p *mdocdcapi.VerifyParams) {
 			p.Assurance, p.AnyIssuerForAnyType, p.NoStatusCheck, p.Origins = verifier.AssuranceProduction, true, true, nil
 		}, "set Origins"},

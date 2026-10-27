@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -48,8 +49,9 @@ type VerifyParams struct {
 	// issuer chains (a verifier.MdocIssuerChainResolver, as
 	// verifier.X5ChainIssuerKeyResolver is); IssuerAuthorized or
 	// AnyIssuerForAnyType must decide which issuers may issue the
-	// doctype; Accept or NoStatusCheck must decide revocation; and
-	// Origins must be set, with Pending.Origin https.
+	// doctype; Accept or NoStatusCheck must decide revocation; Origins
+	// must be set, with Pending.Origin https; and IssuerKeys' roots
+	// mustn't be the system root pool.
 	Assurance verifier.AssuranceLevel
 	// Origins are the origins of the Verifier's own pages: a response
 	// to a request built for any other (Pending.Origin) is refused, so
@@ -197,6 +199,9 @@ func checkAssurance(p VerifyParams) error {
 		// don't run, and status can't be bound to the document's issuer.
 		return errors.New("mdocdcapi: under AssuranceProduction, IssuerKeys must verify issuer chains (verifier.MdocIssuerChainResolver, or Unwrap to one)")
 	}
+	if anchoredBySystemPool(p.IssuerKeys) {
+		return errors.New("mdocdcapi: under AssuranceProduction, IssuerKeys' Roots or RootsByDocType holds the system root pool: it anchors every public CA's certificates; trust the IACAs")
+	}
 	if p.IssuerAuthorized == nil && !p.AnyIssuerForAnyType {
 		return errors.New("mdocdcapi: under AssuranceProduction, set IssuerAuthorized (which issuers may issue which doctypes) or AnyIssuerForAnyType: without either, any trusted issuer is accepted for any doctype")
 	}
@@ -225,6 +230,37 @@ func checkPendingOrigin(p VerifyParams) error {
 		return fmt.Errorf("mdocdcapi: origin %q must be https outside AssuranceDevelopment", origin)
 	}
 	return nil
+}
+
+// anchoredBySystemPool reports whether resolver is, or wraps, a
+// verifier.X5ChainIssuerKeyResolver with a system root pool as a trust
+// anchor set (certchain.IsSystemPool).
+func anchoredBySystemPool(resolver verifier.MdocIssuerKeyResolver) bool {
+	for range 16 {
+		var r *verifier.X5ChainIssuerKeyResolver
+		switch v := resolver.(type) {
+		case verifier.X5ChainIssuerKeyResolver:
+			r = &v
+		case *verifier.X5ChainIssuerKeyResolver:
+			r = v
+		}
+		if r != nil {
+			if certchain.IsSystemPool(r.Roots) {
+				return true
+			}
+			for _, roots := range r.RootsByDocType {
+				if certchain.IsSystemPool(roots) {
+					return true
+				}
+			}
+		}
+		wrapper, ok := resolver.(verifier.MdocIssuerKeyResolverWrapper)
+		if !ok {
+			return false
+		}
+		resolver = wrapper.Unwrap()
+	}
+	return false
 }
 
 // verifiesChains reports whether resolver is a
