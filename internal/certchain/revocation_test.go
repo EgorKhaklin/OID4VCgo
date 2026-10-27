@@ -104,3 +104,48 @@ func TestVerifyTrustedChainsAt_PolicyThenRevocation(t *testing.T) {
 		t.Errorf("approved path revoked, other path refused by policy: %v, want ErrRevoked", err)
 	}
 }
+
+// A leaf pinned in the roots verifies as the path [leaf] alone. It's
+// still checked, against a CRL from the CA it names as its issuer,
+// whose certificate CRLs.Issuers supplies to verify that CRL with;
+// without it, or without a current CRL from it, the leaf is refused.
+func TestVerifyTrustedChainsAt_PinnedLeaf(t *testing.T) {
+	ca, caKey := testcert.CA(t, "CA")
+	leaf, _ := testcert.Leaf(t, "pinned issuer", ca, caKey)
+	impostor, impostorKey := testcert.CA(t, "CA")
+	roots := x509.NewCertPool()
+	roots.AddCert(leaf)
+	issuedBy := func(issuer *x509.Certificate, lists ...*x509.RevocationList) certrevocation.CRLs {
+		c := crls(lists...)
+		c.Issuers = []*x509.Certificate{issuer}
+		return c
+	}
+	tests := map[string]struct {
+		der        []byte
+		revocation certrevocation.Checker
+		want       error
+	}{
+		"clean CRL":           {leaf.Raw, issuedBy(ca, testcert.CRL(t, ca, caKey)), nil},
+		"revoked":             {leaf.Raw, issuedBy(ca, testcert.CRL(t, ca, caKey, leaf.SerialNumber)), certrevocation.ErrRevoked},
+		"no CRL":              {leaf.Raw, issuedBy(ca), certrevocation.ErrNoCurrentCRL},
+		"issuer not given":    {leaf.Raw, crls(testcert.CRL(t, ca, caKey)), certrevocation.ErrNoCurrentCRL},
+		"same-named impostor": {leaf.Raw, issuedBy(impostor, testcert.CRL(t, impostor, impostorKey)), certrevocation.ErrNoCurrentCRL},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, chains, err := VerifyTrustedChainsAt(context.Background(), [][]byte{tc.der}, roots, nil, tc.revocation, time.Time{})
+			if tc.want != nil {
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("err = %v, want %v", err, tc.want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			if len(chains) != 1 || len(chains[0]) != 1 {
+				t.Fatalf("got %d paths, want the one-certificate path alone", len(chains))
+			}
+		})
+	}
+}
