@@ -158,6 +158,19 @@ func TestStatusTrust_BindsTheDocumentSignersIssuer(t *testing.T) {
 	}
 }
 
+// IdentifierListTrust applies StatusTrust's rule (tested there) to an
+// identifier list's reference: its Certificate pins the signer.
+func TestIdentifierListTrust(t *testing.T) {
+	other := newTestCA(t, "another IACA")
+	pinned, err := IdentifierListTrust(&IdentifierListRef{Certificate: other.cert.Raw}, nil)
+	if err != nil || pinned.Roots == nil {
+		t.Fatalf("with a Certificate: %+v, %v; want Roots", pinned, err)
+	}
+	if _, err := IdentifierListTrust(nil, nil); err == nil {
+		t.Error("no document signer path and no Certificate: accepted")
+	}
+}
+
 // IssuerAuthStatus reads an issued mdoc's status and x5chain back.
 func TestIssuerAuthStatus(t *testing.T) {
 	f := newFixture(t)

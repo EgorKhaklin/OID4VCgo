@@ -57,9 +57,10 @@
 // direct_post.jwt response's key ID, to find its request before
 // decrypting it. VerifyResponse doesn't check revocation: each
 // VerifiedCredential carries its status reference (Claims["status"], or
-// MdocStatus) for the caller to resolve with package statuslist.
-// RequireValidStatus does, as an Accept; it passes a credential with no
-// status reference, which RequireStatusReference refuses.
+// MdocStatus) for the caller to resolve with package statuslist, or
+// identifierlist for an mdoc's identifier list. RequireValidStatus does
+// both, as an Accept; it passes a credential with no status reference,
+// which RequireStatusReference refuses.
 //
 // Certificate revocation is checked for a credential's issuer:
 // X5CIssuerKeyResolver and X5ChainIssuerKeyResolver require a

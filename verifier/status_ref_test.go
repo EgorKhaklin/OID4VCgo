@@ -106,7 +106,6 @@ func TestRequireValidStatus(t *testing.T) {
 		"one of two revoked":   {creds: []verifier.VerifiedCredential{withStatus(0, uri), withStatus(1, uri)}, refused: true},
 		"unreadable":           {creds: []verifier.VerifiedCredential{withStatus(0, srv.URL+"/statuslists/2")}, refused: true},
 		"malformed reference":  {creds: []verifier.VerifiedCredential{{Claims: map[string]any{"status": map[string]any{"status_list": "nope"}}}}, refused: true},
-		"mdoc identifier list": {creds: []verifier.VerifiedCredential{{MdocStatus: &mdoc.Status{IdentifierList: &mdoc.IdentifierListRef{URI: uri}}}}, refused: true},
 		"status not an object": {creds: []verifier.VerifiedCredential{{Claims: map[string]any{"status": uri + "#0"}}}, refused: true},
 		// Nothing ties its list's signer to its issuer.
 		"no issuer to bind to": {creds: []verifier.VerifiedCredential{unbound}, refused: true},

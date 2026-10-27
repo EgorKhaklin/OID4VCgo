@@ -11,11 +11,12 @@ import (
 )
 
 // StatusSignerTrust is how the signer of an MSO's revocation list (its
-// Status List Token) must be trusted, per ISO/IEC 18013-5 §12.3.6: the
-// list carries its own x5chain, whose top certificate is signed either
-// by the Certificate the MSO's status names or, without one, by the
-// certificate that signed the document signer (for an mDL, the IACA).
-// Another CA the reader also trusts can't vouch for it.
+// Status List Token or its identifier list) must be trusted, per
+// ISO/IEC 18013-5 §12.3.6.2: the list carries its own x5chain, whose
+// top certificate is signed either by the Certificate the MSO's status
+// names or, without one, by the certificate that signed the document
+// signer (for an mDL, the IACA). Another CA the reader also trusts
+// can't vouch for it.
 type StatusSignerTrust struct {
 	// Roots, when the MSO's status names a Certificate, is a pool of
 	// just that certificate: the trust point for the list's x5chain,
@@ -37,8 +38,28 @@ type StatusSignerTrust struct {
 // (matched as the same certificate, or the same subject and key), or,
 // for a path of the document signer alone, the anchor that signed it.
 func StatusTrust(ref *StatusListRef, documentSignerPath []*x509.Certificate) (StatusSignerTrust, error) {
-	if ref != nil && len(ref.Certificate) > 0 {
-		cert, err := x509.ParseCertificate(ref.Certificate)
+	var certificate []byte
+	if ref != nil {
+		certificate = ref.Certificate
+	}
+	return revocationListTrust(certificate, documentSignerPath)
+}
+
+// IdentifierListTrust is StatusTrust for ref, the MSO's identifier list
+// reference: §12.3.6.2's rule is the same for both mechanisms.
+func IdentifierListTrust(ref *IdentifierListRef, documentSignerPath []*x509.Certificate) (StatusSignerTrust, error) {
+	var certificate []byte
+	if ref != nil {
+		certificate = ref.Certificate
+	}
+	return revocationListTrust(certificate, documentSignerPath)
+}
+
+// revocationListTrust is StatusTrust given the Certificate the MSO's
+// status reference names, empty when it names none.
+func revocationListTrust(certificate []byte, documentSignerPath []*x509.Certificate) (StatusSignerTrust, error) {
+	if len(certificate) > 0 {
+		cert, err := x509.ParseCertificate(certificate)
 		if err != nil {
 			return StatusSignerTrust{}, fmt.Errorf("mdoc: status certificate: %w", err)
 		}
@@ -47,7 +68,7 @@ func StatusTrust(ref *StatusListRef, documentSignerPath []*x509.Certificate) (St
 		return StatusSignerTrust{Roots: roots}, nil
 	}
 	if len(documentSignerPath) == 0 || documentSignerPath[0] == nil {
-		return StatusSignerTrust{}, errors.New("mdoc: no document signer path to bind the status list's signer to")
+		return StatusSignerTrust{}, errors.New("mdoc: no document signer path to bind the revocation list's signer to")
 	}
 	ds := documentSignerPath[0]
 	// The CA that signed the document signer, not the path's top: with
@@ -76,7 +97,7 @@ func StatusTrust(ref *StatusListRef, documentSignerPath []*x509.Certificate) (St
 				return nil
 			}
 		}
-		return errors.New("the status list's signer isn't under the CA that signed the document signer (ISO/IEC 18013-5 §12.3.6)")
+		return errors.New("the revocation list's signer isn't under the CA that signed the document signer (ISO/IEC 18013-5 §12.3.6.2)")
 	}}, nil
 }
 

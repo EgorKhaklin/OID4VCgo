@@ -87,6 +87,7 @@ AGENTS.md's "Relationship to FAPIgo".
 | Spec | Pinned by | Draft |
 |---|---|---|
 | [Token Status List (TSL)][statuslist] | HAIP 1.0 §9.4 (overriding OID4VCI 1.0 §14.7's draft-12), Appendix D/E `status` claim | `draft-ietf-oauth-status-list-14` (2025-12-10) |
+| [ISO/IEC 18013-5:2021][iso18013-5] §12.3.6.4 — identifier list (an mdoc's `status.identifier_list`), its Annex D.6 example; [RFC 9360][x5chain] x5chain | — (`identifierlist`; outside HAIP, which names only Token Status List) | First edition |
 
 HAIP 1.0 §9.4 pins SD-JWT VC draft-13 and Token Status List draft-14,
 and states that its versions "overwrite the versions previously
@@ -174,5 +175,6 @@ ARCHITECTURE.md for the package layout.
 [jwa]: https://www.rfc-editor.org/rfc/rfc7518.html
 [jwt]: https://www.rfc-editor.org/rfc/rfc7519.html
 [cose]: https://www.rfc-editor.org/rfc/rfc9052.html
+[x5chain]: https://www.rfc-editor.org/rfc/rfc9360.html
 [dcapi]: https://www.w3.org/TR/digital-credentials/
 [hpke]: https://www.rfc-editor.org/rfc/rfc9180.html

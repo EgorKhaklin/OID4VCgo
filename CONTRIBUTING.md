@@ -29,10 +29,11 @@ fact.
   of either) and against the real OIDF HAIP conformance suite (see
   `conformance/`) before it's proposed as done. "It passes the Go test
   suite" isn't the same claim as "it's HAIP conformant."
-- `proximity`, `mdocdcapi` and `internal/readerauth` implement ISO
-  protocols no OIDF test plan covers. Their bar is the ISO text, the
-  standards' own test vectors reproduced byte for byte (ISO/IEC 18013-5
-  Annex D for `proximity`), and interoperability with an independent
+- `proximity`, `mdocdcapi`, `identifierlist` and `internal/readerauth`
+  implement ISO protocols no OIDF test plan covers. Their bar is the ISO
+  text, the standards' own test vectors reproduced byte for byte (ISO/IEC
+  18013-5 Annex D for `proximity`; Annex D.6's structure for
+  `identifierlist`), and interoperability with an independent
   implementation (Multipaz; Safari for `org-iso-mdoc`). Say in the PR
   which of these a change was checked against.
 - A change that depends on FAPIgo behavior belonging to `server`/`client`/
