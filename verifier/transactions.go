@@ -271,6 +271,9 @@ type TransactionsConfig struct {
 	// differ in any of them. Set it, unique to each policy, where
 	// instances sharing a store have all three in common but verify or
 	// accept differently; instances of one deployment, alike, share it.
+	// Transactions for the Digital Credentials API alone have no
+	// RequestURIBase, so those of one Verifier always derive the same
+	// scope: give each policy among them its own.
 	//
 	// A transaction saved before scopes were recorded has none: a
 	// Transactions with the derived scope reads it, as before, under
