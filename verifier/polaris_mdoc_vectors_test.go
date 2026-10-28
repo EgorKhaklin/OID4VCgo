@@ -131,8 +131,14 @@ func TestPolarisMdocVectors(t *testing.T) {
 	var controls, refusals []polarisMdocVector
 	for _, v := range file.Vectors {
 		if v.Class == "control" {
+			if v.Expected != "accept" {
+				t.Errorf("control %s expects %q, want \"accept\": a mislabelled entry", v.ID, v.Expected)
+			}
 			controls = append(controls, v)
 		} else {
+			if v.Expected != "reject" {
+				t.Errorf("refusal %s (class %q) expects %q, want \"reject\": a mislabelled entry", v.ID, v.Class, v.Expected)
+			}
 			refusals = append(refusals, v)
 		}
 	}
@@ -238,6 +244,16 @@ func TestPolarisMdocVectors(t *testing.T) {
 // presentation (a mistake in this test's own setup) fails the test.
 func polarisMdocJudge(t *testing.T, name string, v polarisMdocVector, in polarisMdocInputs, response string) (verdict, why string) {
 	t.Helper()
+	// A panic is a failure of this test, never a refusal: the verdict
+	// "panic" is neither "accept" nor "reject", so no vector's expectation
+	// matches it. Without this, a verifier that reads the unset private half
+	// of ResponseEncryptionKey would crash the whole run.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("%s: VerifyResponse panicked: %v", name, r)
+			verdict, why = "panic", fmt.Sprintf("panic: %v", r)
+		}
+	}()
 	at, err := time.Parse(time.RFC3339, v.At)
 	if err != nil {
 		t.Fatalf("%s: at: %v", name, err)
