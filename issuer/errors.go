@@ -65,8 +65,8 @@ const (
 
 	// ErrorUseDPoPNonce indicates a DPoP proof presented to
 	// ExchangePreAuthorizedCode was otherwise valid but carried no
-	// nonce, or one this issuer didn't just issue (unknown, already
-	// consumed, or expired) — RFC 9449 §8's own error value for an
+	// nonce, or one this issuer doesn't currently accept (unknown or
+	// expired) — RFC 9449 §8's own error value for an
 	// Authorization Server's nonce-challenge (a plain 400 JSON error
 	// body plus a DPoP-Nonce response header, not the 401
 	// WWW-Authenticate challenge RFC 9449 §9 defines for a resource

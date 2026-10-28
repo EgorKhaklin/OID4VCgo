@@ -573,7 +573,7 @@ changes whether *every* bullet below is `(done)`.
   `PreAuthorizedCodeRecord.CredentialConfigurationIDs` — when
   non-empty, a new private `mintAuthorizationDetails` generates one
   fresh `credential_identifier` per entry (the same `randomID` helper
-  `RequestNonce`/`issueDPoPNonce` already used, factored out of both
+  `RequestNonce`/`currentDPoPNonce` already used, factored out of both
   once a third near-identical inline copy would otherwise have existed)
   and embeds the result both in the issued access token's own claims
   (`AccessTokenParams.Claims["authorization_details"]`, for a later
@@ -738,10 +738,18 @@ changes whether *every* bullet below is `(done)`.
   code first would burn it before the Wallet could ever retry — the
   same ordering `fapigo/server.ExchangeAuthorizationCode` itself takes
   (confirmed by reading its own `TestExchangeAuthorizationCodeNonceCheckedBeforeCodeRedemption`).
-  A successful exchange also proactively issues the next nonce
+  A successful exchange also returns the current nonce
   (`ExchangePreAuthorizedCodeResult.NextDPoPNonce`), the same RFC 9449
   §8 recommendation `fapigo/server.TokenResult.NextDPoPNonce` already
-  follows. Fixing this surfaced a real wire-format bug in
+  follows. As in `fapigo/server` (v0.65.0), a nonce is valid for a time
+  window, not one use: `DPoPNonceStore.Lookup` leaves the record in
+  place, and the `Issuer` hands out one current nonce, issuing the next
+  once half of `DPoPNonceLifetime` has passed — RFC 9449 §8's "servers
+  need to keep a window of recent nonces" — so concurrent requests
+  carrying one nonce all succeed; a proof's `jti` is what refuses a
+  replay. Under `AssuranceProduction`, where the issuer verifies the
+  proof itself, `DPoPNonces` is required as a store or the explicit
+  `issuer.NoDPoPNonces{}` decline. Fixing this surfaced a real wire-format bug in
   `wallet.RequestPreAuthorizedCodeToken`'s own retry logic — see the
   `wallet` bullet below.
   `NewError` builds an `*Error` for a caller's own handler to return
@@ -1533,9 +1541,9 @@ changes whether *every* bullet below is `(done)`.
   creates or resolves a Deferred Issuance transaction on its own (see
   `issuer.DeferredTransactionRecord`'s own doc comment), this package's
   reference store needs some way for a caller to actually create one
-  and later mark it Issued/Denied. `DPoPNonceStore` mirrors `NonceStore`'s
-  own Issue/Consume, single-use-on-consume shape exactly, for the
-  distinct RFC 9449 §8 nonce this package now defines. `DPoPReplayChecker`
+  and later mark it Issued/Denied. `DPoPNonceStore` keeps
+  `issuer.DPoPNonceStore`'s Issue/Lookup window shape: `Lookup` leaves a
+  nonce in place until it expires, for the distinct RFC 9449 §8 nonce. `DPoPReplayChecker`
   is `issuer.DPoPReplayChecker`'s own reference implementation — every
   "jti" `UseOnce` sees is remembered forever (never evicted, even past
   its own `expiresAt`), the simplest reading of RFC 9449 §11.1's literal

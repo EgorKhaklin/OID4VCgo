@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -108,44 +109,52 @@ func (f *fakeDPoPReplayChecker) UseOnce(_ context.Context, jti string, _ time.Ti
 }
 
 // fakeDPoPNonceStore is an in-memory issuer.DPoPNonceStore for tests.
+// Lookup leaves a nonce in place (a nonce is valid for a time window,
+// RFC 9449 §8); lookupErr, when set, is returned by every Lookup, as a
+// store that can't answer would. issues counts Issue calls.
 type fakeDPoPNonceStore struct {
-	mu       sync.Mutex
-	issued   map[string]time.Time
-	consumed map[string]bool
+	mu        sync.Mutex
+	issued    map[string]time.Time
+	issues    int
+	lookupErr error
 }
 
 func newFakeDPoPNonceStore() *fakeDPoPNonceStore {
-	return &fakeDPoPNonceStore{issued: map[string]time.Time{}, consumed: map[string]bool{}}
+	return &fakeDPoPNonceStore{issued: map[string]time.Time{}}
 }
 
 func (f *fakeDPoPNonceStore) Issue(_ context.Context, in issuer.DPoPNonceIssuance) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.issued[in.Nonce] = in.ExpiresAt
+	f.issues++
 	return nil
 }
 
-func (f *fakeDPoPNonceStore) Consume(_ context.Context, c issuer.DPoPNonceConsumption) (issuer.DPoPNonceRecord, error) {
+func (f *fakeDPoPNonceStore) Lookup(_ context.Context, l issuer.DPoPNonceLookup) (issuer.DPoPNonceRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	exp, ok := f.issued[c.Nonce]
-	if !ok || f.consumed[c.Nonce] {
-		return issuer.DPoPNonceRecord{}, errDPoPNonceNotFound
+	if f.lookupErr != nil {
+		return issuer.DPoPNonceRecord{}, f.lookupErr
 	}
-	f.consumed[c.Nonce] = true
+	exp, ok := f.issued[l.Nonce]
+	if !ok {
+		return issuer.DPoPNonceRecord{}, fmt.Errorf("fake: %w", issuer.ErrDPoPNonceUnknown)
+	}
 	return issuer.DPoPNonceRecord{ExpiresAt: exp}, nil
 }
-
-const errDPoPNonceNotFound = fakeErr("dpop nonce not found or already consumed")
 
 // fakeAccessTokenIssuer is an in-memory issuer.AccessTokenIssuer for
 // tests, recording the last AccessTokenParams it was called with.
 type fakeAccessTokenIssuer struct {
+	mu         sync.Mutex
 	err        error
 	lastParams issuer.AccessTokenParams
 }
 
 func (f *fakeAccessTokenIssuer) IssueAccessToken(_ context.Context, p issuer.AccessTokenParams) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.lastParams = p
 	if f.err != nil {
 		return "", "", f.err
@@ -820,7 +829,7 @@ func TestExchangePreAuthorizedCode_ChallengesMissingNonceThenSucceedsOnRetryWith
 		t.Errorf("AccessToken = %q", result.AccessToken)
 	}
 	if result.NextDPoPNonce == "" {
-		t.Errorf("NextDPoPNonce is empty, want a proactively issued replacement")
+		t.Errorf("NextDPoPNonce is empty, want the current nonce")
 	}
 }
 

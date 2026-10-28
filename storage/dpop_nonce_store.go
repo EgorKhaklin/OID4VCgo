@@ -34,16 +34,17 @@ func (s *DPoPNonceStore) Issue(_ context.Context, issuance issuer.DPoPNonceIssua
 	return nil
 }
 
-// Consume implements issuer.DPoPNonceStore. Deleting the map entry on
-// every call — whether or not it was present — is what makes this
-// single-use: a second Consume of the same nonce always finds nothing.
-func (s *DPoPNonceStore) Consume(_ context.Context, consumption issuer.DPoPNonceConsumption) (issuer.DPoPNonceRecord, error) {
+// Lookup implements issuer.DPoPNonceStore. It leaves the record in
+// place, so every Lookup of an issued nonce succeeds until Issue's
+// pruning drops it after its ExpiresAt (RFC 9449 §8: a nonce is valid
+// for a time window, not for one use). An unknown nonce is
+// issuer.ErrDPoPNonceUnknown; this store always answers.
+func (s *DPoPNonceStore) Lookup(_ context.Context, lookup issuer.DPoPNonceLookup) (issuer.DPoPNonceRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	record, ok := s.issued[consumption.Nonce]
-	delete(s.issued, consumption.Nonce)
+	record, ok := s.issued[lookup.Nonce]
 	if !ok {
-		return issuer.DPoPNonceRecord{}, fmt.Errorf("storage: unknown or already-consumed dpop nonce")
+		return issuer.DPoPNonceRecord{}, fmt.Errorf("storage: %w", issuer.ErrDPoPNonceUnknown)
 	}
 	return record, nil
 }

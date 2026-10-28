@@ -123,8 +123,14 @@ type Limits struct {
 	MaxProofAge time.Duration
 
 	// DPoPNonceLifetime bounds how long a DPoP nonce
-	// ExchangePreAuthorizedCode issues (RFC 9449 §8) remains valid.
-	// Required only when Dependencies.DPoPNonces is set.
+	// ExchangePreAuthorizedCode issues (RFC 9449 §8) remains valid, for
+	// any number of proofs. The Issuer hands out one current nonce and
+	// replaces it once half this lifetime has passed, so a Wallet's
+	// nonce is valid for at least half of it after the Wallet last
+	// received it. Required only when Dependencies.DPoPNonces is a store
+	// (not nil or NoDPoPNonces{}); under AssuranceProduction it must
+	// then be at most 15 minutes, as fapigo/server requires of its own.
+	// Five minutes suits most deployments.
 	DPoPNonceLifetime time.Duration
 
 	// NotificationLifetime, if positive, bounds how long a
@@ -637,9 +643,19 @@ type Dependencies struct {
 
 	// DPoPNonces enables RFC 9449 §8's own DPoP nonce-challenge flow for
 	// ExchangePreAuthorizedCode — see DPoPNonceStore's own doc comment.
-	// Optional: nil (the default) disables it entirely, regardless of
-	// whether PreAuthorizedCodes is set. Config.Limits.DPoPNonceLifetime
-	// is required whenever this is non-nil.
+	// Config.Limits.DPoPNonceLifetime is required whenever this is a
+	// store. NoDPoPNonces{} declines nonces, as nil does.
+	//
+	// Under AssuranceDevelopment, nil disables nonces entirely. Under
+	// AssuranceProduction, New refuses nil when PreAuthorizedCodes is
+	// set and PreAuthorizedCodeClientAuthentication isn't
+	// VerifiedPreAuthorizedCode, where this issuer verifies the Token
+	// Request's DPoP proof and issues the access token itself: pass a
+	// durable store that declares StoreAssurance (Durable; Lookup is a
+	// plain read, so AtomicConsume isn't needed) and passes
+	// issuertest.TestDPoPNonceStoreContract, or NoDPoPNonces{} to
+	// decline. Under VerifiedPreAuthorizedCode the Authorization Server
+	// verifies the proof, and its own nonces apply.
 	DPoPNonces DPoPNonceStore
 
 	// Audit records the outcome of every ExchangePreAuthorizedCode/
@@ -656,6 +672,10 @@ type Dependencies struct {
 type Issuer struct {
 	cfg  Config
 	deps Dependencies
+
+	// dpopNonces is the DPoP nonce this Issuer currently hands out (see
+	// currentDPoPNonce).
+	dpopNonces dpopNonceRotator
 }
 
 // New validates cfg and deps and returns a ready-to-use Issuer.
@@ -672,6 +692,13 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 	}
 	if err := validatePreAuthorizedCodeDependencies(cfg, deps); err != nil {
 		return nil, err
+	}
+	// declinedDPoPNonces is kept for checkProductionAssurance, which
+	// tells a decline apart from nil; every other nonce check tests
+	// deps.DPoPNonces against nil.
+	declinedDPoPNonces := dpopNoncesDeclined(deps.DPoPNonces)
+	if declinedDPoPNonces {
+		deps.DPoPNonces = nil
 	}
 	if deps.DPoPNonces != nil && cfg.Limits.DPoPNonceLifetime <= 0 {
 		return nil, fmt.Errorf("issuer: config: limits.dpop_nonce_lifetime must be positive when dependencies.dpop_nonces is set")
@@ -707,7 +734,7 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 	}
 
 	if cfg.Assurance == AssuranceProduction {
-		if err := checkProductionAssurance(cfg, deps); err != nil {
+		if err := checkProductionAssurance(cfg, deps, declinedDPoPNonces); err != nil {
 			return nil, fmt.Errorf("issuer: %w", err)
 		}
 	}

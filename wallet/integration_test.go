@@ -200,41 +200,6 @@ func (fakeTokenAccessTokenIssuer) IssueAccessToken(context.Context, issuer.Acces
 	return "pre-authorized-access-token", "key-1", nil
 }
 
-// fakeTokenDPoPNonceStore is a minimal in-memory issuer.DPoPNonceStore
-// for TestWalletPreAuthorizedCodeRoundTrip_WithDPoPNonceChallenge — this
-// repo has no reference storage implementation for it either, the same
-// gap fakeTokenDPoPReplayChecker's own doc comment notes for
-// DPoPReplayChecker.
-type fakeTokenDPoPNonceStore struct {
-	mu       sync.Mutex
-	issued   map[string]time.Time
-	consumed map[string]bool
-}
-
-func (f *fakeTokenDPoPNonceStore) Issue(_ context.Context, in issuer.DPoPNonceIssuance) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.issued == nil {
-		f.issued = map[string]time.Time{}
-	}
-	f.issued[in.Nonce] = in.ExpiresAt
-	return nil
-}
-
-func (f *fakeTokenDPoPNonceStore) Consume(_ context.Context, c issuer.DPoPNonceConsumption) (issuer.DPoPNonceRecord, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	exp, ok := f.issued[c.Nonce]
-	if !ok || f.consumed[c.Nonce] {
-		return issuer.DPoPNonceRecord{}, fmt.Errorf("dpop nonce not found or already consumed")
-	}
-	if f.consumed == nil {
-		f.consumed = map[string]bool{}
-	}
-	f.consumed[c.Nonce] = true
-	return issuer.DPoPNonceRecord{ExpiresAt: exp}, nil
-}
-
 // dpopProtectedResourceClient is exactly the kind of thing
 // (*Wallet).GenerateDPoPProof's own doc comment describes a caller
 // building for an access token obtained via RequestPreAuthorizedCodeToken:
@@ -498,7 +463,7 @@ func TestWalletPreAuthorizedCodeRoundTrip_WithCredentialIdentifier(t *testing.T)
 func TestWalletPreAuthorizedCodeRoundTrip_WithDPoPNonceChallenge(t *testing.T) {
 	f := newPreAuthorizedRoundTripFixture(t, func(cfg *issuer.Config, deps *issuer.Dependencies) {
 		cfg.Limits.DPoPNonceLifetime = time.Minute
-		deps.DPoPNonces = &fakeTokenDPoPNonceStore{}
+		deps.DPoPNonces = storage.NewDPoPNonceStore()
 	})
 
 	tokenResult, err := f.w.RequestPreAuthorizedCodeToken(context.Background(), f.tokenEndpoint, wallet.PreAuthorizedCodeTokenRequest{

@@ -22,7 +22,7 @@ each. Those that reach OID4VCgo's callers:
   it must be under one of them. A handler of your own calls
   `resource.VerifyRequestFromHTTP(r)` and sets the request's `URL` to
   the endpoint's absolute URL (the recipe in `issuer/resource_verifier.go`).
-- **DPoP nonces.** Under production, the server's
+- **Authorization Server DPoP nonces.** Under production, the server's
   `Dependencies.Nonces` is required (or `server.NoDPoPNonces{}`), and
   so is the resource verifier's: `serverresource.Options.Nonces`, a
   store of its own, or `resource.NoDPoPNonces{}`. A custom
@@ -37,6 +37,33 @@ each. Those that reach OID4VCgo's callers:
   holding one receives a new pre-authorized code, as when it expires.
 - **RSA keys.** Every RSA key must use the exponent 65537, and one a
   wallet or Wallet Provider supplies is at most 4096 bits.
+- **The issuer's own DPoP nonces are valid for a time window, and
+  `DPoPNonceStore.Consume` is now `Lookup`.** RFC 9449 §8 has a server
+  keep a window of recent nonces and a client use one until given a new
+  one; a single-use nonce challenged every concurrent Token Request from
+  a Wallet but the first. `ExchangePreAuthorizedCode` now hands out one
+  current nonce per `Issuer`, valid for `Limits.DPoPNonceLifetime` for
+  any number of proofs, and issues the next once half that lifetime has
+  passed; the previous one keeps working until it expires. A proof's
+  `jti` (`Dependencies.DPoPReplay`) still refuses a replay. For your own
+  store: rename `Consume` to `Lookup` (`issuer.DPoPNonceConsumption` is
+  now `issuer.DPoPNonceLookup`), stop deleting the record on lookup
+  (drop it only after its `ExpiresAt`), and return an error wrapping
+  `issuer.ErrDPoPNonceUnknown` for a nonce you hold no record of. Any
+  other `Lookup` error now fails the request as a server error (500)
+  instead of a `use_dpop_nonce` challenge. Run
+  `issuertest.TestDPoPNonceStoreContract` against it. Under production
+  the store must declare `StoreCapabilities{Durable: true}`;
+  `AtomicConsume` is no longer required of it.
+- **The issuer's own DPoP nonces are required under production.** Under
+  `issuer.AssuranceProduction`, where the issuer verifies the Token
+  Request's DPoP proof itself (`Dependencies.PreAuthorizedCodes` set,
+  `Config.PreAuthorizedCodeClientAuthentication` not
+  `issuer.VerifiedPreAuthorizedCode{}`), `issuer.New` refuses a nil
+  `Dependencies.DPoPNonces`. Pass a durable `issuer.DPoPNonceStore` with
+  `Limits.DPoPNonceLifetime` (at most 15 minutes under production; five
+  minutes suits most deployments), or `issuer.NoDPoPNonces{}` to keep
+  accepting proofs without a nonce, as nil did before.
 
 ### Wallet (`walletflow`)
 

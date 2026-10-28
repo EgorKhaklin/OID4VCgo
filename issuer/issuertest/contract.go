@@ -28,7 +28,8 @@ import (
 // being explicitly documented as development/testing only (see
 // storage/doc.go) — only the in-process behavior New's own
 // AssuranceProduction check can't itself observe: atomicity,
-// single-use semantics, and faithful field round-tripping.
+// single-use semantics (or, for DPoPNonceStore, repeatable lookups),
+// and faithful field round-tripping.
 
 // contractConcurrentAttempts bounds how many concurrent calls the
 // *IsSingleUse/*HasExactlyOneWinner checks below fan out — enough to
@@ -42,6 +43,7 @@ const contractConcurrentAttempts = 20
 const (
 	msgIssueFailed       = "Issue: %v"
 	msgConsumeFailed     = "Consume: %v"
+	msgLookupFailed      = "Lookup: %v"
 	msgGetFailed         = "Get: %v"
 	msgExpiresAtMismatch = "ExpiresAt = %v, want %v"
 	nonceNeverIssued     = "never-issued"
@@ -89,29 +91,110 @@ func TestNonceStoreContract(t *testing.T, factory func() issuer.NonceStore) {
 	})
 }
 
-// TestDPoPNonceStoreContract is TestNonceStoreContract's own twin for
-// DPoPNonceStore — see that function's doc comment; the two stores
-// share an identical contract shape (Issue once, Consume atomically
-// retires), differing only in the concrete Issuance/Consumption/Record
-// types wrapping an identical Nonce/ExpiresAt pair.
+// TestDPoPNonceStoreContract exercises factory()'s behavior against
+// DPoPNonceStore's own documented guarantees. Unlike NonceStore's
+// c_nonce, a DPoP nonce is valid for a time window, not for one use
+// (RFC 9449 §8): Lookup returns the record Issue persisted and leaves
+// it in place, so repeated and concurrent Lookups of one nonce all
+// succeed; several issued nonces are valid side by side (the current
+// one and the previous, during a rotation); and an unknown nonce is
+// ErrDPoPNonceUnknown, which the issuer answers with a use_dpop_nonce
+// challenge rather than a 500. factory must return a fresh, empty
+// DPoPNonceStore each call.
 func TestDPoPNonceStoreContract(t *testing.T, factory func() issuer.DPoPNonceStore) {
 	t.Helper()
-	testAtomicNonceContract(t, func() (issue func(nonce string, expiresAt time.Time) error, consume func(nonce string) (time.Time, error)) {
+	ctx := context.Background()
+
+	t.Run("IssueAndLookup", func(t *testing.T) {
 		store := factory()
-		ctx := context.Background()
-		return func(nonce string, exp time.Time) error {
-				return store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: nonce, ExpiresAt: exp})
-			}, func(nonce string) (time.Time, error) {
-				r, err := store.Consume(ctx, issuer.DPoPNonceConsumption{Nonce: nonce})
-				return r.ExpiresAt, err
+		exp := time.Now().Add(time.Minute).Truncate(time.Second)
+		if err := store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "n1", ExpiresAt: exp}); err != nil {
+			t.Fatalf(msgIssueFailed, err)
+		}
+		got, err := store.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: "n1"})
+		if err != nil {
+			t.Fatalf(msgLookupFailed, err)
+		}
+		if !got.ExpiresAt.Equal(exp) {
+			t.Errorf(msgExpiresAtMismatch, got.ExpiresAt, exp)
+		}
+	})
+
+	t.Run("LookupIsRepeatable", func(t *testing.T) {
+		store := factory()
+		if err := store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "n1", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+			t.Fatalf(msgIssueFailed, err)
+		}
+		for i := range 3 {
+			if _, err := store.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: "n1"}); err != nil {
+				t.Fatalf("Lookup %d: %v", i+1, err)
 			}
+		}
+	})
+
+	t.Run("ConcurrentLookupsAllSucceed", func(t *testing.T) {
+		store := factory()
+		if err := store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "n1", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+			t.Fatalf(msgIssueFailed, err)
+		}
+		wins := runConcurrently(contractConcurrentAttempts, func() bool {
+			_, err := store.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: "n1"})
+			return err == nil
+		})
+		if wins != contractConcurrentAttempts {
+			t.Errorf("concurrent Lookup: %d of %d succeeded, want all", wins, contractConcurrentAttempts)
+		}
+	})
+
+	t.Run("SeveralNoncesAreValidTogether", func(t *testing.T) {
+		store := factory()
+		previous, current := time.Now().Add(time.Minute).Truncate(time.Second), time.Now().Add(2*time.Minute).Truncate(time.Second)
+		if err := store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "previous", ExpiresAt: previous}); err != nil {
+			t.Fatalf(msgIssueFailed, err)
+		}
+		if err := store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "current", ExpiresAt: current}); err != nil {
+			t.Fatalf(msgIssueFailed, err)
+		}
+		for nonce, want := range map[string]time.Time{"previous": previous, "current": current} {
+			got, err := store.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: nonce})
+			if err != nil {
+				t.Fatalf("Lookup %s: %v", nonce, err)
+			}
+			if !got.ExpiresAt.Equal(want) {
+				t.Errorf(msgExpiresAtMismatch, got.ExpiresAt, want)
+			}
+		}
+	})
+
+	t.Run("LookupUnknownIsErrDPoPNonceUnknown", func(t *testing.T) {
+		store := factory()
+		if _, err := store.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: nonceNeverIssued}); !errors.Is(err, issuer.ErrDPoPNonceUnknown) {
+			t.Errorf("Lookup = %v, want an error wrapping issuer.ErrDPoPNonceUnknown", err)
+		}
+	})
+
+	// A store may drop a record after its ExpiresAt, so a Lookup of an
+	// expired nonce either finds it (the caller then refuses it by its
+	// ExpiresAt) or reports it unknown — never a store failure.
+	t.Run("LookupExpiredIsFoundOrUnknown", func(t *testing.T) {
+		store := factory()
+		exp := time.Now().Add(-time.Minute).Truncate(time.Second)
+		if err := store.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "n1", ExpiresAt: exp}); err != nil {
+			t.Fatalf(msgIssueFailed, err)
+		}
+		got, err := store.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: "n1"})
+		switch {
+		case err == nil && !got.ExpiresAt.Equal(exp):
+			t.Errorf(msgExpiresAtMismatch, got.ExpiresAt, exp)
+		case err != nil && !errors.Is(err, issuer.ErrDPoPNonceUnknown):
+			t.Errorf("Lookup of an expired nonce = %v, want its record or issuer.ErrDPoPNonceUnknown", err)
+		}
 	})
 }
 
-// testAtomicNonceContract runs the shared checks TestNonceStoreContract
-// and TestDPoPNonceStoreContract both need against newAdapter, which
-// must build a fresh issue/consume pair (backed by a fresh, empty
-// store) each time it's called.
+// testAtomicNonceContract runs TestNonceStoreContract's checks against
+// newAdapter, which must build a fresh issue/consume pair (backed by a
+// fresh, empty store) each time it's called.
 func testAtomicNonceContract(t *testing.T, newAdapter func() (issue func(nonce string, expiresAt time.Time) error, consume func(nonce string) (time.Time, error))) {
 	t.Helper()
 
