@@ -711,7 +711,7 @@ func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asUR
 			// Short: an authorization pending in the store can be
 			// resumed (ResumeIssuance) until it expires, and the issuer
 			// bounds its own side at about this too.
-			SessionLifetime: 5 * time.Minute, MaxClockSkew: 5 * time.Second,
+			SessionLifetime: 5 * time.Minute, MaxClockSkew: 10 * time.Second, // fapigo/client's production minimum
 			HTTPTimeout: httpTimeout, MaxHTTPResponseBytes: maxResponseBytes, MaxJOSECompactBytes: 16 * 1024,
 		},
 	}, client.Dependencies{
@@ -719,7 +719,7 @@ func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asUR
 		// after the app is suspended (ResumeIssuance).
 		Sessions: s.sessions,
 		Keys:     km, HTTP: s.w.deps.HTTP,
-		Clock: clientClock(s.w.deps.Clock), Random: s.w.deps.Random,
+		Clock: clientClock{now: s.w.deps.Clock, system: s.w.systemClock}, Random: s.w.deps.Random,
 		Attestation: attestation,
 		// Reuses the DPoP nonce each response hands out, so only the
 		// first request to an endpoint is challenged for one.
@@ -795,9 +795,16 @@ const MaxCredentialRequests = 32
 // each costs holder keys and a key attestation.
 const maxConsecutiveRefusals = 3
 
-type clientClock func() time.Time
+// clientClock is the wallet's clock as fapigo/client's, declaring
+// whether it's the system's (client.ClockAssurance).
+type clientClock struct {
+	now    func() time.Time
+	system bool
+}
 
-func (c clientClock) Now() time.Time { return c() }
+func (c clientClock) Now() time.Time { return c.now() }
+
+func (c clientClock) ReadsSystemTime() bool { return c.system }
 
 // RequestCredentials requests every offered credential, each bound to a
 // new holder key that the Wallet Provider attests in a Key Attestation

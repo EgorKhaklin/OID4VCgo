@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/resource"
 	"github.com/idfoundry/fapigo/storage"
 	"github.com/idfoundry/fapigo/storage/memstore"
@@ -43,7 +44,8 @@ func TestNewRequiresVerifier(t *testing.T) {
 // by cmd/conformance-issuer's full-flow tests.
 func TestVerifyRefusesMissingToken(t *testing.T) {
 	rv, err := resource.NewVerifier(resource.Config{
-		Assurance: resource.AssuranceDevelopment, Limits: resource.Limits{MaxDPoPProofAge: time.Minute, MaxClockSkew: time.Minute},
+		ResourceURLs: issuerURLs(t),
+		Assurance:    resource.AssuranceDevelopment, Limits: resource.Limits{MaxDPoPProofAge: time.Minute, MaxClockSkew: time.Minute},
 	}, resource.Dependencies{
 		AccessTokens: noTokens{}, Replay: memstore.NewReplayStore(),
 		Revocation: resource.NoRevocation{}, Clock: resource.SystemClock{},
@@ -95,7 +97,8 @@ func TestVerifyMapsTheToken(t *testing.T) {
 	verify := func(tokens certBoundTokens) (issuer.Grant, error) {
 		t.Helper()
 		rv, err := resource.NewVerifier(resource.Config{
-			Assurance: resource.AssuranceDevelopment, Limits: resource.Limits{MaxDPoPProofAge: time.Minute, MaxClockSkew: time.Minute},
+			ResourceURLs: issuerURLs(t),
+			Assurance:    resource.AssuranceDevelopment, Limits: resource.Limits{MaxDPoPProofAge: time.Minute, MaxClockSkew: time.Minute},
 		}, resource.Dependencies{
 			AccessTokens: tokens, Replay: memstore.NewReplayStore(),
 			Revocation: resource.NoRevocation{}, Clock: resource.SystemClock{},
@@ -146,4 +149,15 @@ func TestVerifyMapsTheToken(t *testing.T) {
 	if w.Code != http.StatusForbidden || !strings.Contains(w.Header().Get("WWW-Authenticate"), "insufficient_scope") {
 		t.Errorf("a client credentials token: %d %q, want 403 insufficient_scope", w.Code, w.Header().Get("WWW-Authenticate"))
 	}
+}
+
+// issuerURLs is the test Credential Issuer's origin, the resource
+// verifier's own URL.
+func issuerURLs(t *testing.T) []fapi.URL {
+	t.Helper()
+	u, err := fapi.ParseEndpointURL("https://issuer.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []fapi.URL{u}
 }

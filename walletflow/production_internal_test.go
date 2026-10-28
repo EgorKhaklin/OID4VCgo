@@ -5,9 +5,11 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/x509"
-	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 
 	"github.com/idfoundry/fapigo/client"
 	"github.com/idfoundry/fapigo/keys"
@@ -84,6 +86,7 @@ func TestProductionAssurance(t *testing.T) {
 	for name, change := range map[string]func(*Dependencies){
 		"custody":            func(d *Dependencies) { d.Keys = NewMemoryKeyStore() },
 		"crypto/rand.Reader": func(d *Dependencies) { d.Random = strings.NewReader("not random") },
+		"system clock":       func(d *Dependencies) { d.Clock = time.Now },
 	} {
 		deps := durable
 		change(&deps)

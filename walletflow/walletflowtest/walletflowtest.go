@@ -286,7 +286,9 @@ func New(opts Options) (env *Env, err error) {
 	e.srv, err = server.New(asCfg, deps)
 	must(err)
 	resourceVerifier, err := serverresource.NewVerifier(asCfg, deps, serverresource.Options{
-		Nonces: memstore.NewNonceStore(), NonceLifetime: 5 * time.Minute,
+		// The Credential Endpoint and the rest are under the issuer.
+		ResourceURLs: []fapi.URL{asCfg.Issuer},
+		Nonces:       memstore.NewNonceStore(), NonceLifetime: 5 * time.Minute,
 	})
 	must(err)
 	dpopTokens, err := fapiresource.New(resourceVerifier)

@@ -6,6 +6,45 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
+## v0.55.0 → v0.56.0
+
+This release pins FAPIgo v0.65.1, which carries the breaking changes of
+FAPIgo v0.63.0, v0.64.0 and v0.65.0: see FAPIgo's UPGRADING.md for
+each. Those that reach OID4VCgo's callers:
+
+### Credential Issuer (`issuer`, `haip`) and its Authorization Server
+
+- **Resource verifier URLs.** `serverresource.NewVerifier` and
+  `resource.NewVerifier` require `ResourceURLs`: the URLs the Credential,
+  Nonce, Deferred Credential and Notification Endpoints are reached
+  under, such as the Credential Issuer's own. `issuer/fapiresource`
+  checks a DPoP proof against the endpoint URL the handler is given, so
+  it must be under one of them. A handler of your own calls
+  `resource.VerifyRequestFromHTTP(r)` and sets the request's `URL` to
+  the endpoint's absolute URL (the recipe in `issuer/resource_verifier.go`).
+- **DPoP nonces.** Under production, the server's
+  `Dependencies.Nonces` is required (or `server.NoDPoPNonces{}`), and
+  so is the resource verifier's: `serverresource.Options.Nonces`, a
+  store of its own, or `resource.NoDPoPNonces{}`. A custom
+  `storage.NonceStore` renames `Consume` to `Lookup` and keeps a nonce
+  until it expires.
+- **Server limits.** `Limits.MaxAccessTokenClaimsBytes` is required;
+  `server.RecommendedLimits()`, which `haip` builds on, sets it.
+  Production bounds the DPoP, JARM and interaction lifetimes, and
+  requires a `Clock` that reads the system time.
+- **Pre-authorized code refresh tokens** issued before this release
+  record no grant type and are refused with `invalid_grant`: a wallet
+  holding one receives a new pre-authorized code, as when it expires.
+- **RSA keys.** Every RSA key must use the exponent 65537, and one a
+  wallet or Wallet Provider supplies is at most 4096 bits.
+
+### Wallet (`walletflow`)
+
+- **Clock.** Outside `Development`, `walletflow.New` refuses a
+  `Dependencies.Clock` when the wallet receives credentials: leave it
+  nil, the system clock. FAPIgo's client requires it under production;
+  before, the wallet would have failed at its first issuance instead.
+
 ## v0.54.0 → v0.55.0
 
 This release pins FAPIgo v0.62.0.
