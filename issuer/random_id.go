@@ -7,7 +7,7 @@ import (
 
 // randomID returns a base64url-encoded, cryptographically random
 // identifier drawing n bytes of entropy from random — the shared
-// generation RequestNonce (c_nonce, §7.2), issueDPoPNonce (RFC 9449
+// generation RequestNonce (c_nonce, §7.2), currentDPoPNonce (RFC 9449
 // §8), and ExchangePreAuthorizedCode's own credential_identifier
 // minting (§6.2) all need, factored out rather than three inline
 // copies.

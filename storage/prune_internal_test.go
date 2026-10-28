@@ -32,6 +32,19 @@ func TestStoresPruneExpiredEntries(t *testing.T) {
 		t.Errorf("the live nonce: %v", err)
 	}
 
+	dpopNonces := NewDPoPNonceStore()
+	dpopNonces.prune.now = func() time.Time { return now }
+	for i := range n {
+		_ = dpopNonces.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: fmt.Sprint("old-", i), ExpiresAt: past})
+	}
+	_ = dpopNonces.Issue(ctx, issuer.DPoPNonceIssuance{Nonce: "live", ExpiresAt: future})
+	if len(dpopNonces.issued) >= minPruneAt*2 {
+		t.Errorf("dpop nonce store holds %d after %d expired nonces", len(dpopNonces.issued), n)
+	}
+	if _, err := dpopNonces.Lookup(ctx, issuer.DPoPNonceLookup{Nonce: "live"}); err != nil {
+		t.Errorf("the live dpop nonce: %v", err)
+	}
+
 	replay := NewDPoPReplayChecker()
 	replay.prune.now = func() time.Time { return now }
 	_ = replay.UseOnce(ctx, "live", future)

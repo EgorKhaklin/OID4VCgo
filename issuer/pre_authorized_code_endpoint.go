@@ -101,13 +101,17 @@ type ExchangePreAuthorizedCodeResult struct {
 
 	ExpiresIn time.Duration
 
-	// NextDPoPNonce is a freshly issued DPoP nonce the caller should
-	// set as this response's own DPoP-Nonce header — WriteJSON already
-	// does this — so the Wallet's next Token Request already carries a
-	// valid one instead of needing its own challenge/retry round trip
-	// (RFC 9449 §8's own proactive-refresh recommendation). Always ""
-	// when Dependencies.DPoPNonces is nil (nonce-challenge support
-	// disabled); otherwise always populated on success.
+	// NextDPoPNonce is the DPoP nonce this Issuer currently hands out,
+	// for the caller to set as this response's own DPoP-Nonce header —
+	// WriteJSON already does this — so the Wallet's next Token Request
+	// already carries a valid one instead of needing its own
+	// challenge/retry round trip (RFC 9449 §8.2: the client uses a nonce
+	// "until the server supplies a new nonce"). It is the same value for
+	// every response until the Issuer rotates it, at half of
+	// Config.Limits.DPoPNonceLifetime (see DPoPNonceStore). Always ""
+	// when Dependencies.DPoPNonces is nil or NoDPoPNonces{}
+	// (nonce-challenge support disabled); otherwise always populated on
+	// success.
 	NextDPoPNonce string
 
 	// AuthorizationDetails is every "openid_credential"-typed entry
@@ -300,15 +304,17 @@ type VerifiedTokenRequest struct {
 //
 // When Dependencies.DPoPNonces is configured, the presented proof's own
 // "nonce" claim is checked between those two steps too (RFC 9449 §8):
-// a missing, unknown, already-consumed, or expired nonce fails with
-// ErrorUseDPoPNonce and a freshly issued replacement — before
-// PreAuthorizedCode is ever consumed, so a Wallet's first, nonce-less
-// attempt (it can't know the nonce in advance) never burns the
-// single-use code it will need again on retry. A successful exchange
-// then proactively issues the next nonce too (ExchangePreAuthorizedCodeResult's
-// own NextDPoPNonce), the same "hand over the next nonce so the Wallet
-// never round-trips through a challenge it can already avoid"
-// convention DPoPNonceStore's own doc comment describes.
+// a missing, unknown or expired nonce fails with ErrorUseDPoPNonce and
+// the current nonce — before PreAuthorizedCode is ever consumed, so a
+// Wallet's first, nonce-less attempt (it can't know the nonce in
+// advance) never burns the single-use code it will need again on
+// retry. A nonce is valid for any number of proofs until it expires, so
+// concurrent requests carrying one all pass this check; a DPoPNonceStore
+// that can't answer fails the request with a plain error (a 500 from
+// WriteError), not a challenge. A successful exchange returns the
+// current nonce too (ExchangePreAuthorizedCodeResult's own
+// NextDPoPNonce), so the Wallet never round-trips through a challenge
+// it can already avoid.
 //
 // When the redeemed record's own CredentialConfigurationIDs is
 // non-empty, this also mints one credential_identifier per entry
@@ -367,9 +373,9 @@ func (iss *Issuer) exchangePreAuthorizedCode(ctx context.Context, req ExchangePr
 	case req.Verified != nil:
 		result.NextDPoPNonce = binding.NextDPoPNonce
 	case iss.deps.DPoPNonces != nil:
-		nextNonce, err := iss.issueDPoPNonce(ctx, now)
+		nextNonce, err := iss.currentDPoPNonce(ctx, now)
 		if err != nil {
-			return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: issue next dpop nonce: %w", err)
+			return ExchangePreAuthorizedCodeResult{}, fmt.Errorf("issuer: exchange pre-authorized code: current dpop nonce: %w", err)
 		}
 		result.NextDPoPNonce = nextNonce
 	}
