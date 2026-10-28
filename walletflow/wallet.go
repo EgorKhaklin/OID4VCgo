@@ -333,7 +333,9 @@ type Dependencies struct {
 	// kept, so a server that never answers can't hold a request until
 	// its context ends.
 	HTTP *http.Client
-	// Clock returns the current time. nil means time.Now.
+	// Clock returns the current time. nil means time.Now, the only
+	// clock receiving credentials accepts outside Development: every
+	// expiry the issuance's OAuth client enforces rests on it.
 	Clock func() time.Time
 	// Random is the source of identifiers and protocol randomness. nil
 	// means crypto/rand.
@@ -358,6 +360,9 @@ type Wallet struct {
 	// authorization and the issuance that began it, or two resumes of
 	// one redirect), and the first to close mustn't delete it.
 	liveKeys map[string]int
+	// systemClock is whether deps.Clock is the system's (Dependencies.Clock
+	// was nil), which fapigo/client requires under production assurance.
+	systemClock bool
 	// resuming are the authorizations ResumeIssuance is completing, by
 	// state: a second resume of one redirect waits for none.
 	resuming map[string]bool
@@ -441,6 +446,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err := cfg.TLSPins.Validate(); err != nil {
 		return nil, err
 	}
+	systemClock := deps.Clock == nil
 	deps, err := withDefaultDependencies(cfg, deps)
 	if err != nil {
 		return nil, err
@@ -463,7 +469,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	}
 	w := &Wallet{
 		cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, settled: map[string]bool{}, liveKeys: map[string]int{}, resuming: map[string]bool{},
-		openGrants: map[string]bool{}, grantLocks: map[string]*sync.Mutex{},
+		openGrants: map[string]bool{}, grantLocks: map[string]*sync.Mutex{}, systemClock: systemClock,
 	}
 	if err := w.checkReceivingAtNew(); err != nil {
 		return nil, err
@@ -896,6 +902,8 @@ func (w *Wallet) checkProductionReceiving() error {
 		return errors.New("walletflow: receiving credentials in production needs Dependencies.Keys to declare durable custody (keys.KeyCustodyAssurance)")
 	case w.deps.Random != rand.Reader:
 		return errors.New("walletflow: receiving credentials in production needs Dependencies.Random to be nil or crypto/rand.Reader")
+	case !w.systemClock:
+		return errors.New("walletflow: receiving credentials in production needs Dependencies.Clock to be nil, the system clock")
 	}
 	return nil
 }

@@ -53,7 +53,9 @@ func New(v *resource.Verifier) (*Verifier, error) {
 // decides whose Credential is issued. It's refused as 403
 // insufficient_scope.
 func (v *Verifier) Verify(r *http.Request, endpoint *url.URL) (issuer.Grant, error) {
-	authCtx, err := v.resource.Verify(r.Context(), resource.VerifyRequestFromHTTP(r, endpoint))
+	req := resource.VerifyRequestFromHTTP(r)
+	req.URL = endpoint
+	authCtx, err := v.resource.Verify(r.Context(), req)
 	if err != nil {
 		return issuer.Grant{}, err
 	}

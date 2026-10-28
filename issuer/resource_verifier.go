@@ -23,7 +23,9 @@ package issuer
 // *resource.Verifier with fapigo/serverresource.NewVerifier(serverCfg,
 // serverDeps, serverresource.Options{...}), which checks revocation
 // against the store the server revokes into and matches its token
-// format. Its Options.Nonces turns on DPoP nonce challenges at these
+// format. Its Options.ResourceURLs (required) are the URLs the
+// endpoints are reached under: the Credential Issuer's, say. Its
+// Options.Nonces turns on DPoP nonce challenges at these
 // endpoints (RFC 9449 §9), so a DPoP proof must carry a nonce the
 // issuer handed out rather than relying on its iat window and jti
 // replay check alone; give it its own nonce store, not the server's.
@@ -38,7 +40,9 @@ package issuer
 // then adapts its result into AuthorizedRequest with a one-line
 // translation:
 //
-//	authCtx, err := verifier.Verify(ctx, resource.VerifyRequestFromHTTP(r, credentialEndpointURL))
+//	req := resource.VerifyRequestFromHTTP(r)
+//	req.URL = credentialEndpointURL
+//	authCtx, err := verifier.Verify(ctx, req)
 //	if err != nil {
 //		// respond per *resource.Error — Verify's own doc comment covers this.
 //	}
@@ -63,9 +67,9 @@ package issuer
 //		}
 //	}
 //
-// credentialEndpointURL is the endpoint's absolute URL, not r.URL: a
-// server-side request's URL has no scheme or host, so a DPoP proof's
-// htu would never match it.
+// credentialEndpointURL is the endpoint's absolute URL, under one of
+// the verifier's ResourceURLs: the URL the Wallet called, which a DPoP
+// proof's htu names, whatever path a proxy forwards the request to.
 //
 // authCtx.InternalSubject binds a deferred transaction to the token's subject
 // (AuthorizedRequest.Subject), and it is how the caller finds out what

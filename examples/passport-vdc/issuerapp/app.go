@@ -231,7 +231,9 @@ func (a *App) buildAuthorizationServer() error {
 	// too. Its DPoP proofs must carry a nonce this issuer handed out
 	// (RFC 9449 §9), from a nonce store of its own.
 	if a.resourceVerifier, err = serverresource.NewVerifier(cfg, deps, serverresource.Options{
-		Nonces: memstore.NewNonceStore(), NonceLifetime: 5 * time.Minute,
+		// The Credential Endpoint and the rest are under the issuer.
+		ResourceURLs: []fapi.URL{cfg.Issuer},
+		Nonces:       memstore.NewNonceStore(), NonceLifetime: 5 * time.Minute,
 	}); err != nil {
 		return fmt.Errorf("issuerapp: resource verifier: %w", err)
 	}

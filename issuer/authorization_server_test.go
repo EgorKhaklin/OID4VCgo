@@ -127,6 +127,7 @@ func newTestAuthorizationServer(t *testing.T, extensions *extension.Registry) (s
 			MaxDPoPProofAge:            time.Minute,
 			MaxClockSkew:               5 * time.Second,
 			MaxIDTokenClaimsBytes:      4096,
+			MaxAccessTokenClaimsBytes:  6144,
 		},
 		Assurance:  server.AssuranceDevelopment,
 		Extensions: extensions,

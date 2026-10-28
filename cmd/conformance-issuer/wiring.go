@@ -19,7 +19,7 @@ import (
 	"github.com/idfoundry/fapigo/storage"
 	"github.com/idfoundry/fapigo/storage/memstore"
 
-	"github.com/idfoundry/oid4vcgo"
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
@@ -173,7 +173,11 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	// AS's own config and stores: its signing keys (read locally, not
 	// from this binary's /jwks), the revocation store it revokes into,
 	// and its DPoP limits.
-	resourceVerifier, err := serverresource.NewVerifier(srvCfg, srvDeps, serverresource.Options{})
+	resourceVerifier, err := serverresource.NewVerifier(srvCfg, srvDeps, serverresource.Options{
+		// The Credential, Nonce, Notification and Deferred Credential
+		// Endpoints are all under the issuer.
+		ResourceURLs: []fapi.URL{srvCfg.Issuer},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("serverresource.NewVerifier: %w", err)
 	}
